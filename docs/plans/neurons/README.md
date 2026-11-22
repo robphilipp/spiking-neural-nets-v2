@@ -1,6 +1,6 @@
 # Plan: neuron crates
 
-Status: **N1–N3 done** (2026-11-22); N4 (recording) to do. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done).
+Status: **N1–N4 done** (2026-11-22). Next: the app-layer plan (server, Tauri UI). Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done).
 The v1 model is described in `notes/02-neuron-model.md` and `notes/03-network-description-language.md`.
 
 ## Goal
@@ -191,3 +191,29 @@ Approximations, documented in the code:
   whole interval since its previous update.
 - Releases are kept for 60 s (or 20 clearance times); a synapse idle longer loses older contributions.
 - Predictions of direct-potential crossings hold the refractoriness kernel at its current value.
+
+## N4 status: done (2026-11-22)
+
+`crates/spikes-record` (arrow and parquet 60.2, IPC and zstd only):
+
+- `Recorder::start(dir, rt, network, description, run, options)` writes the static tables (`run.arrow`,
+  `neurons.arrow`, `synapses.arrow`, as Arrow IPC files), then a writer thread streams `spikes`, `weights`,
+  `membrane`, `transitions` and `system` to Arrow IPC stream files (`.arrows`) in batches of 65,536 rows;
+  `finish()` closes them. Schemas use `t_ns: u64` and actor ids `u64`, with a format version and units in the
+  schema metadata.
+- Events come from a new **lossless subscription** in `tempo-runtime` (`Runtime::subscribe_lossless`): an
+  unbounded per-window batch channel. The simulation still never waits; if the writer falls behind, memory grows.
+- `to_parquet(dir)` converts every table to zstd Parquet, sorted by time with ids breaking ties, so the files
+  don't depend on the shard count (tested: 1 and 3 shards give identical spike and weight tables).
+- `read_table(path)` reads a table back; `examples/record.rs` records a `.boo` network driven by Poisson input.
+
+Tests: row counts equal the runtime's buffered events for every table, with tiny batches; spike times and weight
+changes match exactly; static tables (names, positions in µm, kinds, synapse endpoints, seed, description,
+format metadata); Parquet sorted and shard-independent.
+
+Checked outside the tests: a 10 s recording of `stdp-test.boo` loads in Python with `pyarrow` 26 (IPC streams,
+IPC files and Parquet, with schema metadata). Julia was not checked: the installed Julia is an x86_64 build and
+this machine has no Rosetta.
+
+Not yet recorded: topology changes (connections added or pruned during a run) and modulator releases; both need
+events that the network doesn't emit yet.

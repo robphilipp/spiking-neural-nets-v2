@@ -1,11 +1,12 @@
-//! Event subscriptions: a bounded, lossy stream of emitted events for a UI or other live consumer.
+//! Event subscriptions: streams of emitted events for a UI, a recorder or another live consumer.
 //!
 //! Each shard collects the events emitted during a window and, at the end of the window, hands them to every
-//! subscriber as one batch. If a subscriber's buffer is full, that batch is dropped *for that subscriber* and
-//! counted. The simulation never waits for a subscriber.
+//! subscriber as one batch. A bounded subscriber (a UI) loses a batch when its buffer is full, and the loss is
+//! counted. A lossless subscriber (a recorder) has an unbounded buffer, so nothing is lost, but memory grows while
+//! it falls behind. Either way the simulation never waits for a subscriber.
 
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, channel, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -14,8 +15,13 @@ use crate::Emitted;
 /// Decides which events a subscriber receives.
 pub type EventFilter<E> = Arc<dyn Fn(&Emitted<E>) -> bool + Send + Sync>;
 
+enum Tx<E> {
+    Bounded(SyncSender<Vec<Emitted<E>>>),
+    Unbounded(Sender<Vec<Emitted<E>>>),
+}
+
 struct Subscriber<E> {
-    tx: SyncSender<Vec<Emitted<E>>>,
+    tx: Tx<E>,
     filter: Option<EventFilter<E>>,
     dropped: Arc<AtomicU64>,
 }
@@ -27,13 +33,16 @@ impl<E> Subscriber<E> {
             return true;
         }
         let len = events.len() as u64;
-        match self.tx.try_send(events) {
-            Ok(()) => true,
-            Err(TrySendError::Full(_)) => {
-                self.dropped.fetch_add(len, Ordering::Relaxed);
-                true
-            }
-            Err(TrySendError::Disconnected(_)) => false,
+        match &self.tx {
+            Tx::Unbounded(tx) => tx.send(events).is_ok(),
+            Tx::Bounded(tx) => match tx.try_send(events) {
+                Ok(()) => true,
+                Err(TrySendError::Full(_)) => {
+                    self.dropped.fetch_add(len, Ordering::Relaxed);
+                    true
+                }
+                Err(TrySendError::Disconnected(_)) => false,
+            },
         }
     }
 }
@@ -59,8 +68,18 @@ impl<E: Clone> Subscribers<E> {
         self.count.load(Ordering::Relaxed) > 0
     }
 
-    pub(crate) fn subscribe(&self, capacity: usize, filter: Option<EventFilter<E>>) -> EventStream<E> {
-        let (tx, rx) = sync_channel(capacity.max(1));
+    /// Subscribes with a buffer of `capacity` batches, or an unbounded (lossless) buffer for `None`.
+    pub(crate) fn subscribe(&self, capacity: Option<usize>, filter: Option<EventFilter<E>>) -> EventStream<E> {
+        let (tx, rx) = match capacity {
+            Some(capacity) => {
+                let (tx, rx) = sync_channel(capacity.max(1));
+                (Tx::Bounded(tx), rx)
+            }
+            None => {
+                let (tx, rx) = channel();
+                (Tx::Unbounded(tx), rx)
+            }
+        };
         let dropped = Arc::new(AtomicU64::new(0));
         let mut list = self.list.lock().unwrap_or_else(|p| p.into_inner());
         list.push(Subscriber {
@@ -109,6 +128,11 @@ impl<E> EventStream<E> {
     /// Everything that has arrived so far, without waiting.
     pub fn drain(&self) -> Vec<Emitted<E>> {
         self.rx.try_iter().flatten().collect()
+    }
+
+    /// Waits for the next batch; `None` once the runtime is gone and everything has been received.
+    pub fn next_batch(&self) -> Option<Vec<Emitted<E>>> {
+        self.rx.recv().ok()
     }
 
     /// Waits up to `timeout` for the next batch.

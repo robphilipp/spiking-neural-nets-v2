@@ -231,7 +231,13 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
     /// Subscribes to emitted events as a live, lossy stream. `capacity` is how many batches (one per shard per
     /// window) may wait unread before newer ones are dropped for this subscriber. Can be called while running.
     pub fn subscribe(&self, capacity: usize) -> EventStream<E> {
-        self.subscribers.subscribe(capacity, None)
+        self.subscribers.subscribe(Some(capacity), None)
+    }
+
+    /// Subscribes to every emitted event, losing none: for recording. The buffer is unbounded, so if the
+    /// consumer falls behind, memory grows rather than events being dropped; the simulation never waits.
+    pub fn subscribe_lossless(&self) -> EventStream<E> {
+        self.subscribers.subscribe(None, None)
     }
 
     /// Like [`Self::subscribe`], receiving only the events `filter` accepts.
@@ -241,7 +247,7 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
         filter: impl Fn(&Emitted<E>) -> bool + Send + Sync + 'static,
     ) -> EventStream<E> {
         let filter: EventFilter<E> = Arc::new(filter);
-        self.subscribers.subscribe(capacity, Some(filter))
+        self.subscribers.subscribe(Some(capacity), Some(filter))
     }
 
     /// Subscribes to system events (warnings and notices about the runtime itself).
