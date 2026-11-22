@@ -24,6 +24,7 @@ use tempo_core::{SimDuration, SimTime};
 
 use crate::crossing;
 use crate::intrinsic::IntrinsicParams;
+use crate::modulation::{Effects, Modulators, NoModulators, Receptor, ThreeFactor};
 use crate::synapse::{Synapse, SynapseParams};
 use crate::units::{decay, duration_ms, since_ms, wiener};
 
@@ -266,13 +267,48 @@ pub fn rise_delay_ms(before: f64, after: f64, threshold: f64, rise_ms: f64) -> f
     }
 }
 
-/// A neuron population's parameters plus the synapse parameter table: everything needed to update a neuron.
-#[derive(Copy, Clone, Debug)]
+/// A neuron population's parameters plus the synapse parameter table, its receptors and access to modulator
+/// concentrations: everything needed to update a neuron.
+#[derive(Copy, Clone)]
 pub struct Model<'a> {
     /// The neuron's population parameters.
     pub neuron: &'a NeuronParams,
     /// Synapse parameters, indexed by [`Synapse::params`].
     pub synapses: &'a [SynapseParams],
+    /// The neuron's receptors.
+    pub receptors: &'a [Receptor],
+    /// Modulator concentrations at the neuron.
+    pub modulators: &'a dyn Modulators,
+}
+
+impl std::fmt::Debug for Model<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Model")
+            .field("neuron", &self.neuron)
+            .field("receptors", &self.receptors)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'a> Model<'a> {
+    /// A model without neuromodulation.
+    pub fn new(neuron: &'a NeuronParams, synapses: &'a [SynapseParams]) -> Self {
+        Self {
+            neuron,
+            synapses,
+            receptors: &[],
+            modulators: &NoModulators,
+        }
+    }
+
+    /// The same model with receptors and modulator concentrations.
+    pub fn with_modulation(self, receptors: &'a [Receptor], modulators: &'a dyn Modulators) -> Self {
+        Self {
+            receptors,
+            modulators,
+            ..self
+        }
+    }
 }
 
 impl Model<'_> {
@@ -286,11 +322,13 @@ impl Model<'_> {
         rng: &mut R,
         changes: &mut Vec<WeightChange>,
     ) -> Outcome {
+        let fx = Effects::at(self.receptors, self.modulators, now);
         let (value, synapse) = match input {
             Input::External { mv } => (mv, None),
             Input::Synaptic { synapse, mv } => {
                 let syn = &mut syns[synapse as usize];
                 let params = &self.synapses[usize::from(syn.params)];
+                self.catch_up(syn, synapse, now, rng, changes);
                 if !syn.arrive(params, now, rng) {
                     return Outcome {
                         released: false,
@@ -298,13 +336,15 @@ impl Model<'_> {
                     };
                 }
                 syn.record_signal();
-                (syn.efficacy() * mv, Some(synapse))
+                // Modulators scale synaptic input by the gain for its sign.
+                (fx.gate(syn.efficacy() * mv), Some(synapse))
             }
         };
         let event = Event {
             now,
             value: Some(value),
             synapse,
+            fx,
         };
         match self.neuron.kind {
             NeuronKind::MonostableIntegrator => self.integrator(st, syns, event, rng, changes),
@@ -333,6 +373,7 @@ impl Model<'_> {
             now,
             value: None,
             synapse: None,
+            fx: Effects::at(self.receptors, self.modulators, now),
         };
         match (self.neuron.kind, st.phase) {
             (NeuronKind::BistableIntegrator { tonic_rate_hz, .. }, Phase::Tonic) => {
@@ -344,7 +385,33 @@ impl Model<'_> {
             (NeuronKind::BistableResonator { .. }, Phase::Tonic) => {
                 self.bistable_resonator_tonic(st, syns, event, rng, changes)
             }
-            _ => Outcome::quiet(st.u),
+            // An integrator at rest asked to be woken for a modulator-driven threshold crossing.
+            _ => self.integrator(st, syns, event, rng, changes),
+        }
+    }
+
+    /// A modulator has just reached the neuron (for modulators with direct-potential receptors): re-evaluates the
+    /// threshold and any predicted crossing. Unlike [`Self::on_wakeup`], it never produces a tonic spike.
+    pub fn on_modulation<R: Rng + ?Sized>(
+        &self,
+        st: &mut NeuronState,
+        syns: &mut [Synapse],
+        now: SimTime,
+        rng: &mut R,
+        changes: &mut Vec<WeightChange>,
+    ) -> Outcome {
+        let event = Event {
+            now,
+            value: None,
+            synapse: None,
+            fx: Effects::at(self.receptors, self.modulators, now),
+        };
+        match (self.neuron.kind, st.phase) {
+            (_, Phase::Tonic) => Outcome::quiet(st.u),
+            (NeuronKind::MonostableResonator(_) | NeuronKind::BistableResonator { .. }, _) => {
+                self.resonator_rest(st, syns, event, rng, changes)
+            }
+            _ => self.integrator(st, syns, event, rng, changes),
         }
     }
 
@@ -356,6 +423,66 @@ impl Model<'_> {
         self.neuron.intrinsic.advance(&mut st.b, &mut st.rate_hz, dt);
         st.last_event = now;
         dt
+    }
+
+    /// The neuron's three-factor learning receptor, if any.
+    fn three_factor(&self) -> Option<(u16, ThreeFactor)> {
+        self.receptors
+            .iter()
+            .find_map(|r| r.three_factor.map(|tf| (r.modulator, tf)))
+    }
+
+    /// Brings a synapse up to `now`: first the three-factor weight change accumulated since its last update
+    /// (`rate·e₀·∫ e^(−(s−t₀)/τe)·c(s) ds`, exact), then decay, noise, release sums and traces.
+    fn catch_up<R: Rng + ?Sized>(
+        &self,
+        syn: &mut Synapse,
+        index: u32,
+        now: SimTime,
+        rng: &mut R,
+        changes: &mut Vec<WeightChange>,
+    ) {
+        let params = &self.synapses[usize::from(syn.params)];
+        if let Some((kind, tf)) = self.three_factor()
+            && syn.eligibility != 0.0
+        {
+            let e0 = f64::from(syn.eligibility);
+            let integral = self.modulators.decayed_integral(kind, syn.last, now, tf.eligibility_ms);
+            syn.eligibility = (e0 * decay(since_ms(now, syn.last), tf.eligibility_ms)) as f32;
+            let dw = tf.rate * e0 * integral / 1e3; // integral in concentration·ms; rate per second
+            if dw != 0.0 {
+                let before = syn.weight;
+                syn.weight = params.limit.apply(f64::from(before) + dw) as f32;
+                changes.push(WeightChange {
+                    synapse: index,
+                    before,
+                    after: syn.weight,
+                });
+            }
+        }
+        syn.advance(params, now, rng);
+    }
+
+    /// Applies an STDP change: to the eligibility trace for three-factor learning, otherwise to the weight
+    /// (scaled by the plasticity modulation).
+    fn learn(&self, syn: &mut Synapse, index: u32, dw: f64, fx: &Effects, changes: &mut Vec<WeightChange>) {
+        if dw == 0.0 {
+            return;
+        }
+        if self.three_factor().is_some() {
+            syn.eligibility += dw as f32;
+            return;
+        }
+        let params = &self.synapses[usize::from(syn.params)];
+        let before = syn.weight;
+        syn.weight = params.limit.apply(f64::from(before) + dw * fx.plasticity) as f32;
+        if syn.weight != before {
+            changes.push(WeightChange {
+                synapse: index,
+                before,
+                after: syn.weight,
+            });
+        }
     }
 
     /// The refractoriness kernel at `now`: `None` during the absolute refractory period, otherwise `η ≤ 0`.
@@ -379,10 +506,11 @@ impl Model<'_> {
         &self,
         st: &mut NeuronState,
         syns: &mut [Synapse],
-        now: SimTime,
+        event: &Event,
         rng: &mut R,
         changes: &mut Vec<WeightChange>,
     ) {
+        let now = event.now;
         st.spikes += 1;
         st.last_fire = Some(now);
         self.neuron.intrinsic.on_spike(&mut st.b, &mut st.rate_hz);
@@ -390,26 +518,18 @@ impl Model<'_> {
             if syn.count == 0 {
                 continue;
             }
+            self.catch_up(syn, i as u32, now, rng, changes);
             let params = &self.synapses[usize::from(syn.params)];
-            syn.advance(params, now, rng);
             let (_, upper) = params.limit.bounds();
-            let before = syn.weight;
             let dw = params.learning.potentiation(
                 f64::from(syn.trace[0]),
                 f64::from(syn.trace[1]),
                 syn.count,
-                f64::from(before),
+                f64::from(syn.weight),
                 upper,
             );
             syn.reset_traces();
-            if dw != 0.0 {
-                syn.weight = params.limit.apply(f64::from(before) + dw) as f32;
-                changes.push(WeightChange {
-                    synapse: i as u32,
-                    before,
-                    after: syn.weight,
-                });
-            }
+            self.learn(syn, i as u32, dw, &event.fx, changes);
         }
     }
 
@@ -421,17 +541,42 @@ impl Model<'_> {
         let syn = &mut syns[index as usize];
         let params = &self.synapses[usize::from(syn.params)];
         let (lower, _) = params.limit.bounds();
-        let before = syn.weight;
         let dw = params
             .learning
-            .depression(since_ms(event.now, fired), f64::from(before), lower);
-        if dw != 0.0 {
-            syn.weight = params.limit.apply(f64::from(before) + dw) as f32;
-            changes.push(WeightChange {
-                synapse: index,
-                before,
-                after: syn.weight,
-            });
+            .depression(since_ms(event.now, fired), f64::from(syn.weight), lower);
+        self.learn(syn, index, dw, &event.fx, changes);
+    }
+
+    /// For an integrator below threshold: when will direct-potential modulators carry `u + m(t)` to `target`?
+    /// `u` decays with the membrane time constant and each modulator's contribution with its clearance time
+    /// constant; future releases arrive as their own events, so they needn't be predicted.
+    fn predict_direct_crossing(&self, u: f64, now: SimTime, target: f64) -> Wakeup {
+        let terms: Vec<(f64, f64)> = self
+            .receptors
+            .iter()
+            .filter(|r| r.direct_mv != 0.0)
+            .map(|r| {
+                (
+                    r.direct_mv * self.modulators.level(r.modulator, now),
+                    self.modulators.clearance_ms(r.modulator),
+                )
+            })
+            .filter(|(m, _)| *m != 0.0)
+            .collect();
+        let crossing = match terms.as_slice() {
+            [] => return Wakeup::Keep,
+            [(m, tau_m)] => crossing::two_exponentials(u, self.neuron.decay_ms, *m, *tau_m, target),
+            _ => {
+                let f = |t: f64| {
+                    u * decay(t, self.neuron.decay_ms) + terms.iter().map(|(m, tau)| m * decay(t, *tau)).sum::<f64>()
+                };
+                let horizon = 5.0 * terms.iter().map(|(_, tau)| *tau).fold(self.neuron.decay_ms, f64::max);
+                crossing::first_crossing(f, target, horizon)
+            }
+        };
+        match crossing {
+            Some(t) => Wakeup::In(duration_ms(t).max(SimDuration::NANOSECOND)),
+            None => Wakeup::Cancel,
         }
     }
 
@@ -450,31 +595,46 @@ impl Model<'_> {
         let now = event.now;
         let dt = self.elapse(st, now);
         let decayed = (st.u + wiener(p.noise_mv, dt, rng)) * decay(dt, p.decay_ms);
+        let threshold = p.threshold_mv * event.fx.threshold;
+        let direct = event.fx.direct_mv;
         let Some(eta) = self.refractoriness(st, now) else {
-            // Absolute refractory period: the potential is held at its minimum and input is lost (v1).
+            // Absolute refractory period: the potential is held at its minimum and input is lost (v1). A direct
+            // modulator may still push it over when the period ends, so look again then.
             st.u = p.min_potential_mv;
             self.depress(st, syns, event, changes);
-            return Outcome::quiet(st.u);
+            let wakeup = match self.refractory_end(st) {
+                Some(end) if direct > 0.0 => {
+                    Wakeup::In(end.saturating_duration_since(now).max(SimDuration::NANOSECOND))
+                }
+                _ => Wakeup::Keep,
+            };
+            return Outcome {
+                wakeup,
+                ..Outcome::quiet(st.u)
+            };
         };
         let mut updated = (event.value.unwrap_or(0.0) + decayed).max(p.min_potential_mv);
         let bistable = matches!(p.kind, NeuronKind::BistableIntegrator { .. });
         if bistable {
-            updated = updated.min(p.threshold_mv); // v1 caps a bistable neuron's potential at its threshold
+            updated = updated.min(threshold); // v1 caps a bistable neuron's potential at its threshold
         }
-        let effective = updated + eta + st.b;
-        if effective < p.threshold_mv {
+        let effective = updated + eta + st.b + direct;
+        if effective < threshold {
             st.u = updated;
             self.depress(st, syns, event, changes);
-            return Outcome::quiet((updated + eta).max(p.min_potential_mv));
+            return Outcome {
+                wakeup: self.predict_direct_crossing(updated, now, threshold - eta - st.b),
+                ..Outcome::quiet((updated + eta).max(p.min_potential_mv))
+            };
         }
 
         let rise = duration_ms(rise_delay_ms(
-            decayed + eta + st.b,
+            decayed + eta + st.b + direct,
             effective,
-            p.threshold_mv,
+            threshold,
             p.rise_ms,
         ));
-        self.fire(st, syns, now, rng, changes);
+        self.fire(st, syns, &event, rng, changes);
         match p.kind {
             NeuronKind::BistableIntegrator { tonic_rate_hz, .. } => {
                 // Into the limit cycle: the potential stays, tonic spikes follow at the tonic rate.
@@ -517,14 +677,14 @@ impl Model<'_> {
         let decayed = (st.u + wiener(p.noise_mv, dt, rng)) * decay(dt, p.decay_ms);
         st.u = (event.value.unwrap_or(0.0) + decayed)
             .max(p.min_potential_mv)
-            .min(p.threshold_mv);
+            .min(p.threshold_mv * event.fx.threshold);
         if event.value.is_some() {
             self.depress(st, syns, event, changes);
             return Outcome::quiet(st.u);
         }
         // A tonic spike.
-        self.fire(st, syns, now, rng, changes);
-        if st.u + st.b < resting_threshold_mv {
+        self.fire(st, syns, &event, rng, changes);
+        if st.u + st.b + event.fx.direct_mv < resting_threshold_mv * event.fx.threshold {
             st.phase = Phase::Rest;
             Outcome {
                 transition: Some(Transition::Rested),
@@ -586,7 +746,7 @@ impl Model<'_> {
             st.u += value; // a pulse kicks the voltage-like component
         }
 
-        let target = p.threshold_mv - eta - st.b;
+        let target = p.threshold_mv * event.fx.threshold - eta - st.b - event.fx.direct_mv;
         if st.u < target {
             self.depress(st, syns, event, changes);
             // Will the oscillation carry it over the threshold before the next input? (The refractoriness and
@@ -601,7 +761,7 @@ impl Model<'_> {
             };
         }
 
-        self.fire(st, syns, now, rng, changes);
+        self.fire(st, syns, &event, rng, changes);
         match p.kind {
             NeuronKind::BistableResonator { cycle_mv, .. } => {
                 // Onto the limit cycle, at its peak; the next tonic spike is one period later.
@@ -654,7 +814,7 @@ impl Model<'_> {
             st.angle = FRAC_PI_2;
             st.x = 0.0;
             st.u = cycle_mv;
-            self.fire(st, syns, now, rng, changes);
+            self.fire(st, syns, &event, rng, changes);
             return Outcome {
                 wakeup: Wakeup::In(duration_ms(r.period_ms())),
                 ..Outcome::spike(SimDuration::ZERO, cycle_mv)
@@ -709,4 +869,6 @@ struct Event {
     value: Option<f64>,
     /// The synapse it came through, if any.
     synapse: Option<u32>,
+    /// Neuromodulator effects at this moment.
+    fx: Effects,
 }

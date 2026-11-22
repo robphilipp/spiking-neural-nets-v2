@@ -1,6 +1,6 @@
 # Plan: neuron crates
 
-Status: **N1, N2, N3a done** (2026-11-22); N3b (neuromodulation) and N4 to do. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done).
+Status: **N1–N3 done** (2026-11-22); N4 (recording) to do. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done).
 The v1 model is described in `notes/02-neuron-model.md` and `notes/03-network-description-language.md`.
 
 ## Goal
@@ -162,3 +162,32 @@ Validation on v1 networks:
 recorded ~50 ms per hop and sustained circulation. That timing matches v1's millisecond-rounded, wall-clock
 message delivery rather than the model. For sustained circulation in v2, the ring needs longer delays (larger
 distances or slower conduction) or a shorter refractory period.
+
+## N3b status: done (2026-11-22)
+
+Neuromodulation, end to end (actors plan 09, decisions 11, 14, 15):
+
+- **Model** (`spikes-model::modulation`): receptors with excitatory gain, inhibitory gain, threshold, plasticity,
+  three-factor learning and direct potential, each linear in concentration; effects of several receptors combine.
+  Concentrations come through a `Modulators` trait. Three-factor learning: STDP changes go to a per-synapse
+  eligibility trace, and the weight changes by `rate·∫ e(s)·c(s) ds`, computed exactly from the release history
+  when the synapse is next updated. Direct potential is added to the threshold test; integrators predict
+  modulator-driven crossings and wake themselves (`crossing::first_crossing` for several modulators).
+  `Model::on_modulation` re-evaluates a neuron when a modulator arrives.
+- **Language** (`spikes-dna`): `MOD=[(nam, clr, rad, spd, lat, len)]`, neuron `RCP=[(mod, exg, ing, thr, pla,
+  elg, rat, dir)]` and `REL=(mod, amt)`.
+- **Network** (`spikes-network::modulators`): a shard-local `ModulatorField` of releases; each neuron reads
+  concentrations lazily at its position (arrival `t + latency + d/speed`, amplitude `amount·e^(−d/len)`, clearance
+  decay). Neurons with `REL` release when they spike; `Network::add_release_site` adds a release point that the
+  UI can trigger. Modulators with direct-potential receptors also wake the neurons they reach (spatial broadcast).
+
+Tests: each effect on a single neuron; exact three-factor integral; reward learning in a network (no dopamine,
+no learning; dopamine 100 ms after the pairing strengthens the synapse; same on 1 and 2 shards); a direct modulator
+firing the neuron it reaches at exactly `release + latency + distance/speed`, not one beyond its reach; a neuron
+releasing a modulator when it spikes.
+
+Approximations, documented in the code:
+- Three-factor weight changes are applied when the synapse is next updated, then decay toward equilibrium over the
+  whole interval since its previous update.
+- Releases are kept for 60 s (or 20 clearance times); a synapse idle longer loses older contributions.
+- Predictions of direct-potential crossings hold the refractoriness kernel at its current value.

@@ -34,7 +34,7 @@ pub fn damped_oscillator(x0: f64, y0: f64, b: f64, omega: f64, c: f64) -> Option
     }
     // f rises monotonically from the preceding minimum (or from t = 0) to t_max.
     let lo = (t_max - std::f64::consts::PI / omega).max(0.0);
-    Some(bisect(f, lo, t_max, c))
+    Some(bisect(&f, lo, t_max, c))
 }
 
 /// For `f(t) = u₀·e^(−t/τu) + m₀·e^(−t/τm)` (a decaying potential plus a decaying direct-potential modulator),
@@ -53,7 +53,7 @@ pub fn two_exponentials(u0: f64, tau_u: f64, m0: f64, tau_m: f64, c: f64) -> Opt
         None
     };
     match turning {
-        Some(t_star) if f(t_star) >= c => Some(bisect(f, 0.0, t_star, c)),
+        Some(t_star) if f(t_star) >= c => Some(bisect(&f, 0.0, t_star, c)),
         Some(t_star) if c < 0.0 => {
             // A minimum below c, then f returns toward 0 > c: find where it climbs back up through c.
             let mut hi = t_star.max(1.0);
@@ -63,14 +63,33 @@ pub fn two_exponentials(u0: f64, tau_u: f64, m0: f64, tau_m: f64, c: f64) -> Opt
                     return None;
                 }
             }
-            Some(bisect(f, t_star, hi, c))
+            Some(bisect(&f, t_star, hi, c))
         }
         _ => None,
     }
 }
 
+/// The first `t` in `(0, horizon]` with `f(t) ≥ c`, for a smooth `f` without fast wiggles (e.g. a sum of a few
+/// decaying exponentials): scans in steps of `horizon/2000`, then bisects.
+pub fn first_crossing(f: impl Fn(f64) -> f64, c: f64, horizon: f64) -> Option<f64> {
+    if f(0.0) >= c {
+        return Some(0.0);
+    }
+    let steps = 2_000;
+    let dt = horizon / f64::from(steps);
+    let mut lo = 0.0;
+    for i in 1..=steps {
+        let t = f64::from(i) * dt;
+        if f(t) >= c {
+            return Some(bisect(&f, lo, t, c));
+        }
+        lo = t;
+    }
+    None
+}
+
 /// The point in `[lo, hi]` where an increasing `f` reaches `c`, given `f(lo) < c ≤ f(hi)`.
-fn bisect(f: impl Fn(f64) -> f64, mut lo: f64, mut hi: f64, c: f64) -> f64 {
+fn bisect(f: &impl Fn(f64) -> f64, mut lo: f64, mut hi: f64, c: f64) -> f64 {
     for _ in 0..ITERATIONS {
         let mid = 0.5 * (lo + hi);
         if f(mid) >= c {

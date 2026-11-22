@@ -255,3 +255,52 @@ fn undefined_neuron_sets_are_reported_once_per_connection() {
         errors[0]
     );
 }
+
+const MODULATED: &str = "(
+MOD=[(nam=dopamine, clr=200 ms, rad=300 µm, spd=0.01 m/s, lat=2 ms, len=100 µm), (nam=ach, clr=1 s)],
+NRN=[
+    (nid=vta, LOC=(cst=ct, px1=0, px2=0, px3=0), REL=(mod=dopamine, amt=2)),
+    (nid=pyr, LOC=(cst=ct, px1=50, px2=0, px3=0),
+        RCP=[(mod=dopamine, exg=0.5, elg=500 ms, rat=0.1), (mod=ach, thr=-0.2, dir=1 mV)]),
+],
+)";
+
+#[test]
+fn modulators_receptors_and_releases_parse() {
+    let network = parse(MODULATED).unwrap();
+    assert_eq!(network.modulators.len(), 2);
+    let da = &network.modulators[0];
+    assert_eq!(
+        (
+            da.name.as_str(),
+            da.clearance_ms,
+            da.radius_um,
+            da.speed_m_per_s,
+            da.latency_ms,
+            da.falloff_um
+        ),
+        ("dopamine", 200.0, 300.0, 0.01, 2.0, Some(100.0))
+    );
+    assert_eq!(network.modulators[1].radius_um, f64::INFINITY);
+    assert_eq!(network.neuron("vta").unwrap().release, Some((0, 2.0)));
+    let receptors = &network.neuron("pyr").unwrap().receptors;
+    assert_eq!(receptors.len(), 2);
+    assert_eq!(receptors[0].modulator, 0);
+    assert_eq!(receptors[0].excitatory_gain, 0.5);
+    assert_eq!(receptors[0].three_factor.unwrap().eligibility_ms, 500.0);
+    assert_eq!(
+        (receptors[1].modulator, receptors[1].threshold, receptors[1].direct_mv),
+        (1, -0.2, 1.0)
+    );
+}
+
+#[test]
+fn unknown_modulators_are_reported() {
+    let errors = parse(&MODULATED.replace("(mod=ach, thr", "(mod=serotonin, thr")).unwrap_err();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message.contains("modulator 'serotonin' isn't defined")),
+        "{errors:?}"
+    );
+}

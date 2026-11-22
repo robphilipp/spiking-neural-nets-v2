@@ -18,6 +18,26 @@ pub enum SimMsg {
     Neuron(NeuronMsg),
     /// For an input actor.
     Input(InputMsg),
+    /// For a modulator release site.
+    Modulator(ModulatorMsg),
+}
+
+/// Messages a modulator release site accepts.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ModulatorMsg {
+    /// Release this much of modulator `kind` (its index in the description's `MOD` list).
+    Release {
+        /// Which modulator.
+        kind: u16,
+        /// How much.
+        amount: f32,
+    },
+}
+
+impl From<ModulatorMsg> for SimMsg {
+    fn from(msg: ModulatorMsg) -> Self {
+        Self::Modulator(msg)
+    }
 }
 
 /// Messages a neuron accepts.
@@ -35,6 +55,8 @@ pub enum NeuronMsg {
     },
     /// A wake-up the neuron scheduled for itself (tonic spikes, predicted threshold crossings).
     Wake(TimerToken),
+    /// A modulator with a direct-potential effect has just reached the neuron.
+    Modulate,
 }
 
 /// Messages an input actor accepts.
@@ -94,6 +116,8 @@ pub struct Ref<T> {
 pub type NeuronRef = Ref<NeuronMsg>;
 /// A handle to an input actor.
 pub type InputRef = Ref<InputMsg>;
+/// A handle to a modulator release site.
+pub type ModulatorRef = Ref<ModulatorMsg>;
 
 impl<T> Ref<T> {
     /// Wraps an ID. Only do this for an ID you know belongs to an actor accepting `T`.

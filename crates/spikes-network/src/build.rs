@@ -6,12 +6,13 @@ use std::sync::Arc;
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use spikes_dna::{NetworkDescription, WeightSpec};
-use spikes_model::{NeuronParams, Synapse, SynapseParams};
+use spikes_model::{NeuronParams, Receptor, Synapse, SynapseParams};
 use tempo_runtime::placement::spatial_partitions;
 use tempo_runtime::{ActorId, EdgeIdx, Jitter, RouteEdge, SimDuration};
 
 use crate::Runtime;
-use crate::messages::NeuronRef;
+use crate::messages::{ModulatorRef, NeuronRef};
+use crate::modulators::{ModulatorField, ModulatorKind, ModulatorRelease};
 use crate::neuron::{NetworkParams, NeuronActor};
 
 /// How to build a network.
@@ -44,6 +45,8 @@ impl Default for BuildOptions {
 pub struct Network {
     /// Neurons in description order.
     pub neurons: Vec<NeuronRef>,
+    /// The shared parameter tables.
+    pub params: Arc<NetworkParams>,
     by_name: HashMap<String, NeuronRef>,
     names: HashMap<ActorId, String>,
 }
@@ -57,6 +60,25 @@ impl Network {
     /// The name of the neuron with this ID.
     pub fn name(&self, id: ActorId) -> Option<&str> {
         self.names.get(&id).map(String::as_str)
+    }
+
+    /// Adds a modulator release site at `position` (µm), e.g. for a UI "reward" button. Send it
+    /// `ModulatorMsg::Release` to release a modulator there.
+    pub fn add_release_site(&self, rt: &mut Runtime, position: [f64; 3]) -> ModulatorRef {
+        let id = rt.spawn(ModulatorRelease {
+            position,
+            kinds: Arc::clone(&self.params.modulators),
+        });
+        ModulatorRef::new(id)
+    }
+
+    /// The index of the modulator with this name (as used in `ModulatorMsg::Release`).
+    pub fn modulator(&self, name: &str) -> Option<u16> {
+        self.params
+            .modulators
+            .iter()
+            .position(|m| m.name == name)
+            .map(|i| i as u16)
     }
 
     /// The neurons whose names satisfy `matches`, in description order.
@@ -95,6 +117,9 @@ impl<T: std::fmt::Debug> Table<T> {
     }
 }
 
+/// A population: dynamics, receptors, and modulator release on spiking.
+type Population = (NeuronParams, Vec<Receptor>, Option<(u16, f64)>);
+
 fn draw(spec: WeightSpec, rng: &mut Xoshiro256PlusPlus) -> f64 {
     match spec {
         WeightSpec::Fixed(w) => w,
@@ -117,12 +142,13 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         .map(|(i, d)| (d.id.as_str(), i))
         .collect();
 
-    // Parameter tables, shared by all neurons.
-    let mut neuron_table: Table<NeuronParams> = Table::new();
+    // Parameter tables, shared by all neurons. A population is a distinct combination of dynamics, receptors and
+    // modulator release.
+    let mut population_table: Table<Population> = Table::new();
     let populations: Vec<u32> = description
         .neurons
         .iter()
-        .map(|d| neuron_table.insert(d.params.clone()))
+        .map(|d| population_table.insert((d.params.clone(), d.receptors.clone(), d.release)))
         .collect();
     let mut synapse_table: Table<SynapseParams> = Table::new();
     let connection_params: Vec<u16> = description
@@ -141,8 +167,40 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
             u16::try_from(synapse_table.insert(params)).expect("fewer than 65,536 distinct synapse parameter sets")
         })
         .collect();
+    let direct: Vec<bool> = (0..description.modulators.len())
+        .map(|k| {
+            description
+                .neurons
+                .iter()
+                .flat_map(|n| &n.receptors)
+                .any(|r| usize::from(r.modulator) == k && r.direct_mv != 0.0)
+        })
+        .collect();
+    let modulators: Arc<Vec<ModulatorKind>> = Arc::new(
+        description
+            .modulators
+            .iter()
+            .zip(&direct)
+            .map(|(m, &direct)| ModulatorKind::from_description(m, direct))
+            .collect(),
+    );
+    if !modulators.is_empty() {
+        rt.add_field(ModulatorField::new(Arc::clone(&modulators)));
+    }
+    let (neurons, receptors, releases) = population_table.items.into_iter().fold(
+        (Vec::new(), Vec::new(), Vec::new()),
+        |(mut n, mut r, mut l), (neuron, receptors, release)| {
+            n.push(neuron);
+            r.push(receptors);
+            l.push(release);
+            (n, r, l)
+        },
+    );
     let params = Arc::new(NetworkParams {
-        neurons: neuron_table.items,
+        neurons,
+        receptors,
+        releases,
+        modulators,
         synapses: synapse_table.items,
         record_weights: options.record_weights,
     });
@@ -152,7 +210,8 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
     let partitions = spatial_partitions(&locations, rt.partitions());
     let ids: Vec<ActorId> = (0..n)
         .map(|i| {
-            let id = rt.spawn_in(partitions[i], NeuronActor::new(Arc::clone(&params), populations[i]));
+            let actor = NeuronActor::new(Arc::clone(&params), populations[i], locations[i]);
+            let id = rt.spawn_in(partitions[i], actor);
             rt.set_position(id, locations[i]);
             id
         })
@@ -199,6 +258,7 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
 
     let neurons: Vec<NeuronRef> = ids.iter().map(|&id| NeuronRef::new(id)).collect();
     Network {
+        params,
         by_name: description
             .neurons
             .iter()

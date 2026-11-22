@@ -99,6 +99,18 @@ impl<M, E> Ctx<'_, M, E> {
         self.core.fields[index].as_any().downcast_ref()
     }
 
+    /// This shard's copy of field `F` together with the actor's random stream, for handlers that need both at
+    /// once (the borrow checker won't allow [`Self::field`] and [`Self::rng`] together).
+    pub fn field_and_rng<F: Field>(&mut self) -> (Option<&F>, &mut ActorRng) {
+        let field = self
+            .world
+            .field_types
+            .iter()
+            .position(|t| *t == TypeId::of::<F>())
+            .and_then(|index| self.core.fields[index].as_any().downcast_ref());
+        (field, &mut self.meta.rng)
+    }
+
     /// Broadcasts an update to field `F` on every shard, applied `delay` from now. With several shards, `delay`
     /// should be at least the lookahead.
     ///

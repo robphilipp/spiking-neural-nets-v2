@@ -17,7 +17,7 @@ pub struct GroupId(pub u32);
 pub struct SpatialBroadcast {
     /// Origin of the broadcast.
     pub center: [f64; 3],
-    /// Actors farther than this (in the same units as positions) are not reached.
+    /// Actors farther than this (in the same units as positions) are not reached; infinite reaches every actor.
     pub radius: f64,
     /// Delay before the signal leaves the origin. For a cross-shard broadcast, at least the runtime's lookahead.
     pub base_delay: SimDuration,
@@ -78,6 +78,17 @@ impl SpatialIndex {
 
     /// Calls `f(actor, distance)` for every actor within `radius` of `center`.
     pub(crate) fn for_each_within(&self, center: [f64; 3], radius: f64, mut f: impl FnMut(ActorId, f64)) {
+        let distance =
+            |p: [f64; 3]| ((p[0] - center[0]).powi(2) + (p[1] - center[1]).powi(2) + (p[2] - center[2]).powi(2)).sqrt();
+        if !radius.is_finite() {
+            // Unlimited reach: every actor with a position.
+            for cell in self.cells.values() {
+                for &(id, p) in cell {
+                    f(id, distance(p));
+                }
+            }
+            return;
+        }
         let lo = self.key(center.map(|c| c - radius));
         let hi = self.key(center.map(|c| c + radius));
         for x in lo[0]..=hi[0] {

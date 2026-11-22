@@ -4,12 +4,13 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use spikes_model::{
-    AlphaStdp, ExponentialStdp, Homeostasis, IntrinsicParams, LearningRule, NeuronKind, NeuronParams, Release,
-    Resonance, Sign, Stickiness, WeightDecay, WeightLimit,
+    AlphaStdp, ExponentialStdp, Homeostasis, IntrinsicParams, LearningRule, NeuronKind, NeuronParams, Receptor,
+    Release, Resonance, Sign, Stickiness, ThreeFactor, WeightDecay, WeightLimit,
 };
 
 use crate::description::{
-    ConnectionDescription, GroupDescription, NetworkDescription, NeuronDescription, SynapseDefaults, WeightSpec,
+    ConnectionDescription, GroupDescription, ModulatorDescription, NetworkDescription, NeuronDescription,
+    SynapseDefaults, WeightSpec,
 };
 use crate::syntax::{Field, Node, ParseError, Span, Value};
 use crate::units::Quantity;
@@ -213,7 +214,7 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
     let Some(top) = Rec::of(root, "network description", &mut errors) else {
         return Err(errors.0);
     };
-    top.check_keys(&["GRP", "NRN", "CON", "LRN", "CST"], &mut errors);
+    top.check_keys(&["GRP", "NRN", "CON", "LRN", "CST", "MOD"], &mut errors);
     if top.get("NRN").is_none() {
         top.missing("NRN", &mut errors);
     }
@@ -234,9 +235,19 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
         stickiness_fn,
         &mut errors,
     );
+    let modulators: Vec<ModulatorDescription> = list(&top, "MOD", &mut errors)
+        .iter()
+        .filter_map(|node| modulator(node, &mut errors))
+        .collect();
+    let mut modulator_index = HashMap::new();
+    for (i, m) in modulators.iter().enumerate() {
+        if modulator_index.insert(m.name.clone(), i as u16).is_some() {
+            errors.add(root.span, format!("modulator '{}' is defined twice in MOD", m.name));
+        }
+    }
     let neurons: Vec<NeuronDescription> = list(&top, "NRN", &mut errors)
         .iter()
-        .filter_map(|node| neuron(node, &mut errors))
+        .filter_map(|node| neuron(node, &modulator_index, &mut errors))
         .collect();
 
     let mut learning_map: BTreeMap<String, LearningRule> = BTreeMap::from([("flat".to_string(), LearningRule::None)]);
@@ -298,6 +309,7 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
             connections,
             learning: learning_map,
             stickiness: stickiness_map,
+            modulators,
         })
     } else {
         errors.0.sort_by_key(|e| e.span);
@@ -418,8 +430,70 @@ fn stickiness_fn(rec: &Rec<'_>, errors: &mut Errors) -> Option<(String, Stickine
 
 const NEURON_KEYS: &[&str] = &[
     "nid", "grp", "nty", "inh", "mst", "lct", "rst", "tfr", "rfp", "rfb", "mnp", "mpd", "mpr", "mpn", "wnm", "spp",
-    "csp", "ipb", "ipl", "ipd", "WDF", "WLF", "SRP", "SNT", "LOC", "RES", "HIP",
+    "csp", "ipb", "ipl", "ipd", "WDF", "WLF", "SRP", "SNT", "LOC", "RES", "HIP", "RCP", "REL",
 ];
+
+fn modulator(node: &Node, errors: &mut Errors) -> Option<ModulatorDescription> {
+    let rec = Rec::of(node, "modulator", errors)?;
+    rec.check_keys(&["nam", "clr", "rad", "spd", "lat", "len"], errors);
+    let description = ModulatorDescription {
+        name: rec.word("nam", None, &[], errors),
+        clearance_ms: rec.quantity("clr", Quantity::Time, None, errors),
+        radius_um: rec.quantity("rad", Quantity::Length, Some(f64::INFINITY), errors),
+        speed_m_per_s: rec.quantity("spd", Quantity::Speed, Some(f64::INFINITY), errors),
+        latency_ms: rec.quantity("lat", Quantity::Time, Some(1.0), errors),
+        falloff_um: rec
+            .get("len")
+            .map(|_| rec.quantity("len", Quantity::Length, None, errors)),
+    };
+    if description.clearance_ms <= 0.0 {
+        errors.add(rec.span, "the clearance time 'clr' must be positive");
+    }
+    Some(description)
+}
+
+/// Looks up a modulator by the name in `key`.
+fn modulator_ref(rec: &Rec<'_>, key: &str, modulators: &HashMap<String, u16>, errors: &mut Errors) -> u16 {
+    let name = rec.word(key, None, &[], errors);
+    match modulators.get(&name) {
+        Some(&i) => i,
+        None => {
+            errors.add(
+                rec.get(key).map_or(rec.span, |n| n.span),
+                format!("modulator '{name}' isn't defined in MOD"),
+            );
+            0
+        }
+    }
+}
+
+fn receptor(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -> Option<Receptor> {
+    let rec = Rec::of(node, "receptor", errors)?;
+    rec.check_keys(&["mod", "exg", "ing", "thr", "pla", "elg", "rat", "dir"], errors);
+    let three_factor = match (rec.get("elg"), rec.get("rat")) {
+        (None, None) => None,
+        (Some(_), Some(_)) => Some(ThreeFactor {
+            eligibility_ms: rec.quantity("elg", Quantity::Time, None, errors),
+            rate: rec.quantity("rat", Quantity::Dimensionless, None, errors),
+        }),
+        _ => {
+            errors.add(
+                rec.span,
+                "three-factor learning needs both 'elg' (eligibility time) and 'rat' (rate)",
+            );
+            None
+        }
+    };
+    Some(Receptor {
+        modulator: modulator_ref(&rec, "mod", modulators, errors),
+        excitatory_gain: rec.quantity("exg", Quantity::Dimensionless, Some(0.0), errors),
+        inhibitory_gain: rec.quantity("ing", Quantity::Dimensionless, Some(0.0), errors),
+        threshold: rec.quantity("thr", Quantity::Dimensionless, Some(0.0), errors),
+        plasticity: rec.quantity("pla", Quantity::Dimensionless, Some(0.0), errors),
+        three_factor,
+        direct_mv: rec.quantity("dir", Quantity::Potential, Some(0.0), errors),
+    })
+}
 
 /// v1's defaults, used for keys a neuron doesn't give (older files lack several).
 mod default {
@@ -438,7 +512,7 @@ mod default {
     pub const WEIGHT_DECAY_MS: f64 = 1_500.0;
 }
 
-fn neuron(node: &Node, errors: &mut Errors) -> Option<NeuronDescription> {
+fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -> Option<NeuronDescription> {
     let rec = Rec::of(node, "neuron", errors)?;
     rec.check_keys(NEURON_KEYS, errors);
     let q = |key, quantity, default, errors: &mut Errors| rec.quantity(key, quantity, Some(default), errors);
@@ -597,6 +671,22 @@ fn neuron(node: &Node, errors: &mut Errors) -> Option<NeuronDescription> {
         }
     };
 
+    let receptors = match rec.get("RCP").map(|n| (&n.value, n.span)) {
+        None => Vec::new(),
+        Some((Value::List(items), _)) => items.iter().filter_map(|n| receptor(n, modulators, errors)).collect(),
+        Some((_, span)) => {
+            errors.add(span, "'RCP' must be a list of receptors: RCP=[(mod=…, …)]");
+            Vec::new()
+        }
+    };
+    let modulator_release = rec.record("REL", "release", errors).map(|r| {
+        r.check_keys(&["mod", "amt"], errors);
+        (
+            modulator_ref(&r, "mod", modulators, errors),
+            r.quantity("amt", Quantity::Dimensionless, Some(1.0), errors),
+        )
+    });
+
     Some(NeuronDescription {
         id,
         group,
@@ -610,6 +700,8 @@ fn neuron(node: &Node, errors: &mut Errors) -> Option<NeuronDescription> {
             release,
             weight_noise: q("wnm", Quantity::Dimensionless, 0.0, errors),
         },
+        receptors,
+        release: modulator_release,
         span: rec.span,
     })
 }

@@ -193,6 +193,8 @@ pub struct Synapse {
     pub trace: [f32; 2],
     /// Signals since the receiver's last spike.
     pub count: u32,
+    /// Three-factor learning: the eligibility trace (STDP changes waiting for a modulator), as of `last`.
+    pub eligibility: f32,
 }
 
 impl Synapse {
@@ -208,6 +210,7 @@ impl Synapse {
             depletion: 0.0,
             trace: [0.0, 0.0],
             count: 0,
+            eligibility: 0.0,
         }
     }
 

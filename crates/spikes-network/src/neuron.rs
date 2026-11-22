@@ -2,16 +2,26 @@
 
 use std::sync::Arc;
 
-use spikes_model::{Input, Model, NeuronParams, NeuronState, Outcome, Synapse, SynapseParams, Wakeup, WeightChange};
+use spikes_model::{
+    Input, Model, Modulators, NeuronParams, NeuronState, NoModulators, Outcome, Receptor, Synapse, SynapseParams,
+    Wakeup, WeightChange,
+};
 use tempo_runtime::{Actor, ActorId, Ctx, EdgeIdx, RouteId, Timer};
 
 use crate::messages::{Event, NeuronMsg, SimMsg};
+use crate::modulators::{ModulatorField, ModulatorKind, release};
 
 /// Parameters shared by every neuron in a network: population and synapse tables, and recording options.
 #[derive(Debug)]
 pub struct NetworkParams {
     /// Neuron parameter sets, indexed by [`NeuronActor::population`].
     pub neurons: Vec<NeuronParams>,
+    /// Each population's neuromodulator receptors.
+    pub receptors: Vec<Vec<Receptor>>,
+    /// Each population's modulator release on spiking: (modulator, amount).
+    pub releases: Vec<Option<(u16, f64)>>,
+    /// The network's modulators.
+    pub modulators: Arc<Vec<ModulatorKind>>,
     /// Synapse parameter sets, indexed by [`Synapse::params`].
     pub synapses: Vec<SynapseParams>,
     /// Emit an [`Event::Weight`] for every weight change from learning.
@@ -33,13 +43,15 @@ pub struct NeuronActor {
     pub population: u32,
     /// Outgoing connections.
     pub out: Option<RouteId>,
+    /// Soma position in µm (where modulator concentrations are evaluated, and where releases happen).
+    pub position: [f64; 3],
     timer: Timer,
     changes: Vec<WeightChange>,
 }
 
 impl NeuronActor {
     /// A neuron at rest, without synapses or outgoing connections yet.
-    pub fn new(params: Arc<NetworkParams>, population: u32) -> Self {
+    pub fn new(params: Arc<NetworkParams>, population: u32, position: [f64; 3]) -> Self {
         let state = NeuronState::at_rest(&params.neurons[population as usize]);
         Self {
             state,
@@ -48,39 +60,30 @@ impl NeuronActor {
             params,
             population,
             out: None,
+            position,
             timer: Timer::default(),
             changes: Vec::new(),
         }
     }
 
-    fn input(&mut self, ctx: &mut Ctx<'_, SimMsg, Event>, input: Input) {
-        let model = Model {
-            neuron: &self.params.neurons[self.population as usize],
-            synapses: &self.params.synapses,
+    /// Runs one model update with this neuron's receptors and the shard's modulator concentrations.
+    fn update(&mut self, ctx: &mut Ctx<'_, SimMsg, Event>, what: Update) {
+        let now = ctx.now();
+        let population = self.population as usize;
+        let (field, rng) = ctx.field_and_rng::<ModulatorField>();
+        let view = field.map(|f| f.at(self.position));
+        let modulators: &dyn Modulators = match &view {
+            Some(v) => v,
+            None => &NoModulators,
         };
-        let outcome = model.on_input(
-            &mut self.state,
-            &mut self.synapses,
-            ctx.now(),
-            input,
-            ctx.rng(),
-            &mut self.changes,
-        );
-        self.handle(ctx, outcome);
-    }
-
-    fn wake(&mut self, ctx: &mut Ctx<'_, SimMsg, Event>) {
-        let model = Model {
-            neuron: &self.params.neurons[self.population as usize],
-            synapses: &self.params.synapses,
+        let model = Model::new(&self.params.neurons[population], &self.params.synapses)
+            .with_modulation(&self.params.receptors[population], modulators);
+        let (state, synapses, changes) = (&mut self.state, &mut self.synapses, &mut self.changes);
+        let outcome = match what {
+            Update::Input(input) => model.on_input(state, synapses, now, input, rng, changes),
+            Update::Wake => model.on_wakeup(state, synapses, now, rng, changes),
+            Update::Modulate => model.on_modulation(state, synapses, now, rng, changes),
         };
-        let outcome = model.on_wakeup(
-            &mut self.state,
-            &mut self.synapses,
-            ctx.now(),
-            ctx.rng(),
-            &mut self.changes,
-        );
         self.handle(ctx, outcome);
     }
 
@@ -91,6 +94,9 @@ impl NeuronActor {
             if let Some(route) = self.out {
                 let mv = self.params.neurons[self.population as usize].spike_mv as f32;
                 ctx.fanout_at(route, at, SimMsg::Neuron(NeuronMsg::Spike { mv }));
+            }
+            if let Some((kind, amount)) = self.params.releases[self.population as usize] {
+                release(ctx, &self.params.modulators, kind, amount, self.position, at);
             }
         }
         if let Some(transition) = outcome.transition {
@@ -127,27 +133,40 @@ impl NeuronActor {
 impl Actor<SimMsg, Event> for NeuronActor {
     fn on_message(&mut self, ctx: &mut Ctx<'_, SimMsg, Event>, _from: ActorId, msg: SimMsg) {
         match msg {
-            SimMsg::Neuron(NeuronMsg::External { mv }) => self.input(ctx, Input::External { mv: f64::from(mv) }),
+            SimMsg::Neuron(NeuronMsg::External { mv }) => {
+                self.update(ctx, Update::Input(Input::External { mv: f64::from(mv) }));
+            }
             SimMsg::Neuron(NeuronMsg::Wake(token)) => {
                 if self.timer.fire(token) {
-                    self.wake(ctx);
+                    self.update(ctx, Update::Wake);
                 }
             }
+            SimMsg::Neuron(NeuronMsg::Modulate) => self.update(ctx, Update::Modulate),
             // A spike sent directly rather than along a route has no synapse: treat it as external input.
-            SimMsg::Neuron(NeuronMsg::Spike { mv }) => self.input(ctx, Input::External { mv: f64::from(mv) }),
-            SimMsg::Input(_) => {}
+            SimMsg::Neuron(NeuronMsg::Spike { mv }) => {
+                self.update(ctx, Update::Input(Input::External { mv: f64::from(mv) }));
+            }
+            SimMsg::Input(_) | SimMsg::Modulator(_) => {}
         }
     }
 
     fn on_route_message(&mut self, ctx: &mut Ctx<'_, SimMsg, Event>, _from: ActorId, edge: EdgeIdx, msg: SimMsg) {
         if let SimMsg::Neuron(NeuronMsg::Spike { mv }) = msg {
-            self.input(
+            self.update(
                 ctx,
-                Input::Synaptic {
+                Update::Input(Input::Synaptic {
                     synapse: edge.0,
                     mv: f64::from(mv),
-                },
+                }),
             );
         }
     }
+}
+
+/// What a model update is for.
+#[derive(Copy, Clone, Debug)]
+enum Update {
+    Input(Input),
+    Wake,
+    Modulate,
 }

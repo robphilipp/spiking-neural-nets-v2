@@ -14,6 +14,9 @@
 //! | `HIP=(tgt=…, str=…, win=…, lwb=…, upb=…)` | neuron | homeostatic intrinsic plasticity: target rate, strength (mV per Hz·s), rate window, bounds |
 //! | `typ=exc` / `typ=inh` | connection | the connection's sign (default: from the sending neuron's `inh`) |
 //! | `nam=…` | learning or stickiness function | a name, so several of one type can coexist (default: its `fnc`) |
+//! | `MOD=[(nam=…, clr=…, rad=…, spd=…, lat=…, len=…)]` | top level | neuromodulators: clearance time, reach, spreading speed, latency, spatial falloff |
+//! | `RCP=[(mod=…, exg=…, ing=…, thr=…, pla=…, elg=…, rat=…, dir=…)]` | neuron | receptors: excitatory/inhibitory gain, threshold, plasticity, three-factor learning (eligibility time, rate), direct potential |
+//! | `REL=(mod=…, amt=…)` | neuron | releases a modulator when the neuron spikes |
 
 mod convert;
 pub mod description;
@@ -21,7 +24,8 @@ mod syntax;
 pub mod units;
 
 pub use description::{
-    ConnectionDescription, GroupDescription, NetworkDescription, NeuronDescription, SynapseDefaults, WeightSpec,
+    ConnectionDescription, GroupDescription, ModulatorDescription, NetworkDescription, NeuronDescription,
+    SynapseDefaults, WeightSpec,
 };
 pub use syntax::{ParseError, Span};
 

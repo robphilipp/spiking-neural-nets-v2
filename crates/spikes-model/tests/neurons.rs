@@ -35,10 +35,7 @@ impl Rig {
     }
 
     fn input(&mut self, at_ms: f64, input: Input) -> spikes_model::Outcome {
-        let model = Model {
-            neuron: &self.params,
-            synapses: &self.synapse_params,
-        };
+        let model = Model::new(&self.params, &self.synapse_params);
         model.on_input(
             &mut self.state,
             &mut self.synapses,
@@ -54,10 +51,7 @@ impl Rig {
     }
 
     fn wakeup(&mut self, at: SimTime) -> spikes_model::Outcome {
-        let model = Model {
-            neuron: &self.params,
-            synapses: &self.synapse_params,
-        };
+        let model = Model::new(&self.params, &self.synapse_params);
         model.on_wakeup(
             &mut self.state,
             &mut self.synapses,

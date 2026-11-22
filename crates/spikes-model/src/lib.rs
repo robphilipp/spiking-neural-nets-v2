@@ -9,6 +9,7 @@
 //! - [`synapse`]: weights (decay, limits, stickiness, noise), stochastic release, STDP traces.
 //! - [`stdp`]: the learning rules.
 //! - [`intrinsic`]: intrinsic plasticity, with optional homeostasis.
+//! - [`modulation`]: neuromodulator receptors and their effects.
 //! - [`crossing`]: predicting threshold crossings between events.
 //!
 //! The model follows the documented v1 model (wiki, `dna-defs.md`, paper), not v1's code where the two differ;
@@ -16,12 +17,14 @@
 
 pub mod crossing;
 pub mod intrinsic;
+pub mod modulation;
 pub mod neuron;
 pub mod stdp;
 pub mod synapse;
 pub mod units;
 
 pub use intrinsic::{Homeostasis, IntrinsicParams};
+pub use modulation::{Modulators, NoModulators, Pulse, Receptor, ThreeFactor};
 pub use neuron::{
     Input, Model, NeuronKind, NeuronParams, NeuronState, Outcome, Phase, Resonance, Transition, Wakeup, WeightChange,
 };

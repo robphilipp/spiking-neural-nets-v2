@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use spikes_model::{LearningRule, NeuronParams, Release, Sign, Stickiness, WeightDecay, WeightLimit};
+use spikes_model::{LearningRule, NeuronParams, Receptor, Release, Sign, Stickiness, WeightDecay, WeightLimit};
 
 use crate::Span;
 
@@ -19,6 +19,26 @@ pub struct NetworkDescription {
     pub learning: BTreeMap<String, LearningRule>,
     /// Weight-stickiness functions by name (`CST`); `none` is always defined.
     pub stickiness: BTreeMap<String, Stickiness>,
+    /// Neuromodulators (`MOD`), in definition order: receptors and releases refer to them by index.
+    pub modulators: Vec<ModulatorDescription>,
+}
+
+/// A neuromodulator: how it spreads from a release and how fast it is cleared.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModulatorDescription {
+    /// Name (`nam`).
+    pub name: String,
+    /// Clearance time constant in ms (`clr`).
+    pub clearance_ms: f64,
+    /// Reach in µm (`rad`; infinite by default).
+    pub radius_um: f64,
+    /// Spreading speed in m/s (`spd`; infinite, i.e. instantaneous, by default).
+    pub speed_m_per_s: f64,
+    /// Delay from release to the start of spreading, in ms (`lat`; default 1 ms). With several shards it must be
+    /// at least the lookahead, so every shard learns of a release before it reaches any neuron.
+    pub latency_ms: f64,
+    /// Spatial falloff length in µm (`len`): amplitude × `exp(−distance/len)`; `None` means no falloff.
+    pub falloff_um: Option<f64>,
 }
 
 impl NetworkDescription {
@@ -54,6 +74,10 @@ pub struct NeuronDescription {
     pub location_um: [f64; 3],
     /// Settings for this neuron's *incoming* synapses (`WDF`, `WLF`, `SRP`, `wnm`).
     pub synapses: SynapseDefaults,
+    /// Neuromodulator receptors (`RCP`).
+    pub receptors: Vec<Receptor>,
+    /// Modulator released when this neuron spikes, and how much (`REL`).
+    pub release: Option<(u16, f64)>,
     /// Where it is defined.
     pub span: Span,
 }
