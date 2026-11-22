@@ -135,6 +135,59 @@ Deferred:
   - A minimal CLI (or test harness) can drive the clock live while streaming spikes at 60 frames/s.
   - The simulation never blocks on a slow subscriber.
 
+### Phase 3 status: done (2026-11-22)
+
+What was built (in `tempo-runtime`; tests in `tempo-testkit/tests/live.rs`, harness in `examples/live.rs`):
+- **Control plane** (`Control`, from `rt.control()`): `query`, `update`, `observe`, `inject`, `inject_live`,
+  `change_route`, and the clock. Commands go to the shard owning the target and run at window boundaries, and also
+  while a shard waits for the clock, so a paused simulation can be inspected and changed. Every request returns a
+  `Reply` that can be waited on or `.await`ed.
+- **Live input**: `inject_live` stamps input at the clock's time plus `ingress_delay` (default 1 ms). Paced
+  windows now follow the clock through idle stretches, instead of jumping to the next event, so live input is
+  prompt even when nothing is scheduled. The last shard at each barrier decides the next window's start and end,
+  so shards agree on window boundaries that depend on the wall clock. An optional **journal** records injected
+  input; replaying it reproduces the live run exactly (tested, on a different shard count).
+- **Subscriptions** (`rt.subscribe`, `subscribe_filtered`): per-shard, per-window batches into bounded channels.
+  A full subscriber loses batches (counted); the simulation never waits.
+- **System events** (`rt.system_events`, `recent_system_events`): `CannotKeepUp` / `CaughtUp` (with hysteresis;
+  the clock is not slowed), `LookaheadChanged`, `ActorFailed`, `TopologyChanged` (rate-limited per shard).
+- **Panic isolation** (`isolate_panics`): a panicking actor is disabled and reported; others continue.
+- **Dynamic topology**: routes live on their owner's shard. `Ctx::change_route` / `Control::change_route` /
+  `Runtime::change_route` add or prune edges as timed events, deterministic across shard counts (tested with a
+  receiver pruning its own input). A shorter new cross-shard edge lowers the lookahead through the barrier's
+  second min-reduction, announced with `LookaheadChanged`.
+- **Fields** (`Field`, `add_field`, `Ctx::field`, `Ctx::update_field`): shard-local state updated by timed
+  broadcasts and read lazily by actors. This is the tick-free mechanism for neuromodulator concentrations.
+- **Broadcasts**: groups (`add_group`, `Ctx::multicast`) and spatial (`set_position`, `Ctx::broadcast_spatial`
+  with per-actor delay `base + distance / speed`), sent once per shard and expanded there.
+- **Observation flag** (`Control::observe`, `Ctx::is_observed`): for selectable, event-driven membrane recording.
+
+Results:
+
+| Check | Target | Result |
+|-------|--------|--------|
+| Live control while streaming at 60 fps | works | `examples/live`: speed ×¼ → ×2 → pause/query/step 5 ms → resume, live stimulus, new edges; fast subscriber dropped 0 events, ≤ 0.2 ms per frame |
+| Simulation never blocks on a slow subscriber | never | stalled subscriber dropped 542k events; simulation stayed on schedule |
+| Live input with nothing scheduled | prompt | delivered within milliseconds when the next event is 1 s away (tested) |
+| Replay of a live session | identical | journal replay on 3 shards reproduces the 2-shard live run's trace |
+| Fields and broadcasts across shard counts | identical | fields (1, 2, 4, 8 shards), spatial and group broadcasts (1, 2, 3, 6 shards) |
+| Performance | no large regression | ping-pong 2.52 ms (phase 2: 2.56), ring 60.5 ms (55), LIF 10k 626 ms (553); 100k LIF 7.0× on 8 shards typical |
+
+Lessons:
+- The new broadcast variant first made every queued event 64 bytes instead of 24. That cost 20–50% and the
+  8-shard target. Rare variants are now boxed, with a compile-time size check on queue items.
+- Pacing tails with 4+ shards vary a lot run to run on macOS (p99 from µs to ~1 ms). Building phase 2 and phase 3
+  side by side showed the same spread, so it is machine noise, not a regression.
+
+Decisions and deferrals:
+- **No tokio in the runtime.** Replies are both blocking and `Future`s, so async layers can use them directly.
+- **Neuron-specific parts moved to the neuron crates**: the modulator/receptor table, threshold-crossing
+  prediction for direct-potential modulators (`spikes-model`), and the Arrow file writer, which needs the event
+  schema (`spikes-record`, as a subscriber).
+- **Typed `ActorRef<K>`**: deferred to the neuron crates, where the real message enums exist.
+- Pruning never *raises* the lookahead (conservative). Spawning actors during a run isn't supported (neurons are
+  fixed, per decision 10). The control plane's directory snapshot refreshes at each run start and on `rt.control()`.
+
 ## Phase 4: multi-host, real-time best effort (4–6 weeks)
 
 The main new capability.

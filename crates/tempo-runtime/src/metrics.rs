@@ -19,6 +19,8 @@ pub struct Stats {
     pub started: u64,
     /// Messages dropped because the recipient doesn't exist.
     pub dropped_unknown: u64,
+    /// Messages dropped because the recipient had failed (panicked, with panic isolation on).
+    pub dropped_failed: u64,
     /// Synchronization windows processed (per shard, summed).
     pub windows: u64,
     /// Cross-shard messages sent with less delay than the lookahead. Each was delivered at the start of the next
@@ -36,6 +38,7 @@ impl Stats {
         self.remote_sends += other.remote_sends;
         self.started += other.started;
         self.dropped_unknown += other.dropped_unknown;
+        self.dropped_failed += other.dropped_failed;
         self.windows += other.windows;
         self.lookahead_violations += other.lookahead_violations;
         self.max_lookahead_violation = self.max_lookahead_violation.max(other.max_lookahead_violation);

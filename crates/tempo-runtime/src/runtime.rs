@@ -4,21 +4,30 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rand_core::SeedableRng;
-use tempo_core::{ActorId, BlockId, OrderKey, SeqCounter, SimDuration, SimTime};
+use tempo_core::{ActorId, BlockId, OrderKey, SimDuration, SimTime};
 use tempo_queue::{HeapQueue, TimeQueue, WheelQueue};
 
 use crate::barrier::WindowBarrier;
+use crate::broadcast::GroupId;
 use crate::clock::{ClockHandle, Pacing};
+use crate::control::{Control, ControlShared, Injected, TopologyOp};
 use crate::ctx::ActorMeta;
-use crate::events::{Emitted, Events};
+use crate::events::{Emitted, EventOut};
+use crate::field::Field;
 use crate::metrics::{PacingStats, Stats};
 use crate::placement::{Partition, shard_of};
 use crate::route::{Route, splitmix};
-use crate::shard::{Arena, BlockEntry, Item, Queue, RunPlan, RunShared, Shard, ShardOutcome, TraceEntry, World};
+use crate::shard::{
+    Arena, BlockEntry, Directory, Item, Queue, RunPlan, RunShared, Shard, ShardOutcome, ShardSettings, TraceEntry,
+    World,
+};
+use crate::subscribe::{EventFilter, EventStream, Subscribers};
+use crate::system::{SystemBus, SystemEvents, SystemNotice};
 use crate::{Actor, ActorRng, Jitter, RouteEdge, RouteId};
 
 /// Which [`TimeQueue`] implementation holds each shard's pending events.
@@ -49,14 +58,25 @@ pub struct RuntimeConfig {
     pub partitions: u32,
     /// Initial pacing; change it while running through [`Runtime::clock`].
     pub pacing: Pacing,
-    /// The shortest delay of a *direct* message (`send`, `send_after`, `send_at`) between actors on different
-    /// shards, if any are sent. Route delays are known in advance; direct sends are not, so declare their minimum
-    /// here. It bounds the lookahead, and therefore the window length.
+    /// The shortest delay of a *direct* message (`send`, `send_after`, `send_at`, broadcasts, field updates)
+    /// between actors on different shards, if any are sent. Route delays are known in advance; direct sends are
+    /// not, so declare their minimum here. It bounds the lookahead, and therefore the window length.
     pub min_remote_delay: Option<SimDuration>,
     /// While paced, windows are at most this long, so no shard gets further than this ahead of the clock.
     pub max_paced_window: SimDuration,
     /// While waiting for the clock, spin (rather than sleep) for the last this-much wall time.
     pub spin_threshold: Duration,
+    /// Post a [`crate::SystemEvent::CannotKeepUp`] warning when a paced run falls this far behind the clock.
+    pub keep_up_warning: Duration,
+    /// Live input ([`Control::inject_live`]) is delivered this long after the clock's current simulation time.
+    pub ingress_delay: SimDuration,
+    /// Record messages injected through [`Control`] for replay ([`Runtime::take_journal`]).
+    pub journal: bool,
+    /// If an actor's handler panics, disable that actor and report it (a [`crate::SystemEvent::ActorFailed`])
+    /// instead of ending the run.
+    pub isolate_panics: bool,
+    /// Grid cell size of the spatial index used by spatial broadcasts, in position units.
+    pub spatial_cell: f64,
 }
 
 impl Default for RuntimeConfig {
@@ -73,6 +93,11 @@ impl Default for RuntimeConfig {
             min_remote_delay: None,
             max_paced_window: SimDuration::from_millis(1),
             spin_threshold: Duration::from_micros(200),
+            keep_up_warning: Duration::from_millis(20),
+            ingress_delay: SimDuration::from_millis(1),
+            journal: false,
+            isolate_panics: false,
+            spatial_cell: 50.0,
         }
     }
 }
@@ -89,17 +114,20 @@ pub struct Runtime<M, E> {
     /// The block currently being filled for each (partition, kind), and the next index in it.
     open_blocks: HashMap<(u32, u16), (BlockId, u32)>,
     next_partition: u32,
+    next_group: u32,
     /// Everything before this time has been processed.
     now: SimTime,
-    world_seq: SeqCounter,
     clock: ClockHandle,
+    control: Arc<ControlShared<M, E>>,
+    subscribers: Arc<Subscribers<E>>,
+    system: Arc<SystemBus>,
     dropped_unknown: u64,
     needs_shrink: bool,
 }
 
-impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
+impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
     /// A runtime with the given settings. Emitted events are discarded until you choose an output with
-    /// [`Self::buffer_events`] or [`Self::on_event`].
+    /// [`Self::buffer_events`], [`Self::on_event`] or [`Self::subscribe`].
     ///
     /// # Panics
     /// If `shards` is zero or more than `partitions`.
@@ -111,53 +139,79 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
             config.partitions,
             config.shards
         );
+        let subscribers = Arc::new(Subscribers::default());
+        let system = Arc::new(SystemBus::default());
+        let settings = ShardSettings {
+            shards: config.shards,
+            trace: config.trace,
+            isolate_panics: config.isolate_panics,
+            spatial_cell: config.spatial_cell,
+        };
         let shards = (0..config.shards)
             .map(|i| {
                 let queue = match config.queue {
                     QueueKind::Heap => Queue::Heap(HeapQueue::new()),
                     QueueKind::Wheel { bucket } => Queue::Wheel(WheelQueue::with_bucket(bucket)),
                 };
-                Shard::new(i as u16, config.shards, queue, Events::Discard, config.trace)
+                let events = EventOut::new(Arc::clone(&subscribers));
+                Shard::new(i as u16, queue, events, Arc::clone(&system), settings)
             })
             .collect();
+        let world = World {
+            dir: Arc::new(Directory::default()),
+            kind_types: Vec::new(),
+            field_types: Vec::new(),
+            shards: config.shards,
+            seed: config.seed,
+        };
+        let clock = ClockHandle::new(config.pacing);
+        let control = Arc::new(ControlShared::new(
+            config.shards,
+            Arc::clone(&world.dir),
+            clock.clone(),
+            config.ingress_delay,
+            config.journal,
+        ));
         Self {
-            world: World {
-                blocks: Vec::new(),
-                routes: Vec::new(),
-                kind_types: Vec::new(),
-                seed: config.seed,
-            },
+            world,
             shards,
             kind_ids: HashMap::new(),
             open_blocks: HashMap::new(),
             next_partition: 0,
+            next_group: 0,
             now: SimTime::ZERO,
-            world_seq: SeqCounter::new(),
-            clock: ClockHandle::new(config.pacing),
+            clock,
+            control,
+            subscribers,
+            system,
             dropped_unknown: 0,
             needs_shrink: false,
             config,
         }
     }
 
+    // ----- outputs -----
+
     /// Collects emitted events in memory; read them with [`Self::take_events`].
     pub fn buffer_events(&mut self) {
-        self.set_events(&Events::Buffer(Vec::new()));
+        for shard in &mut self.shards {
+            shard.core.events.buffer = Some(Vec::new());
+        }
     }
 
     /// Passes each emitted event to `callback`. With several shards, it is called from several threads.
     pub fn on_event(&mut self, callback: impl Fn(Emitted<E>) + Send + Sync + 'static) {
-        self.set_events(&Events::Callback(Arc::new(callback)));
-    }
-
-    /// Discards emitted events (the default).
-    pub fn discard_events(&mut self) {
-        self.set_events(&Events::Discard);
-    }
-
-    fn set_events(&mut self, events: &Events<E>) {
+        let callback: Arc<dyn Fn(Emitted<E>) + Send + Sync> = Arc::new(callback);
         for shard in &mut self.shards {
-            shard.core.events = events.fresh();
+            shard.core.events.callback = Some(Arc::clone(&callback));
+        }
+    }
+
+    /// Stops buffering events and calling the callback (subscriptions are unaffected).
+    pub fn discard_events(&mut self) {
+        for shard in &mut self.shards {
+            shard.core.events.buffer = None;
+            shard.core.events.callback = None;
         }
     }
 
@@ -166,13 +220,69 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
     pub fn take_events(&mut self) -> Vec<Emitted<E>> {
         let mut all = Vec::new();
         for shard in &mut self.shards {
-            if let Events::Buffer(buffer) = &mut shard.core.events {
+            if let Some(buffer) = &mut shard.core.events.buffer {
                 all.append(buffer);
             }
         }
         all.sort_by_key(|e| (e.at, e.src));
         all
     }
+
+    /// Subscribes to emitted events as a live, lossy stream. `capacity` is how many batches (one per shard per
+    /// window) may wait unread before newer ones are dropped for this subscriber. Can be called while running.
+    pub fn subscribe(&self, capacity: usize) -> EventStream<E> {
+        self.subscribers.subscribe(capacity, None)
+    }
+
+    /// Like [`Self::subscribe`], receiving only the events `filter` accepts.
+    pub fn subscribe_filtered(
+        &self,
+        capacity: usize,
+        filter: impl Fn(&Emitted<E>) -> bool + Send + Sync + 'static,
+    ) -> EventStream<E> {
+        let filter: EventFilter<E> = Arc::new(filter);
+        self.subscribers.subscribe(capacity, Some(filter))
+    }
+
+    /// Subscribes to system events (warnings and notices about the runtime itself).
+    pub fn system_events(&self) -> SystemEvents {
+        self.system.subscribe()
+    }
+
+    /// The most recent system events (up to 256).
+    pub fn recent_system_events(&self) -> Vec<SystemNotice> {
+        self.system.recent()
+    }
+
+    // ----- control -----
+
+    /// A handle for controlling the simulation from other threads while it runs.
+    pub fn control(&self) -> Control<M, E> {
+        self.control.set_directory(Arc::clone(&self.world.dir));
+        Control {
+            shared: Arc::clone(&self.control),
+        }
+    }
+
+    /// A handle to the clock, for changing speed, pausing, stepping or stopping, from any thread, while running.
+    pub fn clock(&self) -> ClockHandle {
+        self.clock.clone()
+    }
+
+    /// The messages injected through [`Control`], if [`RuntimeConfig::journal`] is on, in delivery order. Inject
+    /// them into a fresh runtime to replay a live session.
+    pub fn take_journal(&mut self) -> Vec<Injected<M>> {
+        let mut journal = self
+            .control
+            .journal
+            .as_ref()
+            .map(|j| std::mem::take(&mut *j.lock().unwrap_or_else(|p| p.into_inner())))
+            .unwrap_or_default();
+        journal.sort_by_key(|i| i.at);
+        journal
+    }
+
+    // ----- building -----
 
     /// Adds an actor, placed round-robin over the partitions, and returns its ID. Its `on_start` runs at the
     /// current time, before the next delivery.
@@ -190,14 +300,15 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
         assert!(partition.0 < self.config.partitions, "no {partition:?}");
         let kind = self.kind_of::<A>();
         let shard = shard_of(partition, self.config.partitions, self.config.shards);
+        let dir = Arc::make_mut(&mut self.world.dir);
 
         let (block, index) = match self.open_blocks.get(&(partition.0, kind)) {
             Some(&(block, next)) if u64::from(next) < ActorId::BLOCK_SIZE => (block, next),
             _ => {
-                let block = BlockId::new(self.world.blocks.len() as u64);
+                let block = BlockId::new(dir.blocks.len() as u64);
                 assert!(!block.is_reserved(), "actor IDs exhausted");
                 let stores = &mut self.shards[usize::from(shard)].stores;
-                self.world.blocks.push(Some(BlockEntry {
+                dir.blocks.push(Some(BlockEntry {
                     shard,
                     kind,
                     store: u32::try_from(stores.len()).expect("too many blocks on one shard"),
@@ -211,7 +322,7 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
             }
         };
         self.open_blocks.insert((partition.0, kind), (block, index + 1));
-        let entry = self.world.blocks[block.raw() as usize]
+        let entry = dir.blocks[block.raw() as usize]
             .as_mut()
             .expect("open block is in the directory");
         entry.count += 1;
@@ -225,20 +336,91 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
             .downcast_mut::<Arena<A>>()
             .expect("block store matches its kind");
         arena.actors.push(actor);
-        arena.meta.push(ActorMeta {
-            seq: SeqCounter::new(),
-            rng,
-        });
+        arena.meta.push(ActorMeta::new(rng));
         shard.pending_starts.push(id);
         self.needs_shrink = true;
         id
     }
 
+    /// Gives an actor a position, so spatial broadcasts can reach it. Returns `false` if the actor doesn't exist.
+    pub fn set_position(&mut self, id: ActorId, position: [f64; 3]) -> bool {
+        match self.world.locate(id) {
+            Some(slot) => {
+                self.shards[usize::from(slot.shard)].spatial.insert(id, position);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Creates a group of actors for [`crate::Ctx::multicast`]. Unknown IDs are ignored.
+    pub fn add_group(&mut self, members: &[ActorId]) -> GroupId {
+        let group = GroupId(self.next_group);
+        self.next_group += 1;
+        for shard in &mut self.shards {
+            shard.group_mut(group);
+        }
+        for &member in members {
+            if let Some(slot) = self.world.locate(member) {
+                self.shards[usize::from(slot.shard)].group_mut(group).push(member);
+            }
+        }
+        group
+    }
+
+    /// Adds a shard-local field (see [`Field`]): every shard gets a copy of `field`.
+    ///
+    /// # Panics
+    /// If a field of this type was already added.
+    pub fn add_field<F: Field>(&mut self, field: F) {
+        let type_id = TypeId::of::<F>();
+        assert!(
+            !self.world.field_types.contains(&type_id),
+            "field {} already added",
+            std::any::type_name::<F>()
+        );
+        self.world.field_types.push(type_id);
+        for shard in &mut self.shards {
+            shard.core.fields.push(Box::new(field.clone()));
+        }
+    }
+
+    /// Field `F` as seen by the first shard (every shard's copy receives the same updates).
+    pub fn field<F: Field>(&self) -> Option<&F> {
+        let index = self.world.field_types.iter().position(|t| *t == TypeId::of::<F>())?;
+        self.shards[0].core.fields[index].as_any().downcast_ref()
+    }
+
     /// Adds a fan-out route owned by `owner`, which can then send along it with [`crate::Ctx::fanout`].
+    ///
+    /// # Panics
+    /// If `owner` doesn't exist.
     pub fn add_route(&mut self, owner: ActorId, edges: Vec<RouteEdge>, jitter: Jitter) -> RouteId {
-        let id = RouteId(u32::try_from(self.world.routes.len()).expect("too many routes"));
-        self.world.routes.push(Route { owner, edges, jitter });
+        let slot = self.world.locate(owner).expect("route owner exists");
+        let dir = Arc::make_mut(&mut self.world.dir);
+        let id = RouteId(u32::try_from(dir.route_shards.len()).expect("too many routes"));
+        dir.route_shards.push(slot.shard);
+        self.shards[usize::from(slot.shard)]
+            .routes
+            .insert(id, Route { owner, edges, jitter });
         id
+    }
+
+    /// Adds or prunes a route edge now (between runs; while running use [`Control::change_route`] or
+    /// [`crate::Ctx::change_route`]). Returns `true` if the route existed (and, for a prune, the edge was found).
+    pub fn change_route(&mut self, route: RouteId, op: TopologyOp) -> bool {
+        match self.world.dir.route_shards.get(route.0 as usize) {
+            Some(&shard) => self.shards[usize::from(shard)].apply_topology(&self.world, route, op),
+            None => false,
+        }
+    }
+
+    /// Marks an actor as observed or not (between runs; while running use [`Control::observe`]).
+    pub fn observe(&mut self, id: ActorId, observed: bool) -> bool {
+        match self.world.locate(id) {
+            Some(slot) => self.shards[usize::from(slot.shard)].set_observed(&self.world, id, observed),
+            None => false,
+        }
     }
 
     /// Sends `msg` from the outside world ([`ActorId::WORLD`]) to `to`, delivered at `at`.
@@ -250,7 +432,7 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
         let key = OrderKey {
             at,
             src: ActorId::WORLD,
-            seq: self.world_seq.next_seq(),
+            seq: self.control.world_seq.fetch_add(1, Ordering::AcqRel),
             sub: 0,
         };
         match self.world.locate(to) {
@@ -262,10 +444,7 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
         }
     }
 
-    /// A handle to the clock, for changing speed, pausing, stepping or stopping, from any thread, while running.
-    pub fn clock(&self) -> ClockHandle {
-        self.clock.clone()
-    }
+    // ----- inspection -----
 
     /// The simulation time processed so far: everything before it has been delivered.
     pub fn now(&self) -> SimTime {
@@ -282,8 +461,8 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
         self.config.partitions
     }
 
-    /// The time of the next pending event on any shard, if any. Runs pending `on_start` handlers first, since
-    /// they may schedule events.
+    /// The time of the next pending event on any shard, if any. Runs pending `on_start` handlers and control
+    /// commands first, since they may schedule events.
     pub fn next_event_time(&mut self) -> Option<SimTime> {
         self.start_pending();
         self.shards
@@ -302,56 +481,25 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
     /// of any route edge between shards (less the jitter allowance), or [`RuntimeConfig::min_remote_delay`] if that
     /// is shorter. `SimDuration::MAX` means nothing crosses shards.
     pub fn lookahead(&self) -> SimDuration {
-        let mut lookahead = self.config.min_remote_delay.unwrap_or(SimDuration::MAX);
         if self.shards.len() == 1 {
             return SimDuration::MAX;
         }
-        for route in &self.world.routes {
-            let Some(owner) = self.world.locate(route.owner) else {
-                continue;
-            };
-            let reduction = route.jitter.max_reduction();
-            for edge in &route.edges {
-                match self.world.locate(edge.target) {
-                    Some(target) if target.shard != owner.shard => {
+        let mut lookahead = self.config.min_remote_delay.unwrap_or(SimDuration::MAX);
+        for (index, shard) in self.shards.iter().enumerate() {
+            for route in shard.routes.values() {
+                let reduction = route.jitter.max_reduction();
+                for edge in &route.edges {
+                    if self
+                        .world
+                        .locate(edge.target)
+                        .is_some_and(|t| usize::from(t.shard) != index)
+                    {
                         lookahead = lookahead.min(edge.delay.saturating_sub(reduction));
                     }
-                    _ => {}
                 }
             }
         }
         lookahead.max(SimDuration::NANOSECOND)
-    }
-
-    /// Delivers the single next event (the earliest on any shard) and returns its time, or `None` if nothing is
-    /// pending. Runs on the calling thread.
-    pub fn step(&mut self) -> Option<SimTime> {
-        self.start_pending();
-        let (i, key) = self
-            .shards
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, s)| s.core.queue.peek_key().map(|k| (i, k)))
-            .min_by_key(|&(_, k)| k)?;
-        let shard = &mut self.shards[i];
-        let (key, item) = shard.core.queue.pop().filter(|(k, _)| *k == key).expect("peeked event");
-        shard.core.window_end = key.at;
-        shard.deliver(&self.world, key, item);
-        self.route_outbox(i);
-        self.now = self.now.max(key.at);
-        Some(key.at)
-    }
-
-    /// Delivers every event before `end`, then sets [`Self::now`] to `end`, pacing against the clock if it's in
-    /// real-time mode. Returns early if the clock is stopped. Returns the number of events delivered.
-    pub fn run_until(&mut self, end: SimTime) -> u64 {
-        self.run_to(end)
-    }
-
-    /// Delivers events until none are pending (pacing against the clock if it's in real-time mode), or the clock
-    /// is stopped. Returns the number of events delivered.
-    pub fn run(&mut self) -> u64 {
-        self.run_to(SimTime::MAX)
     }
 
     /// Counters, summed over shards.
@@ -400,15 +548,7 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
     /// runs, e.g. giving an actor the route it should fan out on.
     pub fn actor_mut<A: Actor<M, E>>(&mut self, id: ActorId) -> Option<&mut A> {
         let slot = self.world.locate(id)?;
-        if self.world.kind_types[usize::from(slot.kind)] != TypeId::of::<A>() {
-            return None;
-        }
-        let store = &mut self.shards[usize::from(slot.shard)].stores[slot.store as usize];
-        store
-            .as_any_mut()
-            .downcast_mut::<Arena<A>>()?
-            .actors
-            .get_mut(slot.index as usize)
+        self.shards[usize::from(slot.shard)].actor_mut(&self.world, id)
     }
 
     /// Releases unused capacity in actor storage. Runs automatically before the first run after spawning.
@@ -418,7 +558,7 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
                 store.shrink_to_fit();
             }
         }
-        self.world.blocks.shrink_to_fit();
+        Arc::make_mut(&mut self.world.dir).blocks.shrink_to_fit();
         self.needs_shrink = false;
     }
 
@@ -431,14 +571,49 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
             .flat_map(|s| &s.stores)
             .map(|store| store.memory_bytes())
             .sum();
-        let directory = self.world.blocks.capacity() * size_of::<Option<BlockEntry>>();
+        let directory = self.world.dir.blocks.capacity() * size_of::<Option<BlockEntry>>();
         let routes: usize = self
-            .world
-            .routes
+            .shards
             .iter()
+            .flat_map(|s| s.routes.values())
             .map(|r| size_of::<Route>() + r.edges.capacity() * size_of::<RouteEdge>())
             .sum();
         actors + directory + routes
+    }
+
+    // ----- running -----
+
+    /// Delivers the single next event (the earliest on any shard) and returns its time, or `None` if nothing is
+    /// pending. Runs on the calling thread.
+    pub fn step(&mut self) -> Option<SimTime> {
+        self.start_pending();
+        let (i, key) = self
+            .shards
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(i, s)| s.core.queue.peek_key().map(|k| (i, k)))
+            .min_by_key(|&(_, k)| k)?;
+        let shard = &mut self.shards[i];
+        let (key, item) = shard.core.queue.pop().filter(|(k, _)| *k == key).expect("peeked event");
+        shard.core.window_end = key.at;
+        shard.deliver(&self.world, key, item);
+        shard.publish_outputs(key.at, false);
+        self.route_outbox(i);
+        self.now = self.now.max(key.at);
+        Some(key.at)
+    }
+
+    /// Delivers every event before `end`, then sets [`Self::now`] to `end`, pacing against the clock if it's in
+    /// real-time mode. Returns early if the clock is stopped. Returns the number of events delivered.
+    pub fn run_until(&mut self, end: SimTime) -> u64 {
+        self.run_to(end)
+    }
+
+    /// Runs until no events are pending, or the clock is stopped. In real-time mode the simulation keeps following
+    /// the clock even when idle (live input may arrive), so it runs until stopped. Returns the number of events
+    /// delivered.
+    pub fn run(&mut self) -> u64 {
+        self.run_to(SimTime::MAX)
     }
 
     fn kind_of<A: Actor<M, E>>(&mut self) -> u16 {
@@ -452,21 +627,16 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
         kind
     }
 
-    fn prepare(&mut self) {
+    /// Runs pending control commands and `on_start` handlers on the calling thread.
+    fn start_pending(&mut self) {
         if self.needs_shrink {
             self.shrink_to_fit();
         }
-    }
-
-    /// Runs pending `on_start` handlers on the calling thread.
-    fn start_pending(&mut self) {
-        self.prepare();
+        self.control.set_directory(Arc::clone(&self.world.dir));
         let now = self.now;
         for i in 0..self.shards.len() {
-            if self.shards[i].pending_starts.is_empty() {
-                continue;
-            }
             self.shards[i].core.window_end = now;
+            self.shards[i].apply_commands(&self.control, &self.world, now);
             self.shards[i].run_starts(&self.world, now);
             self.route_outbox(i);
         }
@@ -482,7 +652,10 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
     }
 
     fn run_to(&mut self, end: SimTime) -> u64 {
-        self.prepare();
+        if self.needs_shrink {
+            self.shrink_to_fit();
+        }
+        self.control.set_directory(Arc::clone(&self.world.dir));
         let delivered_before = self.stats().delivered;
         let n = self.shards.len();
         let plan = RunPlan {
@@ -491,6 +664,7 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
             lookahead: self.lookahead(),
             max_paced_window: self.config.max_paced_window,
             spin_threshold: self.config.spin_threshold,
+            keep_up_warning: self.config.keep_up_warning,
         };
         self.clock.start_run(self.now);
         let shared = RunShared {
@@ -498,6 +672,7 @@ impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
             mailboxes: (0..n * n).map(|_| Mutex::new(Vec::new())).collect(),
             barrier: WindowBarrier::new(n),
             clock: &self.clock,
+            control: &self.control,
             stop_epoch: self.clock.stop_epoch(),
         };
 

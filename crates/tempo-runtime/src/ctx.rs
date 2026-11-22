@@ -1,24 +1,44 @@
 //! The context an actor gets while handling a message.
 
+use std::any::TypeId;
+
 use tempo_core::{ActorId, OrderKey, SeqCounter, SimDuration, SimTime};
 
-use crate::shard::{Core, Item, World};
-use crate::{ActorRng, Emitted, RouteId};
+use crate::broadcast::{GroupId, SpatialBroadcast, Target};
+use crate::control::TopologyOp;
+use crate::shard::{Core, Item, Routes, World};
+use crate::{ActorRng, Emitted, Field, RouteId};
 
 /// Per-actor framework state, stored next to the actor.
 #[derive(Debug)]
 pub(crate) struct ActorMeta {
     pub(crate) seq: SeqCounter,
     pub(crate) rng: ActorRng,
+    /// Set by the control plane: emit detailed events for this actor.
+    pub(crate) observed: bool,
+    /// A handler panicked (with panic isolation on): further messages are dropped.
+    pub(crate) failed: bool,
 }
 
-/// What an actor can do while handling a message: read the time, send messages, use its random-number stream and
-/// emit events.
+impl ActorMeta {
+    pub(crate) fn new(rng: ActorRng) -> Self {
+        Self {
+            seq: SeqCounter::new(),
+            rng,
+            observed: false,
+            failed: false,
+        }
+    }
+}
+
+/// What an actor can do while handling a message: read the time, send messages, use its random-number stream,
+/// read shared fields, and emit events.
 pub struct Ctx<'a, M, E> {
     pub(crate) now: SimTime,
     pub(crate) me: ActorId,
     pub(crate) meta: &'a mut ActorMeta,
     pub(crate) core: &'a mut Core<M, E>,
+    pub(crate) routes: &'a Routes,
     pub(crate) world: &'a World,
 }
 
@@ -31,6 +51,12 @@ impl<M, E> Ctx<'_, M, E> {
     /// The current simulation time: the delivery time of the message being handled.
     pub fn now(&self) -> SimTime {
         self.now
+    }
+
+    /// `true` if this actor is being observed (see [`crate::Control::observe`]). Use it to decide whether to emit
+    /// detailed events, such as every membrane-potential update.
+    pub fn is_observed(&self) -> bool {
+        self.meta.observed
     }
 
     /// Sends `msg` to `to`, delivered at the current time (after this handler returns).
@@ -52,12 +78,7 @@ impl<M, E> Ctx<'_, M, E> {
     /// If `at` is earlier than [`Self::now`].
     pub fn send_at(&mut self, to: ActorId, at: SimTime, msg: M) {
         assert!(at >= self.now, "cannot send into the past: {at} < {}", self.now);
-        let key = OrderKey {
-            at,
-            src: self.me,
-            seq: self.meta.seq.next_seq(),
-            sub: 0,
-        };
+        let key = self.next_key(at);
         self.core.send(self.world, key, Item::Message { dst: to, msg });
     }
 
@@ -72,7 +93,60 @@ impl<M, E> Ctx<'_, M, E> {
         &mut self.meta.rng
     }
 
-    /// Emits a domain event (a spike, a weight change, …) to the runtime's event output. Never blocks.
+    /// This shard's copy of field `F` (see [`crate::Field`]), or `None` if no such field was added.
+    pub fn field<F: Field>(&self) -> Option<&F> {
+        let index = self.world.field_types.iter().position(|t| *t == TypeId::of::<F>())?;
+        self.core.fields[index].as_any().downcast_ref()
+    }
+
+    /// Broadcasts an update to field `F` on every shard, applied `delay` from now. With several shards, `delay`
+    /// should be at least the lookahead.
+    ///
+    /// # Panics
+    /// If no field of type `F` was added to the runtime.
+    pub fn update_field<F: Field>(&mut self, delay: SimDuration, update: F::Update) {
+        let field = self
+            .world
+            .field_types
+            .iter()
+            .position(|t| *t == TypeId::of::<F>())
+            .unwrap_or_else(|| panic!("no field of type {}", std::any::type_name::<F>()));
+        let key = self.next_key(self.now + delay);
+        for shard in 0..self.world.shards {
+            let item = Item::Field {
+                field: field as u16,
+                update: Box::new(update.clone()),
+            };
+            self.core.send_to_shard(shard as u16, key, item);
+        }
+    }
+
+    /// Adds an edge to, or prunes an edge from, a route (for example structural plasticity). The change is made on
+    /// the route owner's shard, at the next window boundary.
+    pub fn change_route(&mut self, route: RouteId, op: TopologyOp) {
+        let key = self.next_key(self.now);
+        self.core.send(
+            self.world,
+            key,
+            Item::Topology {
+                route,
+                op: Box::new(op),
+            },
+        );
+    }
+
+    fn next_key(&mut self, at: SimTime) -> OrderKey {
+        OrderKey {
+            at,
+            src: self.me,
+            seq: self.meta.seq.next_seq(),
+            sub: 0,
+        }
+    }
+}
+
+impl<M, E: Clone> Ctx<'_, M, E> {
+    /// Emits a domain event (a spike, a weight change, …) to the runtime's event outputs. Never blocks.
     pub fn emit(&mut self, event: E) {
         self.core.events.emit(Emitted {
             at: self.now,
@@ -100,18 +174,14 @@ impl<M: Clone, E> Ctx<'_, M, E> {
         assert!(base >= self.now, "cannot send into the past: {base} < {}", self.now);
         let seq = self.meta.seq.next_seq();
         let world = self.world;
-        let route = world
+        let r = self
             .routes
-            .get(route.0 as usize)
-            .unwrap_or_else(|| panic!("unknown route {route:?}"));
-        assert_eq!(
-            route.owner, self.me,
-            "{route:?} belongs to {}, not {}",
-            route.owner, self.me
-        );
-        for (sub, edge) in route.edges.iter().enumerate() {
+            .get(&route)
+            .unwrap_or_else(|| panic!("unknown route {route:?} (or not on this actor's shard)"));
+        assert_eq!(r.owner, self.me, "{route:?} belongs to {}, not {}", r.owner, self.me);
+        for (sub, edge) in r.edges.iter().enumerate() {
             let sub = sub as u32;
-            let delay = route.jitter.apply(edge.delay, world.seed, self.me, seq, sub);
+            let delay = r.jitter.apply(edge.delay, world.seed, self.me, seq, sub);
             let key = OrderKey {
                 at: base + delay,
                 src: self.me,
@@ -125,7 +195,30 @@ impl<M: Clone, E> Ctx<'_, M, E> {
             };
             self.core.send(world, key, item);
         }
-        self.core.stats.routed_sends += route.edges.len() as u64;
+        self.core.stats.routed_sends += r.edges.len() as u64;
+    }
+
+    /// Sends `msg` to every member of `group` (see [`crate::Runtime::add_group`]), delivered `delay` from now.
+    /// One message goes to each shard and is expanded there.
+    pub fn multicast(&mut self, group: GroupId, delay: SimDuration, msg: M) {
+        self.broadcast(Target::Group(group), self.now + delay, msg);
+    }
+
+    /// Sends `msg` to every actor with a position (see [`crate::Runtime::set_position`]) within the region, each
+    /// after `base_delay + distance / speed`.
+    pub fn broadcast_spatial(&mut self, region: SpatialBroadcast, msg: M) {
+        self.broadcast(Target::Region(region), self.now + region.base_delay, msg);
+    }
+
+    fn broadcast(&mut self, target: Target, at: SimTime, msg: M) {
+        let key = self.next_key(at);
+        for shard in 0..self.world.shards {
+            let item = Item::Broadcast {
+                target: Box::new(target),
+                msg: msg.clone(),
+            };
+            self.core.send_to_shard(shard as u16, key, item);
+        }
     }
 }
 

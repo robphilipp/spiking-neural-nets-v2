@@ -8,7 +8,9 @@
 //! Actors are spread over **shards**, one thread each, that run in parallel and synchronize at the end of each
 //! time window (see the `shard` module docs). Placement is by **partition** ([`placement`]), so results don't
 //! depend on the number of shards. The **clock** ([`ClockHandle`]) paces a run against the wall clock and can be
-//! sped up, slowed down, paused, stepped or stopped from another thread while it runs. See `docs/plans/actors/`.
+//! sped up, slowed down, paused, stepped or stopped from another thread while it runs. The **control plane**
+//! ([`Control`]) inspects and changes a running simulation; **subscriptions** ([`EventStream`]) and **system
+//! events** ([`SystemEvents`]) stream what happens without ever blocking it. See `docs/plans/actors/`.
 //!
 //! ```
 //! use tempo_runtime::{Actor, ActorId, Ctx, Runtime, RuntimeConfig, SimDuration, SimTime};
@@ -34,24 +36,36 @@
 
 mod actor;
 mod barrier;
+mod broadcast;
 mod clock;
+mod control;
 mod ctx;
 mod events;
+mod field;
 mod metrics;
 pub mod placement;
+mod reply;
 mod route;
 mod runtime;
 mod shard;
+mod subscribe;
+mod system;
 
 pub use actor::{Actor, EdgeIdx, RouteId, Timer, TimerToken};
+pub use broadcast::{GroupId, SpatialBroadcast};
 pub use clock::{ClockHandle, Pacing};
+pub use control::{Control, Injected, TopologyOp};
 pub use ctx::Ctx;
 pub use events::{Emitted, EventCallback};
+pub use field::Field;
 pub use metrics::{LatencyHistogram, PacingStats, Stats};
 pub use placement::Partition;
+pub use reply::{Cancelled, Reply};
 pub use route::{Jitter, RouteEdge};
 pub use runtime::{QueueKind, Runtime, RuntimeConfig};
 pub use shard::{DeliveryKind, TraceEntry};
+pub use subscribe::{EventFilter, EventStream};
+pub use system::{Severity, SystemEvent, SystemEvents, SystemNotice};
 pub use tempo_core::{ActorId, SimDuration, SimTime};
 
 /// Each actor's random-number generator: Xoshiro256++ (32 bytes), seeded from the runtime seed and the actor's ID.

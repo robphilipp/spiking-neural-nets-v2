@@ -300,10 +300,6 @@ impl<'a> ClockView<'a> {
             (self.version, self.state) = self.handle.snapshot();
         }
     }
-
-    pub(crate) fn is_paced(&self) -> bool {
-        !matches!(self.state, ClockState::Unpaced)
-    }
 }
 
 /// Longest single sleep while waiting, so clock changes (speed, pause, stop) take effect promptly.

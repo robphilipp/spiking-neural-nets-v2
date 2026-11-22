@@ -1,0 +1,131 @@
+//! Event subscriptions: a bounded, lossy stream of emitted events for a UI or other live consumer.
+//!
+//! Each shard collects the events emitted during a window and, at the end of the window, hands them to every
+//! subscriber as one batch. If a subscriber's buffer is full, that batch is dropped *for that subscriber* and
+//! counted. The simulation never waits for a subscriber.
+
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use crate::Emitted;
+
+/// Decides which events a subscriber receives.
+pub type EventFilter<E> = Arc<dyn Fn(&Emitted<E>) -> bool + Send + Sync>;
+
+struct Subscriber<E> {
+    tx: SyncSender<Vec<Emitted<E>>>,
+    filter: Option<EventFilter<E>>,
+    dropped: Arc<AtomicU64>,
+}
+
+impl<E> Subscriber<E> {
+    /// Sends without blocking. Returns `false` if the subscriber has gone away.
+    fn send(&self, events: Vec<Emitted<E>>) -> bool {
+        if events.is_empty() {
+            return true;
+        }
+        let len = events.len() as u64;
+        match self.tx.try_send(events) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_)) => {
+                self.dropped.fetch_add(len, Ordering::Relaxed);
+                true
+            }
+            Err(TrySendError::Disconnected(_)) => false,
+        }
+    }
+}
+
+/// The subscribers of one runtime, shared by all its shards.
+pub(crate) struct Subscribers<E> {
+    list: Mutex<Vec<Subscriber<E>>>,
+    count: AtomicUsize,
+}
+
+impl<E> Default for Subscribers<E> {
+    fn default() -> Self {
+        Self {
+            list: Mutex::new(Vec::new()),
+            count: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl<E: Clone> Subscribers<E> {
+    /// `true` if anyone is subscribed (so shards only collect events when needed).
+    pub(crate) fn active(&self) -> bool {
+        self.count.load(Ordering::Relaxed) > 0
+    }
+
+    pub(crate) fn subscribe(&self, capacity: usize, filter: Option<EventFilter<E>>) -> EventStream<E> {
+        let (tx, rx) = sync_channel(capacity.max(1));
+        let dropped = Arc::new(AtomicU64::new(0));
+        let mut list = self.list.lock().unwrap_or_else(|p| p.into_inner());
+        list.push(Subscriber {
+            tx,
+            filter,
+            dropped: Arc::clone(&dropped),
+        });
+        self.count.store(list.len(), Ordering::Relaxed);
+        EventStream { rx, dropped }
+    }
+
+    /// Hands a batch to every subscriber without blocking.
+    pub(crate) fn publish(&self, batch: Vec<Emitted<E>>) {
+        if batch.is_empty() {
+            return;
+        }
+        let mut list = self.list.lock().unwrap_or_else(|p| p.into_inner());
+        if list.len() == 1 && list[0].filter.is_none() {
+            // Common case: one unfiltered subscriber gets the batch itself, without copying.
+            if !list[0].send(batch) {
+                list.clear();
+            }
+        } else {
+            list.retain(|sub| {
+                let events = match &sub.filter {
+                    Some(filter) => batch.iter().filter(|e| filter(e)).cloned().collect(),
+                    None => batch.clone(),
+                };
+                sub.send(events)
+            });
+        }
+        self.count.store(list.len(), Ordering::Relaxed);
+    }
+}
+
+/// A live stream of emitted events, delivered in batches (one per shard per window).
+///
+/// Events within a batch are in time order. Batches from different shards interleave, so sort by time if you
+/// need a global order. Dropping the stream unsubscribes.
+pub struct EventStream<E> {
+    rx: Receiver<Vec<Emitted<E>>>,
+    dropped: Arc<AtomicU64>,
+}
+
+impl<E> EventStream<E> {
+    /// Everything that has arrived so far, without waiting.
+    pub fn drain(&self) -> Vec<Emitted<E>> {
+        self.rx.try_iter().flatten().collect()
+    }
+
+    /// Waits up to `timeout` for the next batch.
+    pub fn next_batch_timeout(&self, timeout: Duration) -> Option<Vec<Emitted<E>>> {
+        self.rx.recv_timeout(timeout).ok()
+    }
+
+    /// How many events were dropped for this subscriber because it fell behind.
+    pub fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+}
+
+impl<E> std::fmt::Debug for EventStream<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventStream")
+            .field("dropped", &self.dropped())
+            .finish_non_exhaustive()
+    }
+}

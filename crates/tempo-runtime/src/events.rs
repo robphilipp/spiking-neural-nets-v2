@@ -1,11 +1,14 @@
 //! Domain-event output: what actors report with [`crate::Ctx::emit`].
 //!
-//! For now events are discarded, buffered in memory (per shard, merged on read), or passed to a callback. The
-//! batched UI stream and the Arrow file sink come in phase 3.
+//! Each shard can, independently: keep events in memory (read with `Runtime::take_events`), pass each one to a
+//! callback, and hand them in per-window batches to live subscribers ([`crate::EventStream`]). The Arrow file
+//! writer belongs to the neuron crates, since it needs the domain's event schema; it plugs in as a subscriber.
 
 use std::sync::Arc;
 
 use tempo_core::{ActorId, SimTime};
+
+use crate::subscribe::Subscribers;
 
 /// An event emitted by an actor, stamped with when and by whom.
 #[derive(Clone, Debug, PartialEq)]
@@ -21,27 +24,44 @@ pub struct Emitted<E> {
 /// Callback that receives each emitted event. With several shards it is called from several threads at once.
 pub type EventCallback<E> = Arc<dyn Fn(Emitted<E>) + Send + Sync>;
 
-pub(crate) enum Events<E> {
-    Discard,
-    Buffer(Vec<Emitted<E>>),
-    Callback(EventCallback<E>),
+/// One shard's event outputs.
+pub(crate) struct EventOut<E> {
+    pub(crate) buffer: Option<Vec<Emitted<E>>>,
+    pub(crate) callback: Option<EventCallback<E>>,
+    pending: Vec<Emitted<E>>,
+    subscribers: Arc<Subscribers<E>>,
 }
 
-impl<E> Events<E> {
-    /// The same output mode with nothing buffered yet: one per shard.
-    pub(crate) fn fresh(&self) -> Self {
-        match self {
-            Self::Discard => Self::Discard,
-            Self::Buffer(_) => Self::Buffer(Vec::new()),
-            Self::Callback(callback) => Self::Callback(Arc::clone(callback)),
+impl<E: Clone> EventOut<E> {
+    pub(crate) fn new(subscribers: Arc<Subscribers<E>>) -> Self {
+        Self {
+            buffer: None,
+            callback: None,
+            pending: Vec::new(),
+            subscribers,
         }
     }
 
     pub(crate) fn emit(&mut self, event: Emitted<E>) {
-        match self {
-            Self::Discard => {}
-            Self::Buffer(buffer) => buffer.push(event),
-            Self::Callback(callback) => callback(event),
+        if let Some(callback) = &self.callback {
+            callback(event.clone());
+        }
+        let live = self.subscribers.active();
+        match (&mut self.buffer, live) {
+            (Some(buffer), true) => {
+                buffer.push(event.clone());
+                self.pending.push(event);
+            }
+            (Some(buffer), false) => buffer.push(event),
+            (None, true) => self.pending.push(event),
+            (None, false) => {}
+        }
+    }
+
+    /// Hands this window's events to the subscribers.
+    pub(crate) fn flush(&mut self) {
+        if !self.pending.is_empty() {
+            self.subscribers.publish(std::mem::take(&mut self.pending));
         }
     }
 }

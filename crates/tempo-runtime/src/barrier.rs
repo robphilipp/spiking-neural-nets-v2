@@ -1,17 +1,64 @@
-//! The window barrier: all shards meet here at the end of each window, agree on the earliest pending event time
-//! across all of them (a min-reduction), and agree on whether to stop.
+//! The window barrier: all shards meet here at the end of each window. Two values are min-reduced across shards
+//! (the earliest pending event time and the proposed lookahead), and the last shard to arrive turns them into a
+//! [`Decision`] about the next window. Every shard receives that same decision, so they all agree on window
+//! boundaries even when the decision depends on the wall clock.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
-/// A reusable barrier with a min-reduction. Each crossing ("generation") uses one of two result slots, so a slot
-/// is never reset while a slow shard may still be reading it.
+/// What all shards do next.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Decision {
+    /// Start of the next window (ns).
+    pub(crate) start: u64,
+    /// End of the next window (ns, exclusive).
+    pub(crate) end: u64,
+    /// The agreed lookahead (ns).
+    pub(crate) lookahead: u64,
+    /// Stop the run.
+    pub(crate) stop: bool,
+}
+
+impl Decision {
+    const STOP: Self = Self {
+        start: u64::MAX,
+        end: u64::MAX,
+        lookahead: u64::MAX,
+        stop: true,
+    };
+}
+
+/// One crossing's reduced inputs and published decision.
+#[derive(Debug)]
+struct Slot {
+    next: AtomicU64,
+    lookahead: AtomicU64,
+    start: AtomicU64,
+    end: AtomicU64,
+    decided_lookahead: AtomicU64,
+    stop: AtomicBool,
+}
+
+impl Slot {
+    fn new() -> Self {
+        Self {
+            next: AtomicU64::new(u64::MAX),
+            lookahead: AtomicU64::new(u64::MAX),
+            start: AtomicU64::new(0),
+            end: AtomicU64::new(0),
+            decided_lookahead: AtomicU64::new(0),
+            stop: AtomicBool::new(false),
+        }
+    }
+}
+
+/// A reusable barrier with min-reductions. Each crossing ("generation") uses one of two slots, so a slot is never
+/// reset while a slow shard may still be reading it.
 #[derive(Debug)]
 pub(crate) struct WindowBarrier {
     n: usize,
     arrived: AtomicUsize,
     generation: AtomicU64,
-    mins: [AtomicU64; 2],
-    stops: [AtomicBool; 2],
+    slots: [Slot; 2],
     poisoned: AtomicBool,
 }
 
@@ -21,42 +68,57 @@ impl WindowBarrier {
             n,
             arrived: AtomicUsize::new(0),
             generation: AtomicU64::new(0),
-            mins: [AtomicU64::new(u64::MAX), AtomicU64::new(u64::MAX)],
-            stops: [AtomicBool::new(false), AtomicBool::new(false)],
+            slots: [Slot::new(), Slot::new()],
             poisoned: AtomicBool::new(false),
         }
     }
 
-    /// Waits for every shard. Returns the minimum of all shards' `local_min` values, and whether to stop. The
-    /// stop decision is made once, by the last shard to arrive, so every shard gets the same answer.
-    pub(crate) fn arrive(&self, local_min: u64, stop_requested: impl Fn() -> bool) -> (u64, bool) {
+    /// Waits for every shard. The last to arrive calls `decide(min next, min lookahead)`; everyone gets its result.
+    pub(crate) fn arrive(&self, next: u64, lookahead: u64, decide: impl FnOnce(u64, u64) -> Decision) -> Decision {
         if self.n == 1 {
-            return (local_min, stop_requested() || self.is_poisoned());
+            return self.finish(decide(next, lookahead));
         }
         let generation = self.generation.load(Ordering::Acquire);
-        let slot = (generation & 1) as usize;
-        self.mins[slot].fetch_min(local_min, Ordering::AcqRel);
+        let slot = &self.slots[(generation & 1) as usize];
+        slot.next.fetch_min(next, Ordering::AcqRel);
+        slot.lookahead.fetch_min(lookahead, Ordering::AcqRel);
         if self.arrived.fetch_add(1, Ordering::AcqRel) + 1 == self.n {
-            let stop = stop_requested() || self.is_poisoned();
-            self.stops[slot].store(stop, Ordering::Relaxed);
+            let decision = self.finish(decide(
+                slot.next.load(Ordering::Acquire),
+                slot.lookahead.load(Ordering::Acquire),
+            ));
+            slot.start.store(decision.start, Ordering::Relaxed);
+            slot.end.store(decision.end, Ordering::Relaxed);
+            slot.decided_lookahead.store(decision.lookahead, Ordering::Relaxed);
+            slot.stop.store(decision.stop, Ordering::Relaxed);
             // Prepare the other slot for the next crossing. Every shard has finished reading it: they all had to
-            // arrive here, after reading their previous result.
-            self.mins[1 - slot].store(u64::MAX, Ordering::Relaxed);
+            // arrive here, after reading their previous decision.
+            let other = &self.slots[1 - (generation & 1) as usize];
+            other.next.store(u64::MAX, Ordering::Relaxed);
+            other.lookahead.store(u64::MAX, Ordering::Relaxed);
             self.arrived.store(0, Ordering::Relaxed);
             self.generation.store(generation + 1, Ordering::Release);
+            decision
         } else {
             let mut spins = 0u32;
             while self.generation.load(Ordering::Acquire) == generation {
                 if self.is_poisoned() {
-                    return (u64::MAX, true);
+                    return Decision::STOP;
                 }
                 backoff(&mut spins);
             }
+            Decision {
+                start: slot.start.load(Ordering::Relaxed),
+                end: slot.end.load(Ordering::Relaxed),
+                lookahead: slot.decided_lookahead.load(Ordering::Relaxed),
+                stop: slot.stop.load(Ordering::Relaxed),
+            }
         }
-        (
-            self.mins[slot].load(Ordering::Acquire),
-            self.stops[slot].load(Ordering::Acquire),
-        )
+    }
+
+    fn finish(&self, mut decision: Decision) -> Decision {
+        decision.stop |= self.is_poisoned();
+        decision
     }
 
     /// Releases every waiting shard with "stop" (used when a shard panics, so the others don't wait forever).
@@ -83,8 +145,17 @@ fn backoff(spins: &mut u32) {
 mod tests {
     use super::*;
 
+    fn decide(next: u64, lookahead: u64) -> Decision {
+        Decision {
+            start: next,
+            end: next + lookahead,
+            lookahead,
+            stop: false,
+        }
+    }
+
     #[test]
-    fn every_shard_gets_the_global_minimum_every_round() {
+    fn every_shard_gets_the_same_decision_every_round() {
         let n = 6;
         let rounds = 2_000u64;
         let barrier = WindowBarrier::new(n);
@@ -93,11 +164,11 @@ mod tests {
                 let barrier = &barrier;
                 s.spawn(move || {
                     for round in 0..rounds {
-                        // The minimum moves between shards from round to round.
-                        let local = 1_000 * round + (shard + round) % n as u64;
-                        let (min, stop) = barrier.arrive(local, || false);
-                        assert_eq!(min, 1_000 * round);
-                        assert!(!stop);
+                        // The minima move between shards from round to round.
+                        let next = 1_000 * round + (shard + round) % n as u64;
+                        let lookahead = 50 + (shard + 2 * round) % n as u64;
+                        let d = barrier.arrive(next, lookahead, decide);
+                        assert_eq!(d, decide(1_000 * round, 50));
                     }
                 });
             }
@@ -108,10 +179,10 @@ mod tests {
     fn poisoning_releases_waiters() {
         let barrier = WindowBarrier::new(2);
         std::thread::scope(|s| {
-            let waiter = s.spawn(|| barrier.arrive(5, || false));
+            let waiter = s.spawn(|| barrier.arrive(5, 5, decide));
             std::thread::sleep(std::time::Duration::from_millis(10));
             barrier.poison();
-            assert_eq!(waiter.join().unwrap(), (u64::MAX, true));
+            assert_eq!(waiter.join().unwrap(), Decision::STOP);
         });
     }
 }
