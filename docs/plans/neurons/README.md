@@ -1,6 +1,6 @@
 # Plan: neuron crates
 
-Status: **N1–N4 done** (2026-11-22). Next: the app-layer plan (server, Tauri UI). Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done).
+Status: **N1–N4 done** (2026-11-22). Next: the app layer, `docs/plans/app/`. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done).
 The v1 model is described in `notes/02-neuron-model.md` and `notes/03-network-description-language.md`.
 
 ## Goal

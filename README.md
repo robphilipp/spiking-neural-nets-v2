@@ -14,7 +14,7 @@ This is a monorepo. Projects are added as they're needed.
 | `apps/` | `spikes-node` (cluster worker), `spikes-server` (coordinator, web API, data-queue adapter), `spikes-ui` (Tauri + TypeScript) | planned |
 | `packages/` | Shared TypeScript packages (types generated from the Rust API) | planned |
 | `test-data/v1/` | v1 network descriptions, a parser conformance suite | |
-| `docs/plans/` | Design plans (start with `docs/plans/actors/README.md`) | |
+| `docs/plans/` | Design plans: `actors/` (framework), `neurons/` (model crates), `app/` (engine, server, Tauri UI) | |
 | `notes/` | Notes on the original v1 project | |
 
 ## Dependency rule
