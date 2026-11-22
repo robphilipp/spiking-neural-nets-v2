@@ -1,6 +1,6 @@
 # Plan: neuron crates
 
-Status: **N1–N2 done** (2026-11-22); N3–N4 to do. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done).
+Status: **N1, N2, N3a done** (2026-11-22); N3b (neuromodulation) and N4 to do. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done).
 The v1 model is described in `notes/02-neuron-model.md` and `notes/03-network-description-language.md`.
 
 ## Goal
@@ -133,3 +133,32 @@ together, each with its position.
 - **v2 keys**: `nty=mr|br` with `RES=(frq, dmp, lcr, sep)`; `HIP=(tgt, str, win, lwb, upb)`; per-connection
   `typ=exc|inh`; `nam=` on learning and stickiness functions; bare sets (`psn={a, b}`).
 - Locations are converted to cartesian µm (cylindrical `(r, φ, z)`, spherical `(r, φ, θ)`, as in v1).
+
+## N3a status: done (2026-11-22)
+
+N3 is split: **N3a** (network actors and builder, done) and **N3b** (neuromodulation: receptors, gains,
+three-factor learning, direct-potential modulators, including the model-side hooks).
+
+`crates/spikes-network`:
+- **Messages**: `SimMsg` nested by actor kind (`NeuronMsg`, `InputMsg`); typed handles `Ref<T>` (`NeuronRef`,
+  `InputRef`) and `Ctx::tell`, which only accepts the target kind's messages (actors plan 07 §2).
+- **Events**: `Spike { at }` (including the rise time), `Transition`, `Weight { synapse, pre, before, after }`
+  (optional), `Membrane` (observed neurons only).
+- **Neuron actor**: a thin adapter to `spikes-model`; model wake-ups become `Timer`-guarded self-messages, spikes
+  become `fanout_at(now + rise)`.
+- **Inputs**: `PoissonInput`, `PeriodicInput`.
+- **Builder**: shared, deduplicated neuron and synapse parameter tables; spatial (Morton) placement; route delays
+  `distance / conduction speed` (with an optional minimum); synapse parameters combine the receiver's
+  `WDF`/`WLF`/`SRP`/`wnm` with the connection's learning and stickiness; seeded random weights; names → `NeuronRef`.
+
+Validation on v1 networks:
+- `ring.boo`: groups fire in order, group 1 at its 2 ms rise time, then 0.15–0.5 ms per hop.
+- `stdp-test.boo`: exact potentiation (+0.015) and depression (−0.035·e^(−10.05/40)) predicted from geometry.
+- A bistable neuron fires tonically at 50 Hz through runtime wake-ups and returns to rest when predicted.
+- `line-sensor.boo` with Poisson and periodic input: identical spikes and weight changes on 1, 2 and 4 shards.
+
+**Finding: v1's ring results were probably delivery artefacts.** With `ring.boo`'s parameters, a lap takes about
+1 ms, inside the 20 ms refractory period, so activity stops after one lap (25 spikes). The wiki (2017-04-22)
+recorded ~50 ms per hop and sustained circulation. That timing matches v1's millisecond-rounded, wall-clock
+message delivery rather than the model. For sustained circulation in v2, the ring needs longer delays (larger
+distances or slower conduction) or a shorter refractory period.

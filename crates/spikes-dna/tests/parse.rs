@@ -243,3 +243,15 @@ fn syntax_errors_point_at_the_spot() {
     assert_eq!((errors[0].span.line, errors[0].span.column), (3, 10));
     assert!(errors[0].message.contains("expected ','"), "{}", errors[0]);
 }
+
+#[test]
+fn undefined_neuron_sets_are_reported_once_per_connection() {
+    let errors =
+        parse("(NRN=[(nid=a, LOC=(cst=ct, px1=0, px2=0, px3=0))], CON=[(prn=a, psn=b{1:20:1}, cnw=1)])").unwrap_err();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(
+        errors[0].message.starts_with("connection refers to 20 neurons"),
+        "{}",
+        errors[0]
+    );
+}

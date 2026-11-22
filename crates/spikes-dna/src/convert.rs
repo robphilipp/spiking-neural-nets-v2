@@ -678,13 +678,28 @@ fn connection(
     }
     let sign = rec.get("typ").map(|_| rec.word("typ", None, &["exc", "inh"], errors));
 
-    for name in pres.iter().chain(&posts) {
-        if !inhibitory.contains_key(name.as_str()) {
-            errors.add(
-                rec.span,
-                format!("connection refers to neuron '{name}', which isn't defined in NRN"),
-            );
-        }
+    // One error per connection, however many names its id sets expand to.
+    let mut missing: Vec<&str> = pres
+        .iter()
+        .chain(&posts)
+        .map(String::as_str)
+        .filter(|name| !inhibitory.contains_key(name))
+        .collect();
+    missing.dedup();
+    match missing.as_slice() {
+        [] => {}
+        [name] => errors.add(
+            rec.span,
+            format!("connection refers to neuron '{name}', which isn't defined in NRN"),
+        ),
+        names => errors.add(
+            rec.span,
+            format!(
+                "connection refers to {} neurons that aren't defined in NRN: {}",
+                names.len(),
+                names.join(", ")
+            ),
+        ),
     }
     for pre in &pres {
         for post in &posts {

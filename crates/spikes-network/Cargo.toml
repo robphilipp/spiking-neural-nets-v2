@@ -1,0 +1,21 @@
+[package]
+name = "spikes-network"
+description = "Spiking networks on the tempo runtime: neuron and input actors, messages, and the network builder."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tempo-runtime = { path = "../tempo-runtime" }
+spikes-model = { path = "../spikes-model" }
+spikes-dna = { path = "../spikes-dna" }
+rand.workspace = true
+rand_xoshiro.workspace = true
+
+[dev-dependencies]
+tempo-testkit = { path = "../tempo-testkit" }
+
+[lints]
+workspace = true
