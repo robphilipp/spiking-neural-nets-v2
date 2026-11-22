@@ -13,6 +13,8 @@
 //! | `membrane.arrows` | Arrow IPC stream | every membrane update of observed neurons (no sampling clock) |
 //! | `transitions.arrows` | Arrow IPC stream | bistable neurons starting or stopping tonic firing |
 //! | `system.arrows` | Arrow IPC stream | runtime notices (can't keep up, actor failed, …) |
+//! | `sensor_samples.arrows` | Arrow IPC stream | every sample from external sensors (with [`SensorLog`]) |
+//! | `sensor_inputs.arrows` | Arrow IPC stream | every neuron input the sensors' samples were encoded into |
 //!
 //! Streams are written in batches while the run goes on, so a crashed run still leaves everything up to its
 //! last batch. Rows from different shards interleave, so streams are in time order only per shard; [`to_parquet`]
@@ -27,7 +29,7 @@ mod tables;
 
 pub use parquet::{read_table, to_parquet};
 pub use recorder::{RecordOptions, Recorder, RunInfo, Summary};
-pub use tables::Counts;
+pub use tables::{Counts, SensorLog};
 
 /// A recording failure.
 #[derive(Debug)]

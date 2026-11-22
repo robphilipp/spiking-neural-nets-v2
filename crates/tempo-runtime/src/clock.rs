@@ -88,6 +88,10 @@ struct ClockShared {
     progress: AtomicU64,
 }
 
+/// Marks a moment in a clock's stop history (see [`ClockHandle::stop_token`]).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct StopToken(pub(crate) u64);
+
 /// A handle to a runtime's clock. Cheap to clone and safe to use from any thread (for example a UI thread) while
 /// the runtime is running.
 #[derive(Clone, Debug)]
@@ -197,6 +201,11 @@ impl ClockHandle {
     pub fn stop(&self) {
         self.shared.stop_epoch.fetch_add(1, Ordering::AcqRel);
         self.shared.version.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// A marker for "now", for [`crate::Runtime::run_until_unless_stopped`]: stops issued after it end that run.
+    pub fn stop_token(&self) -> StopToken {
+        StopToken(self.stop_epoch())
     }
 
     /// `true` while paused.

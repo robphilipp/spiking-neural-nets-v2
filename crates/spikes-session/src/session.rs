@@ -10,10 +10,11 @@ use spikes_model::Phase;
 use spikes_network::{
     BuildOptions, Event, ModulatorMsg, ModulatorRef, Network, NeuronActor, NeuronMsg, Runtime, SimMsg,
 };
-use spikes_record::{RecordOptions, Recorder, RunInfo, Summary};
+use spikes_record::{RecordOptions, Recorder, RunInfo, SensorLog, Summary};
 use tempo_runtime::{ClockHandle, Control, Jitter, RuntimeConfig, SimDuration, SimTime};
 
 use crate::network::NetworkInfo;
+use crate::sensors::{Moment, Sensor, SensorSpec};
 use crate::viewer::{Hub, ViewSettings, Viewer};
 use crate::{SessionError, SessionId};
 
@@ -184,6 +185,9 @@ struct Shared {
     changed: Condvar,
     listeners: Mutex<Vec<Sender<SessionNotice>>>,
     hub: Arc<Hub>,
+    /// Sensor data of the current recorded run.
+    sensor_log: Mutex<Option<SensorLog>>,
+    next_sensor: std::sync::atomic::AtomicU32,
 }
 
 /// A handle to a session. Cheap to clone; every method can be called from any thread.
@@ -225,6 +229,8 @@ impl Session {
                 changed: Condvar::new(),
                 listeners: Mutex::new(Vec::new()),
                 hub: Hub::start(id.0),
+                sensor_log: Mutex::new(None),
+                next_sensor: std::sync::atomic::AtomicU32::new(0),
             }),
         })
     }
@@ -361,8 +367,13 @@ impl Session {
                     seed: inner.settings.seed,
                     description: &inner.text,
                 };
-                match Recorder::start(dir, &rt, &net, &inner.description, info, RecordOptions::default()) {
-                    Ok(recorder) => Some(recorder),
+                let started = Recorder::start(dir, &rt, &net, &inner.description, info, RecordOptions::default())
+                    .and_then(|recorder| Ok((recorder, SensorLog::create(dir, RecordOptions::default().batch_rows)?)));
+                match started {
+                    Ok((recorder, sensor_log)) => {
+                        *lock(&self.shared.sensor_log) = Some(sensor_log);
+                        Some(recorder)
+                    }
                     Err(e) => {
                         inner.phase = Stage::Ready(Box::new(Built { rt, net }));
                         return Err(SessionError::Record(e.to_string()));
@@ -372,6 +383,8 @@ impl Session {
             None => None,
         };
         let clock = rt.clock();
+        // Taken before the run thread exists, so a stop() right after start() returns can't be missed.
+        let stop_token = clock.stop_token();
         speed.apply(&clock);
         inner.speed = speed;
         let end = run.duration.map_or(SimTime::MAX, |d| rt.now().saturating_add(d));
@@ -384,15 +397,25 @@ impl Session {
         let session = self.clone();
         std::thread::Builder::new()
             .name(format!("session-{}", self.shared.id.0))
-            .spawn(move || session.run_thread(rt, net, recorder, end))
+            .spawn(move || session.run_thread(rt, net, recorder, end, stop_token))
             .map_err(|e| SessionError::Invalid(format!("couldn't start the run thread: {e}")))?;
         self.notify(SessionNotice::StateChanged(State::Running));
         Ok(())
     }
 
-    fn run_thread(self, mut rt: Runtime, net: Network, recorder: Option<Recorder>, end: SimTime) {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rt.run_until(end)));
+    fn run_thread(
+        self,
+        mut rt: Runtime,
+        net: Network,
+        recorder: Option<Recorder>,
+        end: SimTime,
+        stop_token: tempo_runtime::StopToken,
+    ) {
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            rt.run_until_unless_stopped(end, stop_token)
+        }));
         let recording = recorder.map(Recorder::finish);
+        let sensor_log = lock(&self.shared.sensor_log).take().map(SensorLog::finish);
         let mut inner = self.inner();
         let notices = match outcome {
             Ok(_) => {
@@ -400,6 +423,9 @@ impl Session {
                 self.shared.hub.advance(at);
                 inner.phase = Stage::Ready(Box::new(Built { rt, net }));
                 let mut notices = Vec::new();
+                if let Some(Err(e)) = sensor_log {
+                    notices.push(SessionNotice::RecordingFailed(format!("sensor data: {e}")));
+                }
                 let recording = match recording {
                     Some(Ok(summary)) => Some(summary),
                     Some(Err(e)) => {
@@ -541,6 +567,125 @@ impl Session {
             .hub
             .update(viewer.id(), settings, self.network().neurons.len());
         let _ = self.observe(&membrane, true);
+    }
+
+    /// Connects an external sensor. The network must be built.
+    pub fn connect_sensor(&self, spec: SensorSpec) -> Result<Sensor, SessionError> {
+        let network = self.network();
+        if network.neurons.is_empty() {
+            return Err(SessionError::State {
+                state: self.state(),
+                action: "connect a sensor to",
+            });
+        }
+        if spec.targets.is_empty() {
+            return Err(SessionError::Invalid(format!("sensor '{}' has no channels", spec.name)));
+        }
+        if let Some(&bad) = spec.targets.iter().flatten().find(|&&n| network.id(n).is_none()) {
+            return Err(SessionError::NotFound(format!("neuron {bad} (sensor '{}')", spec.name)));
+        }
+        let id = self
+            .shared
+            .next_sensor
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let seed = self.inner().settings.seed;
+        Ok(Sensor::new(id, spec, self.clone(), seed))
+    }
+
+    /// Where "now" is for a sensor, and how fast simulation time runs. Not running counts as paused.
+    pub(crate) fn sensor_moment(&self) -> Result<Moment, SessionError> {
+        let inner = self.inner();
+        let speed = match inner.speed {
+            Speed::Factor(f) => f,
+            Speed::AsFastAsPossible => 1.0,
+        };
+        match &inner.phase {
+            Stage::Ready(built) => Ok(Moment {
+                now: built.rt.now(),
+                paused: true,
+                speed,
+            }),
+            Stage::Running { clock, .. } => Ok(Moment {
+                now: clock.horizon().unwrap_or_else(|| clock.sim_time()),
+                paused: clock.is_paused(),
+                speed,
+            }),
+            other => Err(SessionError::State {
+                state: state_of_phase(other),
+                action: "send sensor data to",
+            }),
+        }
+    }
+
+    /// Injects a sensor's inputs `(neuron, time, mV)` and records them (and its samples
+    /// `(channel, sensor time, time, value)`) if the run is recorded.
+    pub(crate) fn sensor_input(
+        &self,
+        sensor: u32,
+        inputs: &[(u32, SimTime, f32)],
+        samples: &[(u32, u64, SimTime, f32)],
+    ) -> Result<(), SessionError> {
+        let network = self.network();
+        let resolved: Vec<(tempo_runtime::ActorId, SimTime, f32)> = inputs
+            .iter()
+            .filter_map(|&(n, at, mv)| network.id(n).map(|id| (id, at, mv)))
+            .collect();
+        if let Some(log) = lock(&self.shared.sensor_log).as_mut() {
+            let mut record = || -> spikes_record::Result<()> {
+                for &(channel, t_sensor, t, v) in samples {
+                    log.sample(sensor, channel, t_sensor, t, v)?;
+                }
+                for &(id, t, mv) in &resolved {
+                    log.input(sensor, t, id.raw(), mv)?;
+                }
+                Ok(())
+            };
+            if let Err(e) = record() {
+                self.notify(SessionNotice::RecordingFailed(format!("sensor data: {e}")));
+            }
+        }
+        self.inject_at(resolved)
+    }
+
+    fn inject_at(&self, inputs: Vec<(tempo_runtime::ActorId, SimTime, f32)>) -> Result<(), SessionError> {
+        let msg = |mv: f32| SimMsg::Neuron(NeuronMsg::External { mv });
+        let mut inner = self.inner();
+        match &mut inner.phase {
+            Stage::Ready(built) => {
+                let now = built.rt.now();
+                for (id, at, mv) in inputs {
+                    built.rt.inject(id, at.max(now), msg(mv));
+                }
+                Ok(())
+            }
+            Stage::Running { control, .. } => {
+                drop(control.inject_batch(inputs.into_iter().map(|(id, at, mv)| (id, at, msg(mv))).collect()));
+                Ok(())
+            }
+            other => Err(SessionError::State {
+                state: state_of_phase(other),
+                action: "send input to",
+            }),
+        }
+    }
+
+    /// Injects the sensor inputs recorded in run directory `dir`, at their recorded times (neurons are matched by
+    /// name, so the network must be built from the same description). Rebuild and replay to reproduce a run.
+    /// Returns how many inputs were injected.
+    pub fn replay_sensor_inputs(&self, dir: &std::path::Path) -> Result<usize, SessionError> {
+        let recorded = crate::sensors::recorded_inputs(dir)?;
+        let network = self.network();
+        let inputs = recorded
+            .into_iter()
+            .map(|(name, at, mv)| {
+                let id = network.by_name(&name).and_then(|i| network.id(i));
+                id.map(|id| (id, at, mv))
+                    .ok_or_else(|| SessionError::NotFound(format!("neuron '{name}' from the recording")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let n = inputs.len();
+        self.inject_at(inputs)?;
+        Ok(n)
     }
 
     /// Sends `mv` of external input to each of `neurons`, now.

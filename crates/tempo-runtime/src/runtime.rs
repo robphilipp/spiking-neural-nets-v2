@@ -1,5 +1,6 @@
 //! The runtime: owns the shards, builds the network, and runs it.
 
+use crate::StopToken;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt;
@@ -612,14 +613,23 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
     /// Delivers every event before `end`, then sets [`Self::now`] to `end`, pacing against the clock if it's in
     /// real-time mode. Returns early if the clock is stopped. Returns the number of events delivered.
     pub fn run_until(&mut self, end: SimTime) -> u64 {
-        self.run_to(end)
+        let token = self.clock.stop_token();
+        self.run_to(end, token)
+    }
+
+    /// Like [`Self::run_until`], but any [`ClockHandle::stop`] issued after `token` was taken ends the run, even
+    /// one issued before this call starts. Use it when the run starts on another thread: take the token before
+    /// handing the runtime over, so a stop that races the thread's start isn't lost.
+    pub fn run_until_unless_stopped(&mut self, end: SimTime, token: StopToken) -> u64 {
+        self.run_to(end, token)
     }
 
     /// Runs until no events are pending, or the clock is stopped. In real-time mode the simulation keeps following
     /// the clock even when idle (live input may arrive), so it runs until stopped. Returns the number of events
     /// delivered.
     pub fn run(&mut self) -> u64 {
-        self.run_to(SimTime::MAX)
+        let token = self.clock.stop_token();
+        self.run_to(SimTime::MAX, token)
     }
 
     fn kind_of<A: Actor<M, E>>(&mut self) -> u16 {
@@ -657,7 +667,7 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
         }
     }
 
-    fn run_to(&mut self, end: SimTime) -> u64 {
+    fn run_to(&mut self, end: SimTime, token: StopToken) -> u64 {
         if self.needs_shrink {
             self.shrink_to_fit();
         }
@@ -679,7 +689,7 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             barrier: WindowBarrier::new(n),
             clock: &self.clock,
             control: &self.control,
-            stop_epoch: self.clock.stop_epoch(),
+            stop_epoch: token.0,
         };
 
         let outcomes: Vec<ShardOutcome> = if n == 1 {

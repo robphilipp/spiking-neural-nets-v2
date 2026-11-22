@@ -315,3 +315,118 @@ impl Streams {
         })
     }
 }
+
+#[derive(Default)]
+struct SensorSamples {
+    sensor: UInt32Builder,
+    channel: UInt32Builder,
+    t_sensor_ns: UInt64Builder,
+    t_ns: UInt64Builder,
+    value: Float32Builder,
+}
+
+impl Columns for SensorSamples {
+    fn finish(&mut self) -> Vec<ArrayRef> {
+        vec![
+            Arc::new(self.sensor.finish()),
+            Arc::new(self.channel.finish()),
+            Arc::new(self.t_sensor_ns.finish()),
+            Arc::new(self.t_ns.finish()),
+            Arc::new(self.value.finish()),
+        ]
+    }
+}
+
+#[derive(Default)]
+struct SensorInputs {
+    t_ns: UInt64Builder,
+    neuron: UInt64Builder,
+    sensor: UInt32Builder,
+    mv: Float32Builder,
+}
+
+impl Columns for SensorInputs {
+    fn finish(&mut self) -> Vec<ArrayRef> {
+        vec![
+            Arc::new(self.t_ns.finish()),
+            Arc::new(self.neuron.finish()),
+            Arc::new(self.sensor.finish()),
+            Arc::new(self.mv.finish()),
+        ]
+    }
+}
+
+/// Records what external sensors sent during a run: every sample (`sensor_samples.arrows`: sensor, channel, the
+/// sensor's own time, the simulation time it was mapped to, value) and every neuron input the samples were encoded
+/// into (`sensor_inputs.arrows`: t_ns, neuron, sensor, mv). Replaying the inputs reproduces the run.
+pub struct SensorLog {
+    samples: Stream<SensorSamples>,
+    inputs: Stream<SensorInputs>,
+    batch_rows: usize,
+}
+
+impl std::fmt::Debug for SensorLog {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SensorLog")
+            .field("samples", &self.samples.total)
+            .field("inputs", &self.inputs.total)
+            .finish()
+    }
+}
+
+impl SensorLog {
+    /// Creates the two sensor tables in `dir` (which must exist).
+    pub fn create(dir: &Path, batch_rows: usize) -> Result<Self> {
+        use DataType::{Float32, UInt32, UInt64};
+        Ok(Self {
+            samples: Stream::create(
+                dir,
+                "sensor_samples",
+                schema(vec![
+                    col("sensor", UInt32),
+                    col("channel", UInt32),
+                    col("t_sensor_ns", UInt64),
+                    col("t_ns", UInt64),
+                    col("value", Float32),
+                ]),
+            )?,
+            inputs: Stream::create(
+                dir,
+                "sensor_inputs",
+                schema(vec![
+                    col("t_ns", UInt64),
+                    col("neuron", UInt64),
+                    col("sensor", UInt32),
+                    col("mv", Float32),
+                ]),
+            )?,
+            batch_rows: batch_rows.max(1),
+        })
+    }
+
+    /// Records a sample.
+    pub fn sample(&mut self, sensor: u32, channel: u32, t_sensor_ns: u64, t: SimTime, value: f32) -> Result<()> {
+        let b = &mut self.samples.builders;
+        b.sensor.append_value(sensor);
+        b.channel.append_value(channel);
+        b.t_sensor_ns.append_value(t_sensor_ns);
+        b.t_ns.append_value(t_ns(t));
+        b.value.append_value(value);
+        self.samples.row_added(self.batch_rows)
+    }
+
+    /// Records an input to a neuron (by actor id).
+    pub fn input(&mut self, sensor: u32, t: SimTime, neuron: u64, mv: f32) -> Result<()> {
+        let b = &mut self.inputs.builders;
+        b.t_ns.append_value(t_ns(t));
+        b.neuron.append_value(neuron);
+        b.sensor.append_value(sensor);
+        b.mv.append_value(mv);
+        self.inputs.row_added(self.batch_rows)
+    }
+
+    /// Closes the tables; returns (samples, inputs) recorded.
+    pub fn finish(self) -> Result<(u64, u64)> {
+        Ok((self.samples.finish()?, self.inputs.finish()?))
+    }
+}

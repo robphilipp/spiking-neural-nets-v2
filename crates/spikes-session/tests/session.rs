@@ -200,3 +200,27 @@ NRN=[(nid=a, mst=5 mV, mpn=0 mV, LOC=(cst=ct, px1=0, px2=0, px3=0), RCP=[(mod=ac
     engine.close(other.id()).unwrap();
     assert!(engine.session(other.id()).is_err());
 }
+
+#[test]
+fn stopping_right_after_starting_never_hangs() {
+    // A stop() issued before the run thread gets going used to be lost (the run took its stop baseline too
+    // late), leaving a paused run that never ended. Run the race many times under a watchdog.
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let engine = Engine::new();
+        let session = engine.create("ring", v1("ring.boo")).unwrap();
+        session.build(BuildSettings::default()).unwrap();
+        for i in 0..200 {
+            session.start(RunSettings::default()).unwrap();
+            if i % 2 == 0 {
+                session.pause().unwrap();
+            }
+            session.stop().unwrap();
+            assert_eq!(session.state(), State::Ready);
+        }
+        done_tx.send(()).unwrap();
+    });
+    done_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("start/stop deadlocked");
+}

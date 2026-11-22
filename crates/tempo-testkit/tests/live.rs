@@ -190,6 +190,41 @@ fn live_input_is_prompt_even_when_the_next_event_is_far_away() {
 }
 
 #[test]
+fn batched_injection_delivers_each_message_at_its_time_and_counts_late_ones() {
+    let mut rt: Runtime<Msg, SimTime> = Runtime::new(paced(2));
+    let counters: Vec<ActorId> = (0..4).map(|_| rt.spawn(Counter::default())).collect();
+    let control = rt.control();
+    std::thread::scope(|s| {
+        let runner = s.spawn(|| rt.run());
+        std::thread::sleep(Duration::from_millis(30));
+        // Two in the past (late), the rest 50 ms ahead at µs spacing, spread over both shards.
+        let base = control.clock().sim_time() + SimDuration::from_millis(50);
+        let mut batch = vec![
+            (counters[0], ms(1), Msg::Poke(100)),
+            (counters[1], ms(2), Msg::Poke(101)),
+        ];
+        for i in 0..40u64 {
+            batch.push((counters[(i % 4) as usize], base + us(i), Msg::Poke(i)));
+        }
+        let late = control.inject_batch(batch).wait().unwrap();
+        assert_eq!(late, 2);
+        std::thread::sleep(Duration::from_millis(100));
+        control.clock().stop();
+        runner.join().unwrap();
+    });
+    let mut pokes: Vec<(SimTime, u64)> = counters
+        .iter()
+        .flat_map(|&c| rt.actor::<Counter>(c).unwrap().pokes.clone())
+        .collect();
+    pokes.retain(|p| p.1 < 100);
+    pokes.sort_unstable();
+    assert_eq!(pokes.len(), 40);
+    for (i, w) in pokes.windows(2).enumerate() {
+        assert_eq!(w[1].0 - w[0].0, us(1), "spacing kept exactly at {i}");
+    }
+}
+
+#[test]
 fn a_recorded_live_session_replays_identically() {
     let build = |config: RuntimeConfig| {
         let mut rt: Runtime<Msg, SimTime> = Runtime::new(RuntimeConfig { trace: true, ..config });

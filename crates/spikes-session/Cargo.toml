@@ -7,6 +7,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+arrow = { version = "60.2.0", default-features = false, features = ["ipc"] }
+rand.workspace = true
+rand_xoshiro.workspace = true
 spikes-api = { version = "0.1.0", path = "../spikes-api" }
 spikes-dna = { version = "0.1.0", path = "../spikes-dna" }
 spikes-model = { version = "0.1.0", path = "../spikes-model" }
@@ -19,3 +22,4 @@ workspace = true
 
 [dev-dependencies]
 spikes-api = { path = "../spikes-api" }
+spikes-record = { path = "../spikes-record" }

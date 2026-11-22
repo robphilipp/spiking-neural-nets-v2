@@ -10,6 +10,7 @@
 //! inside.
 
 mod network;
+mod sensors;
 mod session;
 mod viewer;
 
@@ -18,6 +19,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub use network::{GRID, NetworkInfo, NeuronInfo, SynapseInfo};
+pub use sensors::{Encoding, OnPause, SampleBatch, Sensor, SensorSpec, SensorStats, SpikeBatch};
 pub use session::{BuildSettings, NeuronSnapshot, RunSettings, Session, SessionNotice, Speed, State};
 pub use viewer::{Selection, ViewSettings, Viewer};
 

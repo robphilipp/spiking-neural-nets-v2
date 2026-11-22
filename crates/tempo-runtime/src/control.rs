@@ -215,6 +215,62 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Control<M, E> {
         rx
     }
 
+    /// Delivers many messages, each at its own time (or at the start of the window being processed, if that time
+    /// is already past), with one submission per shard instead of one per message. Messages to unknown actors are
+    /// dropped. Replies with how many were delivered late (later than asked).
+    pub fn inject_batch(&self, messages: Vec<(ActorId, SimTime, M)>) -> Reply<usize> {
+        let (tx, rx) = reply();
+        let mut per_shard: std::collections::BTreeMap<u16, Vec<(ActorId, SimTime, M)>> = Default::default();
+        for (to, at, msg) in messages {
+            if let Some(shard) = self.shared.shard_of(to) {
+                per_shard.entry(shard).or_default().push((to, at, msg));
+            }
+        }
+        let late = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let remaining = Arc::new(std::sync::atomic::AtomicUsize::new(per_shard.len()));
+        let tx = Arc::new(Mutex::new(Some(tx)));
+        if per_shard.is_empty()
+            && let Some(tx) = lock(&tx).take()
+        {
+            tx.send(0);
+        }
+        for (shard, messages) in per_shard {
+            let control = Arc::clone(&self.shared);
+            let (late, remaining, tx) = (Arc::clone(&late), Arc::clone(&remaining), Arc::clone(&tx));
+            self.shared.submit(
+                shard,
+                Box::new(move |shard, _world, window_start| {
+                    for (to, at, msg) in messages {
+                        let delivered = at.max(window_start);
+                        if delivered > at {
+                            late.fetch_add(1, Ordering::Relaxed);
+                        }
+                        if let Some(journal) = &control.journal {
+                            lock(journal).push(Injected {
+                                at: delivered,
+                                to,
+                                msg: msg.clone(),
+                            });
+                        }
+                        let key = OrderKey {
+                            at: delivered,
+                            src: ActorId::WORLD,
+                            seq: control.world_seq.fetch_add(1, Ordering::AcqRel),
+                            sub: 0,
+                        };
+                        shard.core.queue.push(key, Item::Message { dst: to, msg });
+                    }
+                    if remaining.fetch_sub(1, Ordering::AcqRel) == 1
+                        && let Some(tx) = lock(&tx).take()
+                    {
+                        tx.send(late.load(Ordering::Relaxed));
+                    }
+                }),
+            );
+        }
+        rx
+    }
+
     /// Delivers `msg` to `to` "now": at the clock's current simulation time plus the ingress delay
     /// ([`crate::RuntimeConfig::ingress_delay`]). This is how live input (a UI sensor, hardware) enters a paced
     /// simulation. Replies with the delivery time used.

@@ -1265,6 +1265,9 @@ dependencies = [
 name = "spikes-session"
 version = "0.1.0"
 dependencies = [
+ "arrow",
+ "rand",
+ "rand_xoshiro",
  "spikes-api",
  "spikes-dna",
  "spikes-model",
