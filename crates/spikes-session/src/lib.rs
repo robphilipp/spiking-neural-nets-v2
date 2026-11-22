@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 pub use network::{GRID, NetworkInfo, NeuronInfo, SynapseInfo};
 pub use sensors::{Encoding, OnPause, SampleBatch, Sensor, SensorSpec, SensorStats, SpikeBatch};
-pub use session::{BuildSettings, NeuronSnapshot, RunSettings, Session, SessionNotice, Speed, State};
+pub use session::{BuildSettings, InputSpec, NeuronSnapshot, RunSettings, Session, SessionNotice, Speed, State};
 pub use viewer::{Selection, ViewSettings, Viewer};
 
 /// Identifies a session within its engine.

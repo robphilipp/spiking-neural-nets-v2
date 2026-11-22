@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 64d18142bdeaac60188c941ad24d5d8d9e0aa14a5bcaa03abe269400e98cf602 # shrinks to ops = [AddInput, SetSpeed(None), Build { shards: 2 }, StartMax { ms: 93 }, Pause, StartMax { ms: 47 }, Query { neuron: 23 }, Build { shards: 1 }, Build { shards: 2 }, Observe { neuron: 22 }, Stop, AddInput, Step { ms: 17 }]

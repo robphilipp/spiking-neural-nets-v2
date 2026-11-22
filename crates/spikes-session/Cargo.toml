@@ -21,5 +21,6 @@ tempo-runtime = { version = "0.1.0", path = "../tempo-runtime" }
 workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 spikes-api = { path = "../spikes-api" }
 spikes-record = { path = "../spikes-record" }

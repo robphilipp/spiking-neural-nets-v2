@@ -224,3 +224,37 @@ fn stopping_right_after_starting_never_hangs() {
         .recv_timeout(Duration::from_secs(30))
         .expect("start/stop deadlocked");
 }
+
+#[test]
+fn a_run_stopped_while_paused_leaves_the_session_usable() {
+    // Stopping a paused run used to leave the clock paused: a later step() waited for it for ever (holding the
+    // session), and a later paced start() began paused.
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let engine = Engine::new();
+        let session = engine.create("ring", v1("ring.boo")).unwrap();
+        session.build(BuildSettings::default()).unwrap();
+        session.start(RunSettings::default()).unwrap();
+        session.pause().unwrap();
+        session.stop().unwrap();
+        let before = session.sim_time();
+        session.step(ms(5)).unwrap();
+        assert_eq!(session.sim_time(), before + ms(5));
+        session
+            .start(RunSettings {
+                speed: Speed::Factor(1.0),
+                duration: Some(ms(30)),
+                record: None,
+            })
+            .unwrap();
+        assert_eq!(session.state(), State::Running);
+        assert!(
+            session.wait_for_run(Duration::from_secs(5)),
+            "the paced run reaches its end"
+        );
+        done_tx.send(()).unwrap();
+    });
+    done_rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("hung after stopping a paused run");
+}

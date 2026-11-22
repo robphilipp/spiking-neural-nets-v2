@@ -8,7 +8,8 @@ use std::time::Duration;
 use spikes_dna::NetworkDescription;
 use spikes_model::Phase;
 use spikes_network::{
-    BuildOptions, Event, ModulatorMsg, ModulatorRef, Network, NeuronActor, NeuronMsg, Runtime, SimMsg,
+    BuildOptions, Event, ModulatorMsg, ModulatorRef, Network, NeuronActor, NeuronMsg, NeuronRef, PeriodicInput,
+    PoissonInput, Runtime, SimMsg,
 };
 use spikes_record::{RecordOptions, Recorder, RunInfo, SensorLog, Summary};
 use tempo_runtime::{ClockHandle, Control, Jitter, RuntimeConfig, SimDuration, SimTime};
@@ -46,10 +47,14 @@ pub enum Speed {
 }
 
 impl Speed {
+    /// Sets the clock running at this speed (a clock left paused by an earlier run is resumed).
     fn apply(self, clock: &ClockHandle) {
         match self {
             Self::AsFastAsPossible => clock.set_as_fast_as_possible(),
-            Self::Factor(f) => clock.set_time_factor(1.0 / f),
+            Self::Factor(f) => {
+                clock.set_time_factor(1.0 / f);
+                clock.resume();
+            }
         }
     }
 
@@ -109,6 +114,41 @@ impl Default for RunSettings {
             speed: Speed::Factor(1.0),
             duration: None,
             record: None,
+        }
+    }
+}
+
+/// A synthetic input running inside the simulation, from the current time on.
+#[derive(Clone, Debug, PartialEq)]
+pub enum InputSpec {
+    /// Each event goes to one target chosen at random, at Poisson-distributed times.
+    Poisson {
+        /// Neurons (by index).
+        targets: Vec<u32>,
+        /// Mean rate in Hz (over all targets).
+        rate_hz: f64,
+        /// Input per event in mV.
+        mv: f32,
+        /// How long; `None` for ever.
+        duration: Option<SimDuration>,
+    },
+    /// Every target, every `period`.
+    Periodic {
+        /// Neurons (by index).
+        targets: Vec<u32>,
+        /// Interval.
+        period: SimDuration,
+        /// Input per pulse in mV.
+        mv: f32,
+        /// How long; `None` for ever.
+        duration: Option<SimDuration>,
+    },
+}
+
+impl InputSpec {
+    fn targets(&self) -> &[u32] {
+        match self {
+            Self::Poisson { targets, .. } | Self::Periodic { targets, .. } => targets,
         }
     }
 }
@@ -497,6 +537,9 @@ impl Session {
                 Ok(())
             }
             Stage::Ready(built) => {
+                // As fast as possible, whatever state the last run left the clock in (a paused clock would never
+                // get there). The next start sets the speed again.
+                built.rt.clock().set_as_fast_as_possible();
                 let end = built.rt.now().saturating_add(by);
                 built.rt.run_until(end);
                 self.shared.hub.advance(built.rt.now());
@@ -567,6 +610,65 @@ impl Session {
             .hub
             .update(viewer.id(), settings, self.network().neurons.len());
         let _ = self.observe(&membrane, true);
+    }
+
+    /// Adds a synthetic input that runs inside the simulation. Only while ready (actors can't be added during a
+    /// run); a rebuild removes it.
+    pub fn add_input(&self, input: InputSpec) -> Result<(), SessionError> {
+        let network = self.network();
+        let targets = input
+            .targets()
+            .iter()
+            .map(|&i| {
+                network
+                    .id(i)
+                    .map(NeuronRef::new)
+                    .ok_or_else(|| SessionError::NotFound(format!("neuron {i}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut inner = self.inner();
+        let state = state_of(&inner);
+        let Stage::Ready(built) = &mut inner.phase else {
+            return Err(SessionError::State {
+                state,
+                action: "add an input to",
+            });
+        };
+        let start = built.rt.now();
+        let delay = SimDuration::from_millis(1);
+        match input {
+            InputSpec::Poisson {
+                rate_hz, mv, duration, ..
+            } => {
+                if !(rate_hz.is_finite() && rate_hz > 0.0) {
+                    return Err(SessionError::Invalid(format!("rate must be positive, not {rate_hz}")));
+                }
+                built.rt.spawn(PoissonInput {
+                    rate_hz,
+                    targets,
+                    mv,
+                    delay,
+                    start,
+                    until: duration.map_or(SimTime::MAX, |d| start.saturating_add(d)),
+                });
+            }
+            InputSpec::Periodic {
+                period, mv, duration, ..
+            } => {
+                if period.is_zero() {
+                    return Err(SessionError::Invalid("the period must be positive".into()));
+                }
+                built.rt.spawn(PeriodicInput {
+                    period,
+                    targets,
+                    mv,
+                    delay,
+                    start,
+                    until: duration.map_or(SimTime::MAX, |d| start.saturating_add(d)),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Connects an external sensor. The network must be built.
