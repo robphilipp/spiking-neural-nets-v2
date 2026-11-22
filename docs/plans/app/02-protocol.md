@@ -24,6 +24,7 @@ spans?: Span[] }`. Parse errors carry `{line, column, length, message}` for the 
 | Build | `Build {seed, shards, jitter_us, record_weights}`, `Reset {seed?}`, `GetNetwork` → neurons (index, name, group, kind, position, inhibitory), synapses (post, index, pre, weight, sign, delay), groups, modulators |
 | Run | `Start {speed, until_ms?, record}`, `Pause`, `Resume`, `Step {ms}`, `SetSpeed {factor}`, `Stop` |
 | Live input | `Stimulate {neurons, mv}`, `ReleaseModulator {site?, position?, modulator, amount}`, `SetInput {input, enabled, rate_hz?…}` |
+| Sensors | `ListSensors`, `ConnectSensor {session, sensor, channels?, sample_rate_hz?}` → a sensor handle (declared in the project, or ad hoc with a default encoding), `DisconnectSensor`; samples are binary input batches (§4.1) |
 | Topology | `Connect {pre, post, weight, sign, learning?}`, `Prune {pre, post}` |
 | Inspection | `QueryNeuron {neuron}` → potential, thresholds, refractory state, intrinsic plasticity, phase, synapses with weights and eligibility, modulator levels at its position; `Observe {neurons, on}` |
 | Viewing | `Attach {session, view}`, `UpdateView {view}`, `Detach` |
@@ -34,7 +35,7 @@ weights: "none" | "all" | {neurons}, stats: boolean }`.
 
 ## 3. Notices
 
-`StateChanged {state}`, `RunProgress {sim_ms, wall_ms, speed}` (≤ 4/s; frames carry the same at frame rate),
+`SensorConnected {sensor}`, `SensorDisconnected {sensor}`, `SensorLate {sensor, samples, by_ms}`, `StateChanged {state}`, `RunProgress {sim_ms, wall_ms, speed}` (≤ 4/s; frames carry the same at frame rate),
 `System {severity, kind, message}` (CannotKeepUp, CaughtUp, LookaheadChanged, ActorFailed, TopologyChanged),
 `RecordingFinished {id, tables, bytes}`, `ViewerLagging {dropped_frames}`.
 
@@ -61,6 +62,22 @@ sections: { kind u16, reserved u16, count u32, bytes u32, pad } + payload
   7 modulator        modulator u16, x,y,z f32, amount f32, offset_ns u32 (per release)
   8 stats            events_per_s f64, lookahead_ns u64, pending u64, shards u16, …
 ```
+
+### 4.1 Sensor input batches (client → engine)
+
+```
+header (32 bytes)
+  magic "SPKS", version u16, flags u16 (bit 0: values are spikes, not samples)
+  sensor u32 (handle from ConnectSensor), batch_seq u32
+  t0_sensor_ns u64                 sensor clock at the first sample
+  channels u16, samples u16 (per channel), dt_ns u32 (sample spacing; 0 = explicit times)
+payload
+  values f32[samples × channels]   sample-major
+  (dt_ns = 0: offset_ns u32[samples] first)
+  (spikes: channel u16[count] + offset_ns u32[count] instead)
+```
+
+At 64 channels × 1 kHz in 10 ms batches, that is 2.6 kB per batch, 260 kB/s.
 
 Columns, not rows: the raster and the 3D view upload `neuron` and `offset_ns` arrays to the GPU directly.
 

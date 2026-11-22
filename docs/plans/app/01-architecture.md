@@ -4,7 +4,8 @@
 
 | Path | Kind | Depends on | Contents |
 |------|------|-----------|----------|
-| `crates/spikes-session` | lib | `spikes-network`, `spikes-record`, `spikes-dna`, `tempo-runtime` | `Engine` (many sessions), `Session` (one network: state machine, commands, clock, recording, live frames), input actors that need files (signal replay), the CLI's logic |
+| `crates/spikes-session` | lib | `spikes-network`, `spikes-record`, `spikes-dna`, `tempo-runtime` | `Engine` (many sessions), `Session` (one network: state machine, commands, clock, recording, live frames), sensor ingestion and encoders, input actors that need files (recorded sensor replay), the CLI's logic |
+| `crates/spikes-sensor` | lib | `spikes-api`, `tungstenite` | A client for sensor programs: connect to a session, declare or claim a sensor, send sample batches |
 | `crates/spikes-api` | lib | `serde`, `ts-rs` | Protocol types only: `Request`, `Response`, `Notice`, frame header and layout constants, error codes. No `tempo` types leak out (times are `u64` ns, neurons are dense `u32` indices). |
 | `apps/spikes-cli` | bin | `spikes-session` | `spikes check net.boo`, `spikes run net.boo --for 10s --speed 1 --record runs/x`, `spikes parquet runs/x` |
 | `apps/spikes-server` | bin | `spikes-session`, `spikes-api`, `axum`, `tokio` | HTTP + WebSocket adapter; static hosting of the built UI; later the cluster coordinator (actors phase 4) |
@@ -39,7 +40,8 @@ rebuilds from the description with the same or a new seed. Invalid transitions r
 - everything else during a run goes through the runtime's `Control` handle (clock, inject, query, update,
   change_route, observe) from any thread;
 - the **recorder thread** (`spikes-record`, lossless subscription);
-- one **aggregator thread** per session (below), shared by all viewers of that session.
+- one **aggregator thread** per session (below), shared by all viewers of that session;
+- one **sensor thread** per session that has sensors: anchors sensor clocks, encodes samples, injects (§5).
 
 **Name ↔ index**: the engine numbers neurons densely in description order (`u32`) and keeps the actor-id map, so
 the protocol and the UI never see actor ids. Synapses are `(post index, synapse index)`.
@@ -90,7 +92,55 @@ loses data only for that viewer.
 - The engine runs in-process with all cores available; the window can also connect to a remote server instead
   (settings → "Run on: this computer | server …").
 
-## 5. Projects and storage
+## 5. Sensors
+
+Sensors are separate programs, so they run at their own pace, on their own clock, possibly on another machine
+(a microphone on a laptop driving a network on a server).
+
+**Model.** A project declares sensors:
+
+```toml
+[[sensor]]
+name = "cochlea"
+channels = 64                      # e.g. filterbank envelopes from a microphone
+rate_hz = 1000                     # nominal sample rate (for validation and display)
+encoding = { kind = "rate", max_hz = 200, gain = 1.0 }   # or "current", "threshold", "spikes"
+targets = "cochlea-{0..63}"        # channel i → neuron(s); a range, a list, or a group with a mapping
+```
+
+Encodings, each implemented once in the engine:
+- `current`: each sample becomes an external input of `gain × value` mV to the channel's neurons;
+- `rate`: each channel drives a Poisson process at `value × max_hz`, re-drawn as samples change (exact sub-sample
+  spike times from the session's RNG);
+- `threshold`: an input event when the value crosses a level (delta modulation: up and down channels);
+- `spikes`: the sensor sends events itself (e.g. an event camera or a neuromorphic cochlea), passed through.
+
+**Timing.** Samples carry the sensor's own timestamps. On a sensor's first batch the engine anchors its clock:
+`sim = sim_now + ingress_delay + (t_sensor − t_sensor0) × speed`, so the spacing between samples is kept
+exactly even though batches arrive every few milliseconds with network jitter. Each batch is injected with
+`Control::inject` at those future times (`ingress_delay`, default 20 ms for local sensors, more for remote ones, must
+cover batch interval plus jitter). Samples that arrive too late for their slot are shifted to the earliest legal time
+and counted (a `SensorLate` notice; `inject` already delivers late messages at the window start and replies with
+the time used). A1 adds `Control::inject_batch`, one submission per shard per batch instead of one per input. Clock drift between sensor and engine is corrected slowly (re-anchoring when
+the offset drifts by more than a few ms).
+
+Live sensors run at the speed of the world, so a live sensor at simulation speed ≠ 1 is either resampled (its
+time scaled by `speed`, the default) or refused, per sensor. Pausing the session buffers or drops sensor input
+(per sensor: `on_pause = "drop" | "buffer"`).
+
+**Volume.** Encoding happens in the engine's sensor thread, not per sample in the actors: raw audio at 16 kHz should
+be reduced by the sensor (a filterbank to 32–128 channel envelopes at ~1 kHz is typical), and the encoder emits
+only the neuron inputs that result. Batches are binary (02 §4.1).
+
+**Recording.** Every received sample batch is recorded (`sensors.arrows`: sensor, channel, t_sensor, t_sim,
+value), as is every input it produced, so `Replay` of a run with sensors is exact and a recorded sensor stream
+can drive a new run (the "file" input).
+
+**Clients.** `spikes-sensor` (a small Rust crate) and a Python package (`spikes_sensor`, a few hundred lines over
+WebSocket) give `connect(url, session, sensor) → send(channel_values, t)`. The UI has a built-in microphone sensor
+(Web Audio `AudioWorklet` → filterbank → batches over the same client) as the first demo.
+
+## 6. Projects and storage
 
 ```
 my-project/
@@ -104,7 +154,7 @@ my-project/
 v1's `.spikes` project files are imported (network path, sensor file, time factor, duration). Remote runs keep
 their recordings on the server under `recordings_dir/<session>/`; the UI lists and downloads them.
 
-## 6. Failure handling
+## 7. Failure handling
 
 - Parse and build errors come back as structured errors with spans, shown inline in the editor.
 - A panicking actor produces an `ActorFailed` notice; the run continues (runtime panic isolation).

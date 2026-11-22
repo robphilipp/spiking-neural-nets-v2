@@ -9,12 +9,16 @@ Each phase ends with something runnable and its acceptance checks automated wher
   signal-file replay).
 - The live-frame aggregator with level of detail, producing frames in the `spikes-api` layout (Rust decoder for
   tests).
+- Sensor ingestion: clock anchoring, the four encodings, late-sample handling, recording of sensor data; an
+  in-process sensor API (used by tests and the CLI) that the network adapters later wrap.
 - `apps/spikes-cli`: `check`, `run` (paced or as fast as possible, `--record`), `parquet`.
 - **Accept**:
   - every v1 test network builds and runs from the CLI; recordings load in Python;
   - a paced 100k-neuron run streams frames at 60 fps with each frame ≤ its budget and frame production ≤ 2 ms;
   - a viewer that never reads loses frames but the run stays on schedule (lag unchanged within noise);
-  - state-machine misuse returns errors, never panics (property test over random command sequences).
+  - state-machine misuse returns errors, never panics (property test over random command sequences);
+  - a synthetic sensor sending jittered batches (±5 ms) produces inputs whose spacing matches the sample spacing
+    exactly; replaying the recorded sensor data reproduces the run's spikes.
 
 ## A2: protocol, server, TS client (1–2 weeks)
 
@@ -22,11 +26,14 @@ Each phase ends with something runnable and its acceptance checks automated wher
   golden-file test.
 - `apps/spikes-server` (axum): REST endpoints, WebSocket sessions, multiple viewers, token auth, static UI hosting.
 - `packages/spikes-client` (TS): `WebSocketClient`, frame views, reconnect.
+- Sensor clients: `crates/spikes-sensor` (Rust) and `clients/python/spikes_sensor`, with an example that streams a
+  microphone's filterbank envelopes (Python, `sounddevice` + `numpy`) into a session on the server.
 - **Accept**:
   - a TS integration test (Vitest + a spawned server) creates, builds, runs, pauses, steps, stimulates, queries
     and stops a session, and checks frames against the recording;
   - two clients watch one session; one disconnecting doesn't affect the other or the run;
-  - round trip for a control request < 5 ms locally.
+  - round trip for a control request < 5 ms locally;
+  - the microphone example drives a cochlea-like input layer in real time, from another machine on the LAN.
 
 ## A3: Tauri app shell (2 weeks)
 

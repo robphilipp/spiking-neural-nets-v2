@@ -1,6 +1,6 @@
 # Plan: app layer (session engine, server, Tauri UI)
 
-Status: **draft for review**, 2026-11-22. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done) and
+Status: **reviewed**, 2026-11-22 (decisions below). Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done) and
 the neuron crates (`docs/plans/neurons/`, N1–N4 done). Background on the v1 UI and server is in
 `../../../notes/05-v1-ui.md` and `../../../notes/04-v1-runtime-architecture.md`; the web-layer recommendation this
 plan expands is in `../../../notes/06-lessons-and-v2-implications.md`.
@@ -12,7 +12,9 @@ with the live clock, take commands, record to Arrow, and turn the event stream i
 per-frame batches** for viewers. Define one **protocol** (`spikes-api`: JSON requests, responses and notices, plus
 binary frames) with TypeScript types generated from the Rust. Serve it two ways with thin adapters: **Tauri IPC**
 (the desktop app embeds the engine, no server to start) and **WebSocket** (`spikes-server`, for remote machines,
-browsers, and later the cluster coordinator). The **UI is one TypeScript code base** that talks to a `SpikesClient`
+browsers, and later the cluster coordinator). **Sensors are external programs** (a microphone, a camera, a robot)
+that stream samples into a running network over the same transports; the engine encodes them into neuron input
+at the right simulation times. The **UI is one TypeScript code base** that talks to a `SpikesClient`
 interface with two implementations. Kafka is not needed: the runtime's subscriptions are the live queue and the
 Arrow/Parquet files are the durable one.
 
@@ -47,16 +49,18 @@ Arrow/Parquet files are the durable one.
 2. **One protocol, two transports.** Control is JSON request/response with ids; live data is binary frames. Over
    WebSocket: text messages for JSON, binary messages for frames. Over Tauri: one `request` command and a
    `Channel` carrying raw frame bytes. The UI can't tell the difference.
-3. **No Kafka.** Live data: the runtime's bounded subscription, aggregated per wall-clock frame. Durable data: the
+3. **No Kafka (for now).** Live data: the runtime's bounded subscription, aggregated per wall-clock frame. Durable data: the
    Arrow IPC / Parquet recording. An exporter (Kafka, NATS) can be added later as just another subscriber if some
    outside system needs it.
 4. **Frames are budgeted, never back-pressure.** The aggregator sends one frame per display interval (default
    16 ms) and keeps it under a byte budget with level of detail (exact spikes → per-neuron counts → spatial bins).
    Slow clients lose frames, which are counted and shown; the simulation never waits.
-5. **Stimulus and sensors run in simulation time.** Built-in input actors (Poisson, periodic, recorded-signal
-   replay, scripted pulses) are exact and reproducible; interactive input (buttons, hardware) uses
-   `inject_live`. v1's JavaScript sensor scripts become a UI-side *design* tool whose output is saved as a signal
-   file the engine replays.
+5. **Sensors live outside the simulation.** A sensor is any program (Python, Rust, the UI itself using the
+   browser's microphone) that connects to a session and streams timestamped samples on named channels. The project
+   maps channels to neurons and an encoding (current, rate, threshold crossings, spikes); the engine schedules the
+   encoded input in simulation time, keeping the timing between samples. Everything a sensor sends is recorded, so
+   a run can be replayed exactly. Built-in input actors (Poisson, periodic, scripted pulses) remain for synthetic
+   stimulus. See [01 §5](01-architecture.md#5-sensors).
 6. **Projects live with the user.** A project is a directory (`project.toml`, `.boo` files, input files);
    recordings are written where the simulation runs and can be downloaded as Parquet.
 7. **The UI is React 19 + TypeScript + Vite with Material UI** (`@mui/material`, replacing v1's Fluent UI) and
@@ -65,13 +69,10 @@ Arrow/Parquet files are the durable one.
 8. **Generated types.** `ts-rs` derives TypeScript for every protocol type; CI fails if the generated files are
    stale.
 
-## Questions for review
+## Decisions (2026-11-22)
 
-1. **Kafka**: drop it (recommended, decision 3), or keep an optional Kafka exporter from the start?
-2. **UI framework**: settled (2026-11-22): React with Material UI and `stream-charts` 2.1.
-3. **Sensors**: in-simulation input actors plus signal files (recommended, decision 5), or keep v1-style JS
-   sensor scripts that stream from the UI in wall-clock time?
-4. **Browser access**: should `spikes-server` also serve the UI as a web app (recommended: nearly free, since the
-   UI already speaks WebSocket)?
-5. **Order of work**: engine → protocol + server → Tauri app (recommended: everything is testable headless before
-   any UI exists), or Tauri first?
+1. Kafka: dropped for now; an exporter can be added later as a subscriber.
+2. UI: React with Material UI and `stream-charts` 2.1.
+3. Sensors: external programs streaming into the network (decision 5), e.g. a microphone routed to neurons.
+4. `spikes-server` also serves the UI as a web app.
+5. Order: engine (A1) → protocol and server (A2) → Tauri app (A3) → the rest.
