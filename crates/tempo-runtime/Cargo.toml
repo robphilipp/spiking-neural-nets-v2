@@ -1,0 +1,20 @@
+[package]
+name = "tempo-runtime"
+description = "Executor for the tempo timed actor framework: actors, context, routes and the event loop."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tempo-core = { path = "../tempo-core" }
+tempo-queue = { path = "../tempo-queue" }
+rand_core.workspace = true
+rand_xoshiro.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+
+[lints]
+workspace = true

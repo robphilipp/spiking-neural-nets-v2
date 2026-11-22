@@ -21,11 +21,11 @@ proptest! {
         prop_assert_eq!((t + d) - t, d);
     }
 
-    /// The event order is exactly lexicographic on (time, sender, sequence).
+    /// The event order is exactly lexicographic on (time, sender, sequence, sub).
     #[test]
-    fn order_key_is_lexicographic(a in any::<(u64, u64, u64)>(), b in any::<(u64, u64, u64)>()) {
-        let ka = OrderKey { at: SimTime::from_nanos(a.0), src: ActorId::from_raw(a.1), seq: a.2 };
-        let kb = OrderKey { at: SimTime::from_nanos(b.0), src: ActorId::from_raw(b.1), seq: b.2 };
+    fn order_key_is_lexicographic(a in any::<(u64, u64, u64, u32)>(), b in any::<(u64, u64, u64, u32)>()) {
+        let ka = OrderKey { at: SimTime::from_nanos(a.0), src: ActorId::from_raw(a.1), seq: a.2, sub: a.3 };
+        let kb = OrderKey { at: SimTime::from_nanos(b.0), src: ActorId::from_raw(b.1), seq: b.2, sub: b.3 };
         prop_assert_eq!(ka.cmp(&kb), a.cmp(&b));
     }
 

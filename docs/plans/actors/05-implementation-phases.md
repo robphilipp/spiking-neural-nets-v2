@@ -29,6 +29,37 @@ Each phase ends with something runnable and measurable.
   - Overhead per event is 50 ns or less, excluding the handler.
   - At least 10M actors in under 2 GB for a 64-byte actor.
 
+### Phase 1 status: done (2026-11-22)
+
+Crates: `tempo-core` (time, IDs, envelope, order key), `tempo-queue` (heap and timing wheel), `tempo-runtime`
+(actors, context, arenas, directory, routes with jitter, timers, per-actor RNG, event output, trace),
+`tempo-testkit` (`trace_hash`, ping-pong / ring / LIF models). 49 tests, including property tests that check the
+wheel against the heap and determinism tests across queue types and seeds.
+
+Measured on the development Mac (Apple Silicon, one thread, release build):
+
+| Check | Target | Result |
+|-------|--------|--------|
+| Delay precision | 1 µs exact | exact to 1 ns, for delays from 1 ns to 1 h (both queues) |
+| Queue, pop + push, 1M pending | — | wheel 68 ns, heap 480 ns (wheel stays flat; it is the default) |
+| Runtime overhead per event (ping-pong) | ≤ 50 ns | heap 25 ns, wheel 44 ns |
+| Ring, 10k actors, 1k tokens | — | about 55 ns/event (both) |
+| LIF 10k neurons × 100 synapses | — | wheel 118 ns/event (8.5M events/s); 100 ms simulated in 0.56 s on one core |
+| 10M actors of 64 bytes | < 2 GB | 1.04 GB (104 bytes/actor: 64 actor + 40 framework), spawned in 0.35 s |
+
+Changes made along the way:
+- `OrderKey` gained a `sub` field (route edge position) as the last tie-breaker, so two synapses from one sender
+  to the same target with the same delay are ordered deterministically. It is 32 bytes.
+- `on_start` runs before the first delivery, after setup (so builders can set routes first).
+- `Runtime::reserve` avoids `Vec` doubling overhead when the number of actors is known.
+
+Deferred:
+- Typed `ActorRef<K>` / nested message enums (07 §2): phase 2, alongside the shard directory.
+- Panic containment per actor (03 §10): phase 2 or 3.
+- Evaluating `nexosim`'s scheduler: not done; the wheel already meets the targets.
+- Ideas to speed up the LIF case (the slowest): store one fan-out entry and expand it lazily, compact queue
+  items, structure-of-arrays neuron state. Revisit with profiling in phase 6.
+
 ## Phase 2: multi-shard in one process, plus the live clock (3–4 weeks)
 
 - Shard threads (pinned with `core_affinity` where supported), per-pair SPSC rings, Tier 1 windows with the

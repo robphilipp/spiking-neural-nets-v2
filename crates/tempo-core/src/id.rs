@@ -11,38 +11,22 @@ use core::fmt;
 
 /// A globally unique, location-independent actor identifier.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(transparent)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
 pub struct ActorId(u64);
 
 /// A block of [`ActorId::BLOCK_SIZE`] consecutive actor IDs, the unit of placement in the directory.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(transparent)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
 pub struct BlockId(u64);
 
 /// Identifies a node: one runtime process, normally one per host.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(transparent)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
 pub struct NodeId(pub u32);
 
 /// Identifies a shard (a single-threaded event loop, normally one per core) within a node.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(transparent)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
 pub struct ShardId(pub u16);
 
 /// Where an actor physically runs.
@@ -175,10 +159,7 @@ mod tests {
         assert_eq!(id.block(), BlockId::new(3));
         assert_eq!(id.index_in_block(), 7);
         assert_eq!(ActorId::from_parts(BlockId::new(3), 7), id);
-        assert_eq!(
-            BlockId::new(3).first_id(),
-            ActorId::from_raw(3 * ActorId::BLOCK_SIZE)
-        );
+        assert_eq!(BlockId::new(3).first_id(), ActorId::from_raw(3 * ActorId::BLOCK_SIZE));
     }
 
     #[test]
@@ -186,11 +167,7 @@ mod tests {
         assert!(ActorId::WORLD.is_reserved());
         assert!(ActorId::COORDINATOR.is_reserved());
         assert!(!ActorId::from_raw(0).is_reserved());
-        assert!(
-            !BlockId::new(BlockId::MAX.raw() - 1)
-                .first_id()
-                .is_reserved()
-        );
+        assert!(!BlockId::new(BlockId::MAX.raw() - 1).first_id().is_reserved());
         assert_eq!(ActorId::WORLD.block(), BlockId::RESERVED);
     }
 

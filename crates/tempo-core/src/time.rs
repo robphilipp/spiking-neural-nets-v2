@@ -19,20 +19,12 @@ const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 /// A span of simulation time, in integer nanoseconds.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(transparent)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
 pub struct SimDuration(u64);
 
 /// A point in simulation time: nanoseconds since the simulation started.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(transparent)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
 pub struct SimTime(u64);
 
 /// Why a floating-point value could not be converted to a [`SimDuration`].
@@ -157,8 +149,7 @@ impl SimDuration {
     /// # Panics
     /// If `micros` is NaN, infinite, negative, or too large. Use [`Self::try_from_micros_f64`] to handle that.
     pub fn from_micros_f64(micros: f64) -> Self {
-        Self::try_from_micros_f64(micros)
-            .unwrap_or_else(|e| panic!("invalid duration {micros} µs: {e}"))
+        Self::try_from_micros_f64(micros).unwrap_or_else(|e| panic!("invalid duration {micros} µs: {e}"))
     }
 
     /// Converts fractional milliseconds, rounding to the nearest nanosecond.
@@ -166,8 +157,7 @@ impl SimDuration {
     /// # Panics
     /// If `millis` is NaN, infinite, negative, or too large. Use [`Self::try_from_millis_f64`] to handle that.
     pub fn from_millis_f64(millis: f64) -> Self {
-        Self::try_from_millis_f64(millis)
-            .unwrap_or_else(|e| panic!("invalid duration {millis} ms: {e}"))
+        Self::try_from_millis_f64(millis).unwrap_or_else(|e| panic!("invalid duration {millis} ms: {e}"))
     }
 
     /// Converts fractional seconds, rounding to the nearest nanosecond.
@@ -434,10 +424,7 @@ mod tests {
         assert_eq!(SimDuration::from_micros(1).as_nanos(), 1_000);
         assert_eq!(SimDuration::from_millis(1).as_nanos(), 1_000_000);
         assert_eq!(SimDuration::from_secs(1).as_nanos(), 1_000_000_000);
-        assert_eq!(
-            SimDuration::from_secs(3600),
-            SimDuration::from_millis(3_600_000)
-        );
+        assert_eq!(SimDuration::from_secs(3600), SimDuration::from_millis(3_600_000));
     }
 
     #[test]
@@ -454,10 +441,7 @@ mod tests {
         assert_eq!(SimDuration::from_millis_f64(2.5).as_nanos(), 2_500_000);
         // 10 µm at 1 m/s = 10 µs: the typical synaptic delay that v1 rounded away.
         let delay_ms = 10e-6 / 1.0 * 1e3;
-        assert_eq!(
-            SimDuration::from_millis_f64(delay_ms),
-            SimDuration::from_micros(10)
-        );
+        assert_eq!(SimDuration::from_millis_f64(delay_ms), SimDuration::from_micros(10));
     }
 
     #[test]
@@ -470,18 +454,9 @@ mod tests {
             SimDuration::try_from_micros_f64(f64::INFINITY),
             Err(FromFloatError::NotFinite)
         );
-        assert_eq!(
-            SimDuration::try_from_micros_f64(-1.0),
-            Err(FromFloatError::Negative)
-        );
-        assert_eq!(
-            SimDuration::try_from_secs_f64(1e12),
-            Err(FromFloatError::Overflow)
-        );
-        assert_eq!(
-            SimDuration::try_from_micros_f64(-0.0),
-            Ok(SimDuration::ZERO)
-        );
+        assert_eq!(SimDuration::try_from_micros_f64(-1.0), Err(FromFloatError::Negative));
+        assert_eq!(SimDuration::try_from_secs_f64(1e12), Err(FromFloatError::Overflow));
+        assert_eq!(SimDuration::try_from_micros_f64(-0.0), Ok(SimDuration::ZERO));
     }
 
     #[test]
@@ -493,10 +468,7 @@ mod tests {
         assert_eq!(t.checked_duration_since(later), None);
         assert_eq!(t.saturating_duration_since(later), SimDuration::ZERO);
         assert_eq!(SimTime::MAX.checked_add(SimDuration::NANOSECOND), None);
-        assert_eq!(
-            SimTime::MAX.saturating_add(SimDuration::SECOND),
-            SimTime::MAX
-        );
+        assert_eq!(SimTime::MAX.saturating_add(SimDuration::SECOND), SimTime::MAX);
     }
 
     #[test]
@@ -509,10 +481,7 @@ mod tests {
     fn duration_sum_and_mul() {
         let total: SimDuration = [1, 2, 3].into_iter().map(SimDuration::from_micros).sum();
         assert_eq!(total, SimDuration::from_micros(6));
-        assert_eq!(
-            SimDuration::from_micros(7) * 3,
-            SimDuration::from_micros(21)
-        );
+        assert_eq!(SimDuration::from_micros(7) * 3, SimDuration::from_micros(21));
     }
 
     #[test]
@@ -528,10 +497,7 @@ mod tests {
         assert_eq!(SimDuration::ZERO.to_string(), "0 ns");
         assert_eq!(SimDuration::from_nanos(750).to_string(), "750 ns");
         assert_eq!(SimDuration::from_nanos(12_500).to_string(), "12.5 µs");
-        assert_eq!(
-            SimDuration::from_nanos(3_000_001).to_string(),
-            "3.000001 ms"
-        );
+        assert_eq!(SimDuration::from_nanos(3_000_001).to_string(), "3.000001 ms");
         assert_eq!(SimDuration::from_secs(100).to_string(), "100 s");
         assert_eq!(SimTime::from_nanos(12_500_000).to_string(), "t=12.5 ms");
     }

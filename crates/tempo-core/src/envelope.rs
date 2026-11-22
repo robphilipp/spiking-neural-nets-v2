@@ -1,15 +1,16 @@
 //! Message envelopes and the global event order.
 //!
 //! Every data-plane message travels in an [`Envelope`] that carries its delivery time. Events are processed in
-//! [`OrderKey`] order: by time, then by sender, then by the sender's sequence number. Because the key depends only
+//! [`OrderKey`] order: by time, then by sender, then by the sender's sequence number, then by a sub-index that
+//! separates the many events one fan-out send expands into. Because the key depends only
 //! on what the sender did, not on which thread or host delivered the message or when it physically arrived, ties
 //! at the same instant are always broken the same way.
 
 use crate::{ActorId, SimTime};
 
-/// The total order of events: `(at, src, seq)`, compared lexicographically.
+/// The total order of events: `(at, src, seq, sub)`, compared lexicographically.
 ///
-/// The field order matters: the derived `Ord` compares `at` first, then `src`, then `seq`.
+/// The field order matters: the derived `Ord` compares `at` first, then `src`, then `seq`, then `sub`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OrderKey {
@@ -19,6 +20,9 @@ pub struct OrderKey {
     pub src: ActorId,
     /// The sender's sequence number for this message.
     pub seq: u64,
+    /// Distinguishes the events one send expands into: the edge index for a fan-out (route) send, 0 otherwise.
+    /// Without it, two synapses from the same sender to the same target with the same delay would tie.
+    pub sub: u32,
 }
 
 /// A data-plane message with its delivery time, sender, recipient and ordering information.
@@ -44,6 +48,7 @@ impl<M> Envelope<M> {
             at: self.at,
             src: self.src,
             seq: self.seq,
+            sub: 0,
         }
     }
 
@@ -61,11 +66,7 @@ impl<M> Envelope<M> {
 
 /// Hands out a sender's sequence numbers: 0, 1, 2, … Each sender (actor, or ingress point for the world) owns one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(transparent)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
 pub struct SeqCounter(u64);
 
 impl SeqCounter {
@@ -90,8 +91,8 @@ impl SeqCounter {
     }
 }
 
-// Queue entries hold keys, so keep them compact.
-const _: () = assert!(size_of::<OrderKey>() == 24);
+// Queue entries hold keys, so keep them compact (24 bytes of fields + 4 for `sub`, padded to 32).
+const _: () = assert!(size_of::<OrderKey>() == 32);
 
 #[cfg(test)]
 mod tests {
@@ -103,6 +104,7 @@ mod tests {
             at: SimTime::from_start(SimDuration::from_micros(at_us)),
             src: ActorId::from_raw(src),
             seq,
+            sub: 0,
         }
     }
 
@@ -114,14 +116,16 @@ mod tests {
     }
 
     #[test]
+    fn sub_breaks_ties_last() {
+        let a = OrderKey { sub: 1, ..key(5, 1, 3) };
+        let b = OrderKey { sub: 2, ..key(5, 1, 3) };
+        assert!(a < b);
+        assert!(b < key(5, 1, 4));
+    }
+
+    #[test]
     fn sorting_is_independent_of_arrival_order() {
-        let mut a = vec![
-            key(3, 1, 0),
-            key(1, 2, 0),
-            key(3, 0, 5),
-            key(3, 0, 4),
-            key(1, 1, 7),
-        ];
+        let mut a = vec![key(3, 1, 0), key(1, 2, 0), key(3, 0, 5), key(3, 0, 4), key(1, 1, 7)];
         let mut b = a.clone();
         b.reverse();
         a.sort();
@@ -129,13 +133,7 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(
             a,
-            vec![
-                key(1, 1, 7),
-                key(1, 2, 0),
-                key(3, 0, 4),
-                key(3, 0, 5),
-                key(3, 1, 0)
-            ]
+            vec![key(1, 1, 7), key(1, 2, 0), key(3, 0, 4), key(3, 0, 5), key(3, 1, 0)]
         );
     }
 
@@ -153,7 +151,8 @@ mod tests {
             OrderKey {
                 at: SimTime::from_nanos(10),
                 src: ActorId::from_raw(1),
-                seq: 2
+                seq: 2,
+                sub: 0,
             }
         );
         let mapped = env.map(|m| m.to_string());

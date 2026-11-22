@@ -9,7 +9,7 @@ This is a monorepo. Projects are added as they're needed.
 
 | Path | Contents | Status |
 |------|----------|--------|
-| `crates/tempo-*` | Timed actor framework (library). Knows nothing about neurons. | `tempo-core` started |
+| `crates/tempo-*` | Timed actor framework (library). Knows nothing about neurons. | phase 1 done: `tempo-core`, `tempo-queue`, `tempo-runtime`, `tempo-testkit` |
 | `crates/spikes-*` | Neuron model, `.boo` parser, network actors, recording, API types (libraries) | planned |
 | `apps/` | `spikes-node` (cluster worker), `spikes-server` (coordinator, web API, data-queue adapter), `spikes-ui` (Tauri + TypeScript) | planned |
 | `packages/` | Shared TypeScript packages (types generated from the Rust API) | planned |
@@ -27,4 +27,7 @@ crates, and the UI depends only on the generated API package.
 cargo build
 cargo test
 cargo clippy --all-targets
+cargo bench -p tempo-queue        # heap vs timing wheel
+cargo bench -p tempo-testkit      # runtime: ping-pong, ring, LIF network
+cargo run --release -p tempo-runtime --example spawn_many -- 10000000
 ```

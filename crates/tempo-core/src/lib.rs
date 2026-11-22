@@ -7,7 +7,7 @@
 //! - **Identity**: [`ActorId`], allocated in blocks ([`BlockId`]) that the directory maps to a node and shard;
 //!   [`Location`] says where an actor physically runs.
 //! - **Messages and ordering**: [`Envelope`] wraps a message with its delivery time and addressing. [`OrderKey`]
-//!   defines the order events are processed in: `(time, sender, sender sequence number)`.
+//!   defines the order events are processed in: `(time, sender, sender sequence number, sub-index)`.
 //!
 //! This crate has no runtime, threads or I/O, and must not depend on any `spikes-*` crate.
 //! The design is in `docs/plans/actors/`.

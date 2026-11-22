@@ -1,0 +1,23 @@
+[package]
+name = "tempo-testkit"
+description = "Test support for the tempo actor framework: trace hashing, toy models and runtime benchmarks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tempo-runtime = { path = "../tempo-runtime" }
+rand.workspace = true
+rand_xoshiro.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "runtime"
+harness = false
+
+[lints]
+workspace = true
