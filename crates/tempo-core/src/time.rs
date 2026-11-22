@@ -222,6 +222,11 @@ impl SimDuration {
         Self(self.0.saturating_add(rhs.0))
     }
 
+    /// `self * rhs`, clamped to [`Self::MAX`].
+    pub const fn saturating_mul(self, rhs: u64) -> Self {
+        Self(self.0.saturating_mul(rhs))
+    }
+
     /// `self - rhs`, clamped to zero.
     pub const fn saturating_sub(self, rhs: Self) -> Self {
         Self(self.0.saturating_sub(rhs.0))

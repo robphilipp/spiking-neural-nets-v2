@@ -11,6 +11,7 @@ fn config(queue: QueueKind) -> RuntimeConfig {
         seed: 7,
         queue,
         trace: true,
+        ..RuntimeConfig::default()
     }
 }
 
@@ -244,8 +245,9 @@ fn random_streams_are_per_actor_and_reproducible() {
     let a = dice_rolls(1);
     assert_eq!(a, dice_rolls(1), "same seed, same numbers");
     assert_ne!(a, dice_rolls(2), "different seed, different numbers");
-    let first_of = |id: u64| a.iter().find(|(src, _)| src.raw() == id).unwrap().1;
-    assert_ne!(first_of(0), first_of(1), "actors get different streams");
+    // Each actor emits three rolls in a row; compare the first roll of the first two actors.
+    assert_ne!(a[0].0, a[3].0);
+    assert_ne!(a[0].1, a[3].1, "actors get different streams");
 }
 
 /// Sends a greeting to `peer` when it starts.

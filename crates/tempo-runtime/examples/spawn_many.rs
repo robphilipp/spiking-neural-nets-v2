@@ -26,14 +26,13 @@ fn main() {
     let mut rt: Runtime<u64, ()> = Runtime::new(RuntimeConfig::default());
 
     let start = Instant::now();
-    rt.reserve::<Neuron64>(n);
     let mut last = ActorId::WORLD;
     for i in 0..n {
         last = rt.spawn(Neuron64 { state: [i as u64; 8] });
     }
     let spawned = start.elapsed();
 
-    // Run once so every on_start executes, and deliver a message to the last actor.
+    // Run once: storage is trimmed to fit, every on_start executes, and the last actor gets a message.
     rt.inject(last, SimTime::ZERO, 1);
     rt.run();
 

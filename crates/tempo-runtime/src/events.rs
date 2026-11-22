@@ -1,7 +1,9 @@
 //! Domain-event output: what actors report with [`crate::Ctx::emit`].
 //!
-//! Phase 1 keeps this simple: events are discarded, buffered in memory, or passed to a callback. The batched
-//! UI stream and the Arrow file sink come in phase 3.
+//! For now events are discarded, buffered in memory (per shard, merged on read), or passed to a callback. The
+//! batched UI stream and the Arrow file sink come in phase 3.
+
+use std::sync::Arc;
 
 use tempo_core::{ActorId, SimTime};
 
@@ -16,8 +18,8 @@ pub struct Emitted<E> {
     pub event: E,
 }
 
-/// Callback that receives each emitted event.
-pub type EventCallback<E> = Box<dyn FnMut(Emitted<E>) + Send>;
+/// Callback that receives each emitted event. With several shards it is called from several threads at once.
+pub type EventCallback<E> = Arc<dyn Fn(Emitted<E>) + Send + Sync>;
 
 pub(crate) enum Events<E> {
     Discard,
@@ -26,6 +28,15 @@ pub(crate) enum Events<E> {
 }
 
 impl<E> Events<E> {
+    /// The same output mode with nothing buffered yet: one per shard.
+    pub(crate) fn fresh(&self) -> Self {
+        match self {
+            Self::Discard => Self::Discard,
+            Self::Buffer(_) => Self::Buffer(Vec::new()),
+            Self::Callback(callback) => Self::Callback(Arc::clone(callback)),
+        }
+    }
+
     pub(crate) fn emit(&mut self, event: Emitted<E>) {
         match self {
             Self::Discard => {}

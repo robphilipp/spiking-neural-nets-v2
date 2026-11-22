@@ -9,6 +9,7 @@
 
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
+use tempo_runtime::placement::spatial_partitions;
 use tempo_runtime::{Actor, ActorId, Ctx, EdgeIdx, Jitter, RouteEdge, RouteId, Runtime, SimDuration, SimTime};
 
 /// Messages in the LIF network.
@@ -109,6 +110,8 @@ pub struct PoissonSource {
     pub targets: Vec<ActorId>,
     /// Input strength, mV.
     pub input_mv: f32,
+    /// Delay before input reaches its target (afferent conduction delay).
+    pub delay: SimDuration,
     /// Stop after this time.
     pub until: SimTime,
 }
@@ -132,7 +135,7 @@ impl Actor<LifMsg, LifEvent> for PoissonSource {
     fn on_message(&mut self, ctx: &mut Ctx<'_, LifMsg, LifEvent>, _from: ActorId, msg: LifMsg) {
         if msg == LifMsg::Tick && !self.targets.is_empty() {
             let target = self.targets[ctx.rng().random_range(0..self.targets.len())];
-            ctx.send(target, LifMsg::Input(self.input_mv));
+            ctx.send_after(target, self.delay, LifMsg::Input(self.input_mv));
             self.schedule_next(ctx);
         }
     }
@@ -159,6 +162,9 @@ pub struct LifConfig {
     pub source_rate_hz: f64,
     /// Strength of each source input, mV.
     pub input_mv: f32,
+    /// Delay before source input reaches a neuron. Inputs are direct messages, so with several shards the
+    /// runtime's `min_remote_delay` must be at most this.
+    pub input_delay: SimDuration,
     /// Sources stop after this time.
     pub input_until: SimTime,
     /// Side of the cube neurons are placed in, µm.
@@ -185,6 +191,7 @@ impl Default for LifConfig {
             sources: 20,
             source_rate_hz: 2_000.0,
             input_mv: 6.0,
+            input_delay: SimDuration::from_micros(100),
             input_until: SimTime::from_start(SimDuration::from_millis(100)),
             cube_um: 500.0,
             conduction_m_per_s: 1.0,
@@ -220,10 +227,12 @@ pub fn build(rt: &mut Runtime<LifMsg, LifEvent>, config: &LifConfig) -> LifNetwo
         out: None,
         spikes: 0,
     };
-    let neurons: Vec<ActorId> = (0..n).map(|_| rt.spawn(neuron.clone())).collect();
     let positions: Vec<[f64; 3]> = (0..n)
         .map(|_| std::array::from_fn(|_| rng.random::<f64>() * config.cube_um))
         .collect();
+    // Nearby neurons share a partition, so most short connections stay inside a shard.
+    let partitions = spatial_partitions(&positions, rt.partitions());
+    let neurons: Vec<ActorId> = partitions.iter().map(|&p| rt.spawn_in(p, neuron.clone())).collect();
 
     // Choose each neuron's targets; the synapse lives on the target, and its index there is the edge index.
     let mut incoming: Vec<Vec<Synapse>> = vec![Vec::new(); n];
@@ -273,6 +282,7 @@ pub fn build(rt: &mut Runtime<LifMsg, LifEvent>, config: &LifConfig) -> LifNetwo
                 rate_hz: config.source_rate_hz,
                 targets: neurons.clone(),
                 input_mv: config.input_mv,
+                delay: config.input_delay,
                 until: config.input_until,
             })
         })

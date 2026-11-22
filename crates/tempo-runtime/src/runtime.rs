@@ -1,19 +1,27 @@
-//! The single-threaded executor. In phase 2 this becomes the event loop of one shard.
+//! The runtime: owns the shards, builds the network, and runs it.
 
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use rand_core::SeedableRng;
 use tempo_core::{ActorId, BlockId, OrderKey, SeqCounter, SimDuration, SimTime};
 use tempo_queue::{HeapQueue, TimeQueue, WheelQueue};
 
+use crate::barrier::WindowBarrier;
+use crate::clock::{ClockHandle, Pacing};
 use crate::ctx::ActorMeta;
-use crate::events::{EventCallback, Events};
+use crate::events::{Emitted, Events};
+use crate::metrics::{PacingStats, Stats};
+use crate::placement::{Partition, shard_of};
 use crate::route::{Route, splitmix};
-use crate::{Actor, ActorRng, Ctx, EdgeIdx, Emitted, Jitter, RouteEdge, RouteId};
+use crate::shard::{Arena, BlockEntry, Item, Queue, RunPlan, RunShared, Shard, ShardOutcome, TraceEntry, World};
+use crate::{Actor, ActorRng, Jitter, RouteEdge, RouteId};
 
-/// Which [`TimeQueue`] implementation holds pending events.
+/// Which [`TimeQueue`] implementation holds each shard's pending events.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum QueueKind {
     /// Binary heap: O(log n). Fine for small simulations.
@@ -34,6 +42,21 @@ pub struct RuntimeConfig {
     pub queue: QueueKind,
     /// Record every delivery in a trace (for determinism tests; costs memory).
     pub trace: bool,
+    /// Number of shards (threads). Each runs a share of the partitions.
+    pub shards: usize,
+    /// Number of partitions (placement groups). Must be at least `shards`. Keep it fixed for a network so its
+    /// results don't depend on the number of shards.
+    pub partitions: u32,
+    /// Initial pacing; change it while running through [`Runtime::clock`].
+    pub pacing: Pacing,
+    /// The shortest delay of a *direct* message (`send`, `send_after`, `send_at`) between actors on different
+    /// shards, if any are sent. Route delays are known in advance; direct sends are not, so declare their minimum
+    /// here. It bounds the lookahead, and therefore the window length.
+    pub min_remote_delay: Option<SimDuration>,
+    /// While paced, windows are at most this long, so no shard gets further than this ahead of the clock.
+    pub max_paced_window: SimDuration,
+    /// While waiting for the clock, spin (rather than sleep) for the last this-much wall time.
+    pub spin_threshold: Duration,
 }
 
 impl Default for RuntimeConfig {
@@ -44,290 +67,177 @@ impl Default for RuntimeConfig {
                 bucket: SimDuration::MICROSECOND,
             },
             trace: false,
+            shards: 1,
+            partitions: 64,
+            pacing: Pacing::AsFastAsPossible,
+            min_remote_delay: None,
+            max_paced_window: SimDuration::from_millis(1),
+            spin_threshold: Duration::from_micros(200),
         }
     }
 }
 
-/// Counters describing what the runtime has done.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Stats {
-    /// Messages delivered to actors (direct and routed).
-    pub delivered: u64,
-    /// Of those, messages delivered through routes.
-    pub routed_delivered: u64,
-    /// Route edges sent (each fan-out send counts once per edge).
-    pub routed_sends: u64,
-    /// Actors started.
-    pub started: u64,
-    /// Messages dropped because the recipient doesn't exist.
-    pub dropped_unknown: u64,
-}
-
-/// What kind of delivery a [`TraceEntry`] records.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum DeliveryKind {
-    /// The actor's `on_start`.
-    Start,
-    /// A direct message.
-    Message,
-    /// A routed message, with the receiver's edge index.
-    Routed(EdgeIdx),
-}
-
-/// One delivery, as recorded when [`RuntimeConfig::trace`] is on.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct TraceEntry {
-    /// The receiving actor.
-    pub dst: ActorId,
-    /// The event's order key (its time, sender, sequence and sub-index).
-    pub key: OrderKey,
-    /// What was delivered.
-    pub kind: DeliveryKind,
-}
-
-/// A queued delivery.
-pub(crate) enum Item<M> {
-    Message { dst: ActorId, msg: M },
-    Routed { dst: ActorId, edge: EdgeIdx, msg: M },
-}
-
-impl<M> Item<M> {
-    fn dst(&self) -> ActorId {
-        match self {
-            Self::Message { dst, .. } | Self::Routed { dst, .. } => *dst,
-        }
-    }
-}
-
-/// The configured queue, as an enum so dispatch is a `match` rather than a virtual call.
-pub(crate) enum Queue<T> {
-    Heap(HeapQueue<T>),
-    Wheel(WheelQueue<T>),
-}
-
-impl<T> TimeQueue<T> for Queue<T> {
-    fn push(&mut self, key: OrderKey, item: T) {
-        match self {
-            Self::Heap(q) => q.push(key, item),
-            Self::Wheel(q) => q.push(key, item),
-        }
-    }
-
-    fn peek_key(&mut self) -> Option<OrderKey> {
-        match self {
-            Self::Heap(q) => q.peek_key(),
-            Self::Wheel(q) => q.peek_key(),
-        }
-    }
-
-    fn pop(&mut self) -> Option<(OrderKey, T)> {
-        match self {
-            Self::Heap(q) => q.pop(),
-            Self::Wheel(q) => q.pop(),
-        }
-    }
-
-    fn len(&self) -> usize {
-        match self {
-            Self::Heap(q) => q.len(),
-            Self::Wheel(q) => q.len(),
-        }
-    }
-}
-
-/// State that handlers reach through [`Ctx`].
-pub(crate) struct Core<M, E> {
-    pub(crate) queue: Queue<Item<M>>,
-    pub(crate) routes: Vec<Route>,
-    pub(crate) seed: u64,
-    pub(crate) events: Events<E>,
-    pub(crate) stats: Stats,
-}
-
-/// Type-erased storage for all actors of one Rust type ("kind"). Dispatch into the arena is one virtual call;
-/// inside it, the actor's handlers are called statically.
-trait KindStore<M, E>: Send {
-    fn dispatch(&mut self, index: u32, core: &mut Core<M, E>, key: OrderKey, item: Item<M>);
-    fn start(&mut self, index: u32, core: &mut Core<M, E>, now: SimTime, me: ActorId);
-    fn memory_bytes(&self) -> usize;
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-}
-
-struct Arena<A> {
-    actors: Vec<A>,
-    meta: Vec<ActorMeta>,
-}
-
-impl<M: 'static, E: 'static, A: Actor<M, E>> KindStore<M, E> for Arena<A> {
-    fn dispatch(&mut self, index: u32, core: &mut Core<M, E>, key: OrderKey, item: Item<M>) {
-        let i = index as usize;
-        let mut ctx = Ctx {
-            now: key.at,
-            me: item.dst(),
-            meta: &mut self.meta[i],
-            core,
-        };
-        let actor = &mut self.actors[i];
-        match item {
-            Item::Message { msg, .. } => actor.on_message(&mut ctx, key.src, msg),
-            Item::Routed { edge, msg, .. } => actor.on_route_message(&mut ctx, key.src, edge, msg),
-        }
-    }
-
-    fn start(&mut self, index: u32, core: &mut Core<M, E>, now: SimTime, me: ActorId) {
-        let i = index as usize;
-        let mut ctx = Ctx {
-            now,
-            me,
-            meta: &mut self.meta[i],
-            core,
-        };
-        self.actors[i].on_start(&mut ctx);
-    }
-
-    fn memory_bytes(&self) -> usize {
-        self.actors.capacity() * size_of::<A>() + self.meta.capacity() * size_of::<ActorMeta>()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-}
-
-/// Where a block's actors live locally: their kind, and the arena index of the block's first ID.
-#[derive(Copy, Clone, Debug)]
-struct BlockEntry {
-    kind: u16,
-    base: u32,
-    count: u32,
-}
-
-/// A single-threaded, as-fast-as-possible executor of timed actors.
+/// A runtime of timed actors, spread over one or more shards (threads).
 ///
-/// Events are processed strictly in [`OrderKey`] order, so a run is fully determined by the seed, the actors and
-/// the injected messages.
+/// Events are processed in `(time, sender, sequence, sub)` order for each actor. As long as cross-shard messages
+/// respect the lookahead (see [`Stats::lookahead_violations`]), results are identical for any number of shards.
 pub struct Runtime<M, E> {
-    core: Core<M, E>,
-    kinds: Vec<Box<dyn KindStore<M, E>>>,
-    kind_types: Vec<TypeId>,
+    config: RuntimeConfig,
+    world: World,
+    shards: Vec<Shard<M, E>>,
     kind_ids: HashMap<TypeId, u16>,
-    /// Per kind: the block currently being filled and the next index in it.
-    open_blocks: Vec<Option<(BlockId, u32)>>,
-    /// The directory: block number → where its actors live.
-    blocks: Vec<Option<BlockEntry>>,
-    pending_starts: Vec<ActorId>,
+    /// The block currently being filled for each (partition, kind), and the next index in it.
+    open_blocks: HashMap<(u32, u16), (BlockId, u32)>,
+    next_partition: u32,
     /// Everything before this time has been processed.
     now: SimTime,
     world_seq: SeqCounter,
-    trace: Option<Vec<TraceEntry>>,
+    clock: ClockHandle,
+    dropped_unknown: u64,
+    needs_shrink: bool,
 }
 
-impl<M: 'static, E: 'static> Runtime<M, E> {
+impl<M: Send + 'static, E: Send + 'static> Runtime<M, E> {
     /// A runtime with the given settings. Emitted events are discarded until you choose an output with
     /// [`Self::buffer_events`] or [`Self::on_event`].
+    ///
+    /// # Panics
+    /// If `shards` is zero or more than `partitions`.
     pub fn new(config: RuntimeConfig) -> Self {
-        let queue = match config.queue {
-            QueueKind::Heap => Queue::Heap(HeapQueue::new()),
-            QueueKind::Wheel { bucket } => Queue::Wheel(WheelQueue::with_bucket(bucket)),
-        };
+        assert!(config.shards >= 1, "need at least one shard");
+        assert!(
+            config.partitions as usize >= config.shards,
+            "need at least as many partitions ({}) as shards ({})",
+            config.partitions,
+            config.shards
+        );
+        let shards = (0..config.shards)
+            .map(|i| {
+                let queue = match config.queue {
+                    QueueKind::Heap => Queue::Heap(HeapQueue::new()),
+                    QueueKind::Wheel { bucket } => Queue::Wheel(WheelQueue::with_bucket(bucket)),
+                };
+                Shard::new(i as u16, config.shards, queue, Events::Discard, config.trace)
+            })
+            .collect();
         Self {
-            core: Core {
-                queue,
+            world: World {
+                blocks: Vec::new(),
                 routes: Vec::new(),
+                kind_types: Vec::new(),
                 seed: config.seed,
-                events: Events::Discard,
-                stats: Stats::default(),
             },
-            kinds: Vec::new(),
-            kind_types: Vec::new(),
+            shards,
             kind_ids: HashMap::new(),
-            open_blocks: Vec::new(),
-            blocks: Vec::new(),
-            pending_starts: Vec::new(),
+            open_blocks: HashMap::new(),
+            next_partition: 0,
             now: SimTime::ZERO,
             world_seq: SeqCounter::new(),
-            trace: config.trace.then(Vec::new),
+            clock: ClockHandle::new(config.pacing),
+            dropped_unknown: 0,
+            needs_shrink: false,
+            config,
         }
     }
 
     /// Collects emitted events in memory; read them with [`Self::take_events`].
     pub fn buffer_events(&mut self) {
-        self.core.events = Events::Buffer(Vec::new());
+        self.set_events(&Events::Buffer(Vec::new()));
     }
 
-    /// Passes each emitted event to `callback`.
-    pub fn on_event(&mut self, callback: EventCallback<E>) {
-        self.core.events = Events::Callback(callback);
+    /// Passes each emitted event to `callback`. With several shards, it is called from several threads.
+    pub fn on_event(&mut self, callback: impl Fn(Emitted<E>) + Send + Sync + 'static) {
+        self.set_events(&Events::Callback(Arc::new(callback)));
     }
 
     /// Discards emitted events (the default).
     pub fn discard_events(&mut self) {
-        self.core.events = Events::Discard;
+        self.set_events(&Events::Discard);
     }
 
-    /// Returns and clears the buffered events (empty unless [`Self::buffer_events`] is on).
-    pub fn take_events(&mut self) -> Vec<Emitted<E>> {
-        match &mut self.core.events {
-            Events::Buffer(buffer) => std::mem::take(buffer),
-            _ => Vec::new(),
+    fn set_events(&mut self, events: &Events<E>) {
+        for shard in &mut self.shards {
+            shard.core.events = events.fresh();
         }
     }
 
-    /// Adds an actor and returns its ID. Its `on_start` runs at the current time, before the next delivery.
-    pub fn spawn<A: Actor<M, E>>(&mut self, actor: A) -> ActorId {
-        let kind = self.kind_of::<A>();
-        let k = usize::from(kind);
+    /// Returns and clears the buffered events, ordered by time and then emitting actor (each actor's own events
+    /// stay in the order it emitted them). Empty unless [`Self::buffer_events`] is on.
+    pub fn take_events(&mut self) -> Vec<Emitted<E>> {
+        let mut all = Vec::new();
+        for shard in &mut self.shards {
+            if let Events::Buffer(buffer) = &mut shard.core.events {
+                all.append(buffer);
+            }
+        }
+        all.sort_by_key(|e| (e.at, e.src));
+        all
+    }
 
-        let (block, index) = match self.open_blocks[k] {
-            Some((block, next)) if u64::from(next) < ActorId::BLOCK_SIZE => (block, next),
+    /// Adds an actor, placed round-robin over the partitions, and returns its ID. Its `on_start` runs at the
+    /// current time, before the next delivery.
+    pub fn spawn<A: Actor<M, E>>(&mut self, actor: A) -> ActorId {
+        let partition = Partition(self.next_partition);
+        self.next_partition = (self.next_partition + 1) % self.config.partitions;
+        self.spawn_in(partition, actor)
+    }
+
+    /// Adds an actor in a specific partition (see [`crate::placement`]) and returns its ID.
+    ///
+    /// # Panics
+    /// If the partition doesn't exist.
+    pub fn spawn_in<A: Actor<M, E>>(&mut self, partition: Partition, actor: A) -> ActorId {
+        assert!(partition.0 < self.config.partitions, "no {partition:?}");
+        let kind = self.kind_of::<A>();
+        let shard = shard_of(partition, self.config.partitions, self.config.shards);
+
+        let (block, index) = match self.open_blocks.get(&(partition.0, kind)) {
+            Some(&(block, next)) if u64::from(next) < ActorId::BLOCK_SIZE => (block, next),
             _ => {
-                let block = BlockId::new(self.blocks.len() as u64);
+                let block = BlockId::new(self.world.blocks.len() as u64);
                 assert!(!block.is_reserved(), "actor IDs exhausted");
-                let base = self.arena_mut::<A>(kind).actors.len();
-                self.blocks.push(Some(BlockEntry {
+                let stores = &mut self.shards[usize::from(shard)].stores;
+                self.world.blocks.push(Some(BlockEntry {
+                    shard,
                     kind,
-                    base: u32::try_from(base).expect("too many actors of one kind"),
+                    store: u32::try_from(stores.len()).expect("too many blocks on one shard"),
                     count: 0,
+                }));
+                stores.push(Box::new(Arena::<A> {
+                    actors: Vec::new(),
+                    meta: Vec::new(),
                 }));
                 (block, 0)
             }
         };
-        self.open_blocks[k] = Some((block, index + 1));
-        if let Some(entry) = self.blocks[block.raw() as usize].as_mut() {
-            entry.count += 1;
-        }
+        self.open_blocks.insert((partition.0, kind), (block, index + 1));
+        let entry = self.world.blocks[block.raw() as usize]
+            .as_mut()
+            .expect("open block is in the directory");
+        entry.count += 1;
+        let store = entry.store as usize;
 
         let id = ActorId::from_parts(block, index as u16);
-        let rng = ActorRng::seed_from_u64(splitmix(self.core.seed) ^ id.raw());
-        let arena = self.arena_mut::<A>(kind);
+        let rng = ActorRng::seed_from_u64(splitmix(self.config.seed) ^ id.raw());
+        let shard = &mut self.shards[usize::from(shard)];
+        let arena = shard.stores[store]
+            .as_any_mut()
+            .downcast_mut::<Arena<A>>()
+            .expect("block store matches its kind");
         arena.actors.push(actor);
         arena.meta.push(ActorMeta {
             seq: SeqCounter::new(),
             rng,
         });
-        self.pending_starts.push(id);
+        shard.pending_starts.push(id);
+        self.needs_shrink = true;
         id
     }
 
-    /// Reserves room for `additional` more actors of type `A`, so spawning a known number of actors doesn't
-    /// over-allocate (a growing `Vec` can end up with up to twice the room it needs).
-    pub fn reserve<A: Actor<M, E>>(&mut self, additional: usize) {
-        let kind = self.kind_of::<A>();
-        let arena = self.arena_mut::<A>(kind);
-        arena.actors.reserve_exact(additional);
-        arena.meta.reserve_exact(additional);
-        self.blocks.reserve(additional.div_ceil(ActorId::BLOCK_SIZE as usize));
-    }
-
-    /// Adds a fan-out route owned by `owner`, which can then send along it with [`Ctx::fanout`].
+    /// Adds a fan-out route owned by `owner`, which can then send along it with [`crate::Ctx::fanout`].
     pub fn add_route(&mut self, owner: ActorId, edges: Vec<RouteEdge>, jitter: Jitter) -> RouteId {
-        let id = RouteId(u32::try_from(self.core.routes.len()).expect("too many routes"));
-        self.core.routes.push(Route { owner, edges, jitter });
+        let id = RouteId(u32::try_from(self.world.routes.len()).expect("too many routes"));
+        self.world.routes.push(Route { owner, edges, jitter });
         id
     }
 
@@ -343,7 +253,18 @@ impl<M: 'static, E: 'static> Runtime<M, E> {
             seq: self.world_seq.next_seq(),
             sub: 0,
         };
-        self.core.queue.push(key, Item::Message { dst: to, msg });
+        match self.world.locate(to) {
+            Some(slot) => self.shards[usize::from(slot.shard)]
+                .core
+                .queue
+                .push(key, Item::Message { dst: to, msg }),
+            None => self.dropped_unknown += 1,
+        }
+    }
+
+    /// A handle to the clock, for changing speed, pausing, stepping or stopping, from any thread, while running.
+    pub fn clock(&self) -> ClockHandle {
+        self.clock.clone()
     }
 
     /// The simulation time processed so far: everything before it has been delivered.
@@ -351,90 +272,173 @@ impl<M: 'static, E: 'static> Runtime<M, E> {
         self.now
     }
 
-    /// The time of the next pending event, if any.
+    /// Number of shards.
+    pub fn shards(&self) -> usize {
+        self.shards.len()
+    }
+
+    /// Number of partitions.
+    pub fn partitions(&self) -> u32 {
+        self.config.partitions
+    }
+
+    /// The time of the next pending event on any shard, if any. Runs pending `on_start` handlers first, since
+    /// they may schedule events.
     pub fn next_event_time(&mut self) -> Option<SimTime> {
-        self.core.queue.peek_key().map(|k| k.at)
+        self.start_pending();
+        self.shards
+            .iter_mut()
+            .filter_map(|s| s.core.queue.peek_key())
+            .map(|k| k.at)
+            .min()
     }
 
     /// Number of pending events.
     pub fn pending(&self) -> usize {
-        self.core.queue.len()
+        self.shards.iter().map(|s| s.core.queue.len()).sum()
     }
 
-    /// Delivers the single next event and returns its time, or `None` if nothing is pending.
+    /// The lookahead: how far all shards can run in parallel without exchanging messages. It's the shortest delay
+    /// of any route edge between shards (less the jitter allowance), or [`RuntimeConfig::min_remote_delay`] if that
+    /// is shorter. `SimDuration::MAX` means nothing crosses shards.
+    pub fn lookahead(&self) -> SimDuration {
+        let mut lookahead = self.config.min_remote_delay.unwrap_or(SimDuration::MAX);
+        if self.shards.len() == 1 {
+            return SimDuration::MAX;
+        }
+        for route in &self.world.routes {
+            let Some(owner) = self.world.locate(route.owner) else {
+                continue;
+            };
+            let reduction = route.jitter.max_reduction();
+            for edge in &route.edges {
+                match self.world.locate(edge.target) {
+                    Some(target) if target.shard != owner.shard => {
+                        lookahead = lookahead.min(edge.delay.saturating_sub(reduction));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        lookahead.max(SimDuration::NANOSECOND)
+    }
+
+    /// Delivers the single next event (the earliest on any shard) and returns its time, or `None` if nothing is
+    /// pending. Runs on the calling thread.
     pub fn step(&mut self) -> Option<SimTime> {
-        self.run_starts();
-        let (key, item) = self.core.queue.pop()?;
-        self.deliver(key, item);
+        self.start_pending();
+        let (i, key) = self
+            .shards
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(i, s)| s.core.queue.peek_key().map(|k| (i, k)))
+            .min_by_key(|&(_, k)| k)?;
+        let shard = &mut self.shards[i];
+        let (key, item) = shard.core.queue.pop().filter(|(k, _)| *k == key).expect("peeked event");
+        shard.core.window_end = key.at;
+        shard.deliver(&self.world, key, item);
+        self.route_outbox(i);
+        self.now = self.now.max(key.at);
         Some(key.at)
     }
 
-    /// Delivers every event before `end`, then sets [`Self::now`] to `end`. Returns the number delivered.
+    /// Delivers every event before `end`, then sets [`Self::now`] to `end`, pacing against the clock if it's in
+    /// real-time mode. Returns early if the clock is stopped. Returns the number of events delivered.
     pub fn run_until(&mut self, end: SimTime) -> u64 {
-        self.run_starts();
-        let mut delivered = 0;
-        while let Some((key, item)) = self.core.queue.pop_before(end) {
-            self.deliver(key, item);
-            delivered += 1;
-        }
-        self.now = self.now.max(end);
-        delivered
+        self.run_to(end)
     }
 
-    /// Delivers events until none are pending. Returns the number delivered.
+    /// Delivers events until none are pending (pacing against the clock if it's in real-time mode), or the clock
+    /// is stopped. Returns the number of events delivered.
     pub fn run(&mut self) -> u64 {
-        self.run_starts();
-        let mut delivered = 0;
-        while let Some((key, item)) = self.core.queue.pop() {
-            self.deliver(key, item);
-            delivered += 1;
-        }
-        delivered
+        self.run_to(SimTime::MAX)
     }
 
-    /// Counters for this runtime.
-    pub fn stats(&self) -> &Stats {
-        &self.core.stats
+    /// Counters, summed over shards.
+    pub fn stats(&self) -> Stats {
+        let mut total = Stats {
+            dropped_unknown: self.dropped_unknown,
+            ..Stats::default()
+        };
+        for shard in &self.shards {
+            total.merge(&shard.core.stats);
+        }
+        total
+    }
+
+    /// How well paced runs kept to the clock.
+    pub fn pacing_stats(&self) -> &PacingStats {
+        &self.shards[0].pacing
     }
 
     /// Returns and clears the delivery trace (empty unless [`RuntimeConfig::trace`] is on).
     pub fn take_trace(&mut self) -> Vec<TraceEntry> {
-        self.trace.as_mut().map(std::mem::take).unwrap_or_default()
+        let mut all = Vec::new();
+        for shard in &mut self.shards {
+            if let Some(trace) = &mut shard.trace {
+                all.append(trace);
+            }
+        }
+        all
     }
 
     /// The actor with this ID, if it exists and is of type `A`.
     pub fn actor<A: Actor<M, E>>(&self, id: ActorId) -> Option<&A> {
-        let (kind, index) = self.locate(id)?;
-        if self.kind_types[usize::from(kind)] != TypeId::of::<A>() {
+        let slot = self.world.locate(id)?;
+        if self.world.kind_types[usize::from(slot.kind)] != TypeId::of::<A>() {
             return None;
         }
-        let arena = self.kinds[usize::from(kind)].as_any().downcast_ref::<Arena<A>>()?;
-        arena.actors.get(index as usize)
+        let store = &self.shards[usize::from(slot.shard)].stores[slot.store as usize];
+        store
+            .as_any()
+            .downcast_ref::<Arena<A>>()?
+            .actors
+            .get(slot.index as usize)
     }
 
     /// Mutable access to the actor with this ID, if it exists and is of type `A`. For setup and inspection between
     /// runs, e.g. giving an actor the route it should fan out on.
     pub fn actor_mut<A: Actor<M, E>>(&mut self, id: ActorId) -> Option<&mut A> {
-        let (kind, index) = self.locate(id)?;
-        if self.kind_types[usize::from(kind)] != TypeId::of::<A>() {
+        let slot = self.world.locate(id)?;
+        if self.world.kind_types[usize::from(slot.kind)] != TypeId::of::<A>() {
             return None;
         }
-        let arena = self.kinds[usize::from(kind)].as_any_mut().downcast_mut::<Arena<A>>()?;
-        arena.actors.get_mut(index as usize)
+        let store = &mut self.shards[usize::from(slot.shard)].stores[slot.store as usize];
+        store
+            .as_any_mut()
+            .downcast_mut::<Arena<A>>()?
+            .actors
+            .get_mut(slot.index as usize)
+    }
+
+    /// Releases unused capacity in actor storage. Runs automatically before the first run after spawning.
+    pub fn shrink_to_fit(&mut self) {
+        for shard in &mut self.shards {
+            for store in &mut shard.stores {
+                store.shrink_to_fit();
+            }
+        }
+        self.world.blocks.shrink_to_fit();
+        self.needs_shrink = false;
     }
 
     /// Approximate memory held by actors, their framework state, the directory and routes, in bytes.
     /// Excludes pending events.
     pub fn memory_bytes(&self) -> usize {
-        let arenas: usize = self.kinds.iter().map(|k| k.memory_bytes()).sum();
-        let directory = self.blocks.capacity() * size_of::<Option<BlockEntry>>();
+        let actors: usize = self
+            .shards
+            .iter()
+            .flat_map(|s| &s.stores)
+            .map(|store| store.memory_bytes())
+            .sum();
+        let directory = self.world.blocks.capacity() * size_of::<Option<BlockEntry>>();
         let routes: usize = self
-            .core
+            .world
             .routes
             .iter()
             .map(|r| size_of::<Route>() + r.edges.capacity() * size_of::<RouteEdge>())
             .sum();
-        arenas + directory + routes
+        actors + directory + routes
     }
 
     fn kind_of<A: Actor<M, E>>(&mut self) -> u16 {
@@ -442,75 +446,115 @@ impl<M: 'static, E: 'static> Runtime<M, E> {
         if let Some(&kind) = self.kind_ids.get(&type_id) {
             return kind;
         }
-        let kind = u16::try_from(self.kinds.len()).expect("too many actor kinds");
-        self.kinds.push(Box::new(Arena::<A> {
-            actors: Vec::new(),
-            meta: Vec::new(),
-        }));
-        self.kind_types.push(type_id);
+        let kind = u16::try_from(self.world.kind_types.len()).expect("too many actor kinds");
+        self.world.kind_types.push(type_id);
         self.kind_ids.insert(type_id, kind);
-        self.open_blocks.push(None);
         kind
     }
 
-    fn arena_mut<A: Actor<M, E>>(&mut self, kind: u16) -> &mut Arena<A> {
-        self.kinds[usize::from(kind)]
-            .as_any_mut()
-            .downcast_mut::<Arena<A>>()
-            .expect("kind table matches arena type")
-    }
-
-    /// Finds an actor's kind and arena index.
-    fn locate(&self, id: ActorId) -> Option<(u16, u32)> {
-        let entry = self.blocks.get(id.block().raw() as usize)?.as_ref()?;
-        let index = u32::from(id.index_in_block());
-        (index < entry.count).then_some((entry.kind, entry.base + index))
-    }
-
-    fn run_starts(&mut self) {
-        if self.pending_starts.is_empty() {
-            return;
+    fn prepare(&mut self) {
+        if self.needs_shrink {
+            self.shrink_to_fit();
         }
-        for id in std::mem::take(&mut self.pending_starts) {
-            let (kind, index) = self.locate(id).expect("spawned actor is in the directory");
-            if let Some(trace) = &mut self.trace {
-                trace.push(TraceEntry {
-                    dst: id,
-                    key: OrderKey {
-                        at: self.now,
-                        src: ActorId::COORDINATOR,
-                        seq: 0,
-                        sub: 0,
-                    },
-                    kind: DeliveryKind::Start,
-                });
+    }
+
+    /// Runs pending `on_start` handlers on the calling thread.
+    fn start_pending(&mut self) {
+        self.prepare();
+        let now = self.now;
+        for i in 0..self.shards.len() {
+            if self.shards[i].pending_starts.is_empty() {
+                continue;
             }
-            self.kinds[usize::from(kind)].start(index, &mut self.core, self.now, id);
-            self.core.stats.started += 1;
+            self.shards[i].core.window_end = now;
+            self.shards[i].run_starts(&self.world, now);
+            self.route_outbox(i);
         }
     }
 
-    fn deliver(&mut self, key: OrderKey, item: Item<M>) {
-        self.now = key.at;
-        let dst = item.dst();
-        let Some((kind, index)) = self.locate(dst) else {
-            self.core.stats.dropped_unknown += 1;
-            return;
-        };
-        let routed = matches!(item, Item::Routed { .. });
-        if let Some(trace) = &mut self.trace {
-            trace.push(TraceEntry {
-                dst,
-                key,
-                kind: match &item {
-                    Item::Message { .. } => DeliveryKind::Message,
-                    Item::Routed { edge, .. } => DeliveryKind::Routed(*edge),
-                },
-            });
+    /// Moves shard `i`'s cross-shard messages straight into their destination queues (single-threaded stepping).
+    fn route_outbox(&mut self, i: usize) {
+        for (to, items) in self.shards[i].take_outbox().into_iter().enumerate() {
+            for (key, item) in items {
+                self.shards[to].core.queue.push(key, item);
+            }
         }
-        self.kinds[usize::from(kind)].dispatch(index, &mut self.core, key, item);
-        self.core.stats.delivered += 1;
-        self.core.stats.routed_delivered += u64::from(routed);
+    }
+
+    fn run_to(&mut self, end: SimTime) -> u64 {
+        self.prepare();
+        let delivered_before = self.stats().delivered;
+        let n = self.shards.len();
+        let plan = RunPlan {
+            start: self.now,
+            end,
+            lookahead: self.lookahead(),
+            max_paced_window: self.config.max_paced_window,
+            spin_threshold: self.config.spin_threshold,
+        };
+        self.clock.start_run(self.now);
+        let shared = RunShared {
+            world: &self.world,
+            mailboxes: (0..n * n).map(|_| Mutex::new(Vec::new())).collect(),
+            barrier: WindowBarrier::new(n),
+            clock: &self.clock,
+            stop_epoch: self.clock.stop_epoch(),
+        };
+
+        let outcomes: Vec<ShardOutcome> = if n == 1 {
+            vec![self.shards[0].work(&shared, &plan, 1)]
+        } else {
+            let results: Vec<_> = std::thread::scope(|scope| {
+                let handles: Vec<_> = self
+                    .shards
+                    .iter_mut()
+                    .map(|shard| {
+                        let shared = &shared;
+                        let plan = &plan;
+                        scope.spawn(move || {
+                            let result = catch_unwind(AssertUnwindSafe(|| shard.work(shared, plan, n)));
+                            if result.is_err() {
+                                // Release the other shards from the barrier instead of leaving them waiting.
+                                shared.barrier.poison();
+                            }
+                            result
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("shard thread returned"))
+                    .collect()
+            });
+            let mut outcomes = Vec::with_capacity(n);
+            for result in results {
+                match result {
+                    Ok(outcome) => outcomes.push(outcome),
+                    Err(panic) => resume_unwind(panic),
+                }
+            }
+            outcomes
+        };
+
+        // Messages still in mailboxes (a stopped run can leave some) go back into their destination queues.
+        for (index, mailbox) in shared.mailboxes.into_iter().enumerate() {
+            let to = index % n;
+            for (key, item) in mailbox.into_inner().unwrap_or_else(|p| p.into_inner()) {
+                self.shards[to].core.queue.push(key, item);
+            }
+        }
+
+        let stopped = outcomes.iter().any(|o| o.stopped);
+        let processed = outcomes.iter().map(|o| o.processed).max().unwrap_or(self.now);
+        let last_event = self.shards.iter().map(|s| s.last_event).max().unwrap_or(self.now);
+        self.now = if !stopped && end != SimTime::MAX {
+            self.now.max(end)
+        } else if stopped {
+            self.now.max(processed)
+        } else {
+            self.now.max(last_event)
+        };
+        self.stats().delivered - delivered_before
     }
 }
 
@@ -518,9 +562,8 @@ impl<M, E> fmt::Debug for Runtime<M, E> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Runtime")
             .field("now", &self.now)
-            .field("pending", &self.core.queue.len())
-            .field("kinds", &self.kinds.len())
-            .field("stats", &self.core.stats)
+            .field("shards", &self.shards.len())
+            .field("partitions", &self.config.partitions)
             .finish_non_exhaustive()
     }
 }

@@ -44,6 +44,16 @@ pub(crate) struct Route {
 }
 
 impl Jitter {
+    /// How much the jitter can shorten a delay, for computing the lookahead. Normal jitter is unbounded, so this
+    /// uses 5σ; the rare larger reductions are counted as lookahead violations.
+    pub(crate) fn max_reduction(self) -> SimDuration {
+        match self {
+            Self::None => SimDuration::ZERO,
+            Self::Uniform { half_width } => half_width,
+            Self::Normal { sigma } => sigma.saturating_mul(5),
+        }
+    }
+
     /// Applies the jitter to `delay` for edge position `sub` of message `(src, seq)`.
     pub(crate) fn apply(self, delay: SimDuration, seed: u64, src: ActorId, seq: u64, sub: u32) -> SimDuration {
         let offset_ns = match self {

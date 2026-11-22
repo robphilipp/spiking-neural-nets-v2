@@ -9,6 +9,7 @@ fn config(seed: u64, queue: QueueKind) -> RuntimeConfig {
         seed,
         queue,
         trace: true,
+        ..RuntimeConfig::default()
     }
 }
 

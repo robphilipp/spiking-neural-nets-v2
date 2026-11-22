@@ -5,8 +5,10 @@
 //! delivered strictly in `(time, sender, sequence, sub)` order, with [`Ctx::now`] equal to the message's delivery
 //! time.
 //!
-//! This is phase 1: a single-threaded, as-fast-as-possible executor. Phase 2 runs one of these per core and
-//! synchronizes them with time windows; see `docs/plans/actors/`.
+//! Actors are spread over **shards**, one thread each, that run in parallel and synchronize at the end of each
+//! time window (see the `shard` module docs). Placement is by **partition** ([`placement`]), so results don't
+//! depend on the number of shards. The **clock** ([`ClockHandle`]) paces a run against the wall clock and can be
+//! sped up, slowed down, paused, stepped or stopped from another thread while it runs. See `docs/plans/actors/`.
 //!
 //! ```
 //! use tempo_runtime::{Actor, ActorId, Ctx, Runtime, RuntimeConfig, SimDuration, SimTime};
@@ -31,16 +33,25 @@
 //! ```
 
 mod actor;
+mod barrier;
+mod clock;
 mod ctx;
 mod events;
+mod metrics;
+pub mod placement;
 mod route;
 mod runtime;
+mod shard;
 
 pub use actor::{Actor, EdgeIdx, RouteId, Timer, TimerToken};
+pub use clock::{ClockHandle, Pacing};
 pub use ctx::Ctx;
 pub use events::{Emitted, EventCallback};
+pub use metrics::{LatencyHistogram, PacingStats, Stats};
+pub use placement::Partition;
 pub use route::{Jitter, RouteEdge};
-pub use runtime::{DeliveryKind, QueueKind, Runtime, RuntimeConfig, Stats, TraceEntry};
+pub use runtime::{QueueKind, Runtime, RuntimeConfig};
+pub use shard::{DeliveryKind, TraceEntry};
 pub use tempo_core::{ActorId, SimDuration, SimTime};
 
 /// Each actor's random-number generator: Xoshiro256++ (32 bytes), seeded from the runtime seed and the actor's ID.

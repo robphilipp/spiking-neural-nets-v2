@@ -1,9 +1,8 @@
 //! The context an actor gets while handling a message.
 
 use tempo_core::{ActorId, OrderKey, SeqCounter, SimDuration, SimTime};
-use tempo_queue::TimeQueue;
 
-use crate::runtime::{Core, Item};
+use crate::shard::{Core, Item, World};
 use crate::{ActorRng, Emitted, RouteId};
 
 /// Per-actor framework state, stored next to the actor.
@@ -20,6 +19,7 @@ pub struct Ctx<'a, M, E> {
     pub(crate) me: ActorId,
     pub(crate) meta: &'a mut ActorMeta,
     pub(crate) core: &'a mut Core<M, E>,
+    pub(crate) world: &'a World,
 }
 
 impl<M, E> Ctx<'_, M, E> {
@@ -34,6 +34,9 @@ impl<M, E> Ctx<'_, M, E> {
     }
 
     /// Sends `msg` to `to`, delivered at the current time (after this handler returns).
+    ///
+    /// A message to an actor on another shard needs at least the runtime's lookahead as delay; shorter ones are
+    /// delivered slightly late and counted in [`crate::Stats::lookahead_violations`].
     pub fn send(&mut self, to: ActorId, msg: M) {
         self.send_at(to, self.now, msg);
     }
@@ -55,7 +58,7 @@ impl<M, E> Ctx<'_, M, E> {
             seq: self.meta.seq.next_seq(),
             sub: 0,
         };
-        self.core.queue.push(key, Item::Message { dst: to, msg });
+        self.core.send(self.world, key, Item::Message { dst: to, msg });
     }
 
     /// Sends `msg` to this actor after `delay`, e.g. for a timer (see [`crate::Timer`]).
@@ -96,14 +99,9 @@ impl<M: Clone, E> Ctx<'_, M, E> {
     pub fn fanout_at(&mut self, route: RouteId, base: SimTime, msg: M) {
         assert!(base >= self.now, "cannot send into the past: {base} < {}", self.now);
         let seq = self.meta.seq.next_seq();
-        let Core {
-            routes,
-            queue,
-            seed,
-            stats,
-            ..
-        } = &mut *self.core;
-        let route = routes
+        let world = self.world;
+        let route = world
+            .routes
             .get(route.0 as usize)
             .unwrap_or_else(|| panic!("unknown route {route:?}"));
         assert_eq!(
@@ -113,23 +111,21 @@ impl<M: Clone, E> Ctx<'_, M, E> {
         );
         for (sub, edge) in route.edges.iter().enumerate() {
             let sub = sub as u32;
-            let delay = route.jitter.apply(edge.delay, *seed, self.me, seq, sub);
+            let delay = route.jitter.apply(edge.delay, world.seed, self.me, seq, sub);
             let key = OrderKey {
                 at: base + delay,
                 src: self.me,
                 seq,
                 sub,
             };
-            queue.push(
-                key,
-                Item::Routed {
-                    dst: edge.target,
-                    edge: edge.edge,
-                    msg: msg.clone(),
-                },
-            );
+            let item = Item::Routed {
+                dst: edge.target,
+                edge: edge.edge,
+                msg: msg.clone(),
+            };
+            self.core.send(world, key, item);
         }
-        stats.routed_sends += route.edges.len() as u64;
+        self.core.stats.routed_sends += route.edges.len() as u64;
     }
 }
 

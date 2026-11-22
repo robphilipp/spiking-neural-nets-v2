@@ -73,6 +73,48 @@ Deferred:
   - At `time_factor = 1`, a 10k-neuron network tracks the clock with p99 horizon error of 200 µs or less on macOS.
   - A speed change mid-run is continuous, with no jump in simulation time.
 
+### Phase 2 status: done (2026-11-22)
+
+What was built (in `tempo-runtime`, tests in `tempo-testkit/tests/sharding.rs`):
+- **Shards**: one thread per shard, each with its own queue and actors. Windows of length *lookahead* (the shortest
+  route delay between shards, less the jitter allowance, or the declared `min_remote_delay` for direct sends).
+  A window barrier with a min-reduction finds the next event time across all shards, so idle stretches are skipped.
+  Cross-shard messages travel as per-window batches (a mutex-guarded `Vec` per shard pair, swapped once per window).
+- **Partitions** (`placement`): IDs are allocated per partition, and partitions map onto shards. The same network
+  therefore gets the same IDs, random streams and results on any number of shards. `spatial_partitions` places
+  nearby neurons together (Morton order).
+- **Clock** (`ClockHandle`): real-time pacing with live `set_time_factor`, `pause`, `resume`, `step` and `stop`,
+  callable from any thread while running. Speed changes are continuous. Hybrid sleep, then spin.
+- Messages shorter than the lookahead are delivered at the next window start, deterministically, and counted
+  (`Stats::lookahead_violations`, `max_lookahead_violation`).
+- A panic in one shard releases the others and is re-raised (no hang).
+
+Results (Apple M1 Max: 8 performance + 2 efficiency cores):
+
+| Check | Target | Result |
+|-------|--------|--------|
+| Same results for any shard count | identical traces, 1–16 shards | identical traces and spikes for 1, 2, 3, 4, 8, 16 shards (LIF, ring; also with bounded jitter) |
+| Speedup, 100k neurons × 100 synapses | ≥ 6× on 8 cores | **6.91×** on 8 shards (4.0 → 27.5 M events/s); identical spikes at every shard count |
+| Real-time pacing, 10k neurons, factor 1 | p99 window lateness ≤ 200 µs | 1–4 shards: p99 1–3 µs, max 36–672 µs. 6–8 shards: p99 40 µs–8 ms |
+| Speed change mid-run is continuous | no jump | tested: slow 10×, pause, step 5 ms, stop, resume; ticks stay regular |
+| Single-shard overhead | no regression | unchanged (ping-pong 25/41 ns, LIF 10k 553 ms per 100 ms) |
+
+Notes:
+- **Paced runs need spare cores.** Every window waits for the slowest shard, so when all 8 performance cores are
+  busy, an occasional OS preemption stalls everyone for milliseconds (and the catch-up windows count as late).
+  With headroom the tail is microseconds. Follow-ups: raise thread priority (macOS QoS class) and pin threads
+  (Linux), and let shards that finish early park instead of spinning.
+- 10 shards on this machine is slower than 8 (the 2 extra cores are efficiency cores; the barrier waits for the
+  slowest).
+- Spawning slowed from 34 to 92 ns/actor (a hash lookup per spawn for the partition's open block). Only affects
+  build time; worth optimizing for billion-actor builds.
+
+Deferred:
+- Typed `ActorRef<K>` and nested message enums (07 §2): phase 3, with the control plane.
+- Lock-free SPSC rings between shards: the per-window batch swap is cheap at the measured scale; revisit if
+  profiling shows it.
+- Destination-side route expansion: phase 4, where it saves network traffic.
+
 ## Phase 3: control plane, taps, input (2–3 weeks)
 
 - Control plane on tokio: spawn, add_route, query, inspect, inject, plus the clock commands. Applied at window

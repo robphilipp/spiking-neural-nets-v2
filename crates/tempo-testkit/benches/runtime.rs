@@ -9,6 +9,7 @@ fn config(queue: QueueKind) -> RuntimeConfig {
         seed: 1,
         queue,
         trace: false,
+        ..RuntimeConfig::default()
     }
 }
 
