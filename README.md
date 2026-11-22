@@ -10,9 +10,10 @@ This is a monorepo. Projects are added as they're needed.
 | Path | Contents | Status |
 |------|----------|--------|
 | `crates/tempo-*` | Timed actor framework (library). Knows nothing about neurons. | phases 1–3 done: `tempo-core`, `tempo-queue`, `tempo-runtime` (parallel shards, live clock, control plane, subscriptions, fields), `tempo-testkit` |
-| `crates/spikes-*` | Neuron model, `.boo` parser, network actors, recording, API types (libraries) | `spikes-model` done (N1); see `docs/plans/neurons/` |
+| `crates/spikes-*` | Neuron model, `.boo` parser, network actors, recording, API types (libraries) | `spikes-model` (N1) and `spikes-dna` (N2) done; see `docs/plans/neurons/` |
 | `apps/` | `spikes-node` (cluster worker), `spikes-server` (coordinator, web API, data-queue adapter), `spikes-ui` (Tauri + TypeScript) | planned |
 | `packages/` | Shared TypeScript packages (types generated from the Rust API) | planned |
+| `test-data/v1/` | v1 network descriptions, a parser conformance suite | |
 | `docs/plans/` | Design plans (start with `docs/plans/actors/README.md`) | |
 | `notes/` | Notes on the original v1 project | |
 

@@ -46,3 +46,10 @@ These are JSON: `{ simulationName, timeFactor, simulationDuration, sensorFilePat
 - JavaScript sensors were convenient but tie input generation to the UI. In v2, sensors could be (a) TypeScript in
   the UI (as now), (b) Rust input actors (periodic, Poisson, file replay), or (c) external streams. Each needs an
   explicit time-stamping policy (see the time model in the actor plan).
+
+## v2 parser (2026-11-22)
+
+Implemented in `crates/spikes-dna` and lenient with older files (v1's defaults for missing keys; `fnc=stdp`,
+`SNT`, `uwb` accepted). New keys: `nty=mr|br` with `RES=(frq, dmp, lcr, sep)`, `HIP=(tgt, str, win, lwb, upb)`,
+per-connection `typ=exc|inh`, and `nam=` for learning and stickiness functions. The v1 test networks live in
+`test-data/v1/` as a conformance suite. See `docs/plans/neurons/README.md` (N2).

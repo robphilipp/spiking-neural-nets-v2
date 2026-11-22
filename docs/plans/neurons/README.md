@@ -1,6 +1,6 @@
 # Plan: neuron crates
 
-Status: **N1 done** (2026-11-22); N2–N4 to do. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done).
+Status: **N1–N2 done** (2026-11-22); N3–N4 to do. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done).
 The v1 model is described in `notes/02-neuron-model.md` and `notes/03-network-description-language.md`.
 
 ## Goal
@@ -115,3 +115,21 @@ Then the app layer (server, Tauri UI) gets its own plan.
 
 New parameters the parser (N2) must accept: resonator frequency and damping, bistable-resonator cycle and
 separatrix radii, homeostasis target/strength/window/bounds, and a per-connection sign.
+
+## N2 status: done (2026-11-22)
+
+`crates/spikes-dna`: a hand-written parser (syntax tree with line and column for every value) plus a semantic
+layer that converts units, applies defaults, expands id sets and checks references. All problems are reported
+together, each with its position.
+
+- **Conformance**: all 26 v1 networks (`test-data/v1/`, copied from the v1 repo: `old-code/spikes/test_data`,
+  the 2019 `simple-wta.boo`, `pop-coding.boo`, and the Electron UI's test networks) parse. v1's `DnaParserTest`
+  cases are ported (six neurons, eight expanded connections, learning functions, invalid parameters rejected).
+- **Lenient where v1 was strict**: missing neuron keys get v1's documented defaults, so 2017-era files (without
+  `ipb`, `ipl`, `ipd`, `wnm`) parse; older names `fnc=stdp` (= `stdp_hard`), `SNT` (= `SRP`) and `uwb`
+  (= `upb`) are accepted. Without a `GRP` section, neurons run locally in the groups they name.
+- **Random weights** (`cnw=r0:1`) are kept as ranges and drawn from the network seed at build time (v1 used an
+  unseeded `math.random`).
+- **v2 keys**: `nty=mr|br` with `RES=(frq, dmp, lcr, sep)`; `HIP=(tgt, str, win, lwb, upb)`; per-connection
+  `typ=exc|inh`; `nam=` on learning and stickiness functions; bare sets (`psn={a, b}`).
+- Locations are converted to cartesian µm (cylindrical `(r, φ, z)`, spherical `(r, φ, θ)`, as in v1).
