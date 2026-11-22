@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# Shared third-party versions; crates opt in with `name.workspace = true`.
+serde = { version = "1", features = ["derive"] }
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "deny"          # opt out per crate (rings, shared memory) when needed
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+debug = 1                     # symbols for profiling
+
+[profile.bench]
+inherits = "release"

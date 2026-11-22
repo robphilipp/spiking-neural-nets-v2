@@ -1,0 +1,20 @@
+[package]
+name = "tempo-core"
+description = "Core types for the tempo timed actor framework: simulation time, actor IDs, envelopes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
