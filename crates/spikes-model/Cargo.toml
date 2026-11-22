@@ -1,0 +1,19 @@
+[package]
+name = "spikes-model"
+description = "Spiking neuron and synapse equations as plain Rust: integrators, resonators, STDP, release, plasticity."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tempo-core = { path = "../tempo-core" }
+rand_core.workspace = true
+
+[dev-dependencies]
+rand_xoshiro.workspace = true
+rand.workspace = true
+
+[lints]
+workspace = true

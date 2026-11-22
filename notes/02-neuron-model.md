@@ -72,3 +72,18 @@ delays were rounded to whole milliseconds, and anything under 200 µs was sent w
 - **Decided for v2 (2026-11-22)**: the excitatory/inhibitory sign moves from the neuron (`inh`) to the
   connection, so a neuron can have both kinds of outgoing connection. See
   `docs/plans/actors/09-neuromodulation-and-synapse-signs.md`, which also covers neuromodulation.
+
+## v1 code vs documented model (found while porting, 2026-11-22)
+
+The v1 code differs from the wiki, `dna-defs.md` and the paper in eight places. In brief:
+1. The release probability was computed from the neuron's *initial* synapse-timing state, so facilitation and
+   depletion never had any effect.
+2. Facilitation added its base into the running sum (counted twice).
+3. Depletion stored `base − sum` where the sum belongs.
+4. Bistable neurons dropped every incoming signal while tonically firing.
+5. Bistable neurons had no noise, intrinsic plasticity or stochastic release.
+6. Weight stickiness (`CST=sig`) was parsed but never applied.
+7. Weight decay used the time since the neuron's last input from any synapse, not since the synapse's own last update.
+8. Relative refractoriness was subtracted from the stored potential at every input, so it accumulated.
+
+All eight are fixed in v2 (decided 2026-11-22); details are in `docs/plans/neurons/README.md`.
