@@ -13,7 +13,7 @@ use arrow::array::{
 use arrow::datatypes::{DataType, Field};
 use arrow::ipc::writer::FileWriter;
 use spikes_dna::NetworkDescription;
-use spikes_model::{NeuronKind, Sign};
+use spikes_model::Sign;
 use spikes_network::{Network, NeuronActor, Runtime};
 
 use crate::tables::{Counts, Streams, schema};
@@ -182,15 +182,6 @@ fn write_run(dir: &Path, rt: &Runtime, run: RunInfo<'_>) -> Result<()> {
     )
 }
 
-fn kind_name(kind: &NeuronKind) -> &'static str {
-    match kind {
-        NeuronKind::MonostableIntegrator => "monostable_integrator",
-        NeuronKind::BistableIntegrator { .. } => "bistable_integrator",
-        NeuronKind::MonostableResonator(_) => "monostable_resonator",
-        NeuronKind::BistableResonator { .. } => "bistable_resonator",
-    }
-}
-
 fn write_neurons(dir: &Path, network: &Network, description: &NetworkDescription) -> Result<u64> {
     let n = description.neurons.len().min(network.neurons.len());
     let neurons = &description.neurons[..n];
@@ -215,7 +206,7 @@ fn write_neurons(dir: &Path, network: &Network, description: &NetworkDescription
             Arc::new(StringArray::from_iter_values(neurons.iter().map(|d| d.id.as_str()))),
             Arc::new(StringArray::from_iter_values(neurons.iter().map(|d| d.group.as_str()))),
             Arc::new(StringArray::from_iter_values(
-                neurons.iter().map(|d| kind_name(&d.params.kind)),
+                neurons.iter().map(|d| d.params.kind.name()),
             )),
             Arc::new(BooleanArray::from_iter(neurons.iter().map(|d| Some(d.inhibitory)))),
             Arc::new(position(0)),

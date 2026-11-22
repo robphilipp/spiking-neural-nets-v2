@@ -1,0 +1,17 @@
+[package]
+name = "spikes-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+spikes-dna = { version = "0.1.0", path = "../spikes-dna" }
+spikes-model = { version = "0.1.0", path = "../spikes-model" }
+spikes-network = { version = "0.1.0", path = "../spikes-network" }
+spikes-record = { version = "0.1.0", path = "../spikes-record" }
+tempo-runtime = { version = "0.1.0", path = "../tempo-runtime" }
+
+[lints]
+workspace = true

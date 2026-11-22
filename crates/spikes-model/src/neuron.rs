@@ -83,6 +83,19 @@ pub enum NeuronKind {
     },
 }
 
+impl NeuronKind {
+    /// A short, stable name: `monostable_integrator`, `bistable_integrator`, `monostable_resonator` or
+    /// `bistable_resonator`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::MonostableIntegrator => "monostable_integrator",
+            Self::BistableIntegrator { .. } => "bistable_integrator",
+            Self::MonostableResonator(_) => "monostable_resonator",
+            Self::BistableResonator { .. } => "bistable_resonator",
+        }
+    }
+}
+
 /// Parameters shared by a population of neurons.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NeuronParams {

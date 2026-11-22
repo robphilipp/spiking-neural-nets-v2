@@ -30,9 +30,10 @@ let state = session.query_neuron(n)?;   // potential, thresholds, synapses, modu
 session.stop()?;                        // finishes the recording, converts to Parquet in the background
 ```
 
-**Lifecycle**: `Loaded` (parsed; can be edited and re-parsed) → `Built` (actors exist; positions and synapses are
-queryable for the 3D view) → `Running` ⇄ `Paused` → `Finished` (run reached `until` or was stopped). `reset`
-rebuilds from the description with the same or a new seed. Invalid transitions return a typed error.
+**Lifecycle**: `Loaded` (parsed; can be edited and re-parsed) → `Ready` (built; positions and synapses are
+queryable for the 3D view) → `Running` ⇄ `Paused` → back to `Ready` when the run reaches its duration, is stopped,
+or (as fast as possible) runs out of events. A later `Start` continues from where the run stopped; `Build` starts
+over. A panicking run thread leaves the session `Failed` until rebuilt. Invalid transitions return a typed error.
 
 **Threads per session**:
 - the **run thread** owns the `Runtime` and calls `run_until`; it stops at window boundaries for commands that
