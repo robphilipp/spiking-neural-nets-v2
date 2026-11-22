@@ -64,7 +64,7 @@ pub use reply::{Cancelled, Reply};
 pub use route::{Jitter, RouteEdge};
 pub use runtime::{QueueKind, Runtime, RuntimeConfig};
 pub use shard::{DeliveryKind, TraceEntry};
-pub use subscribe::{EventFilter, EventStream};
+pub use subscribe::{Closed, EventFilter, EventStream};
 pub use system::{Severity, SystemEvent, SystemEvents, SystemNotice};
 pub use tempo_core::{ActorId, SimDuration, SimTime};
 

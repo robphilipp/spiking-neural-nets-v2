@@ -1217,6 +1217,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
+name = "spikes-api"
+version = "0.1.0"
+
+[[package]]
 name = "spikes-dna"
 version = "0.1.0"
 dependencies = [
@@ -1261,6 +1265,7 @@ dependencies = [
 name = "spikes-session"
 version = "0.1.0"
 dependencies = [
+ "spikes-api",
  "spikes-dna",
  "spikes-model",
  "spikes-network",

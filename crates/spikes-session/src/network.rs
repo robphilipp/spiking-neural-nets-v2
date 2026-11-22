@@ -48,6 +48,9 @@ pub struct NetworkInfo {
     pub synapses: Vec<SynapseInfo>,
     /// Modulator names, by modulator index.
     pub modulators: Vec<String>,
+    /// Each neuron's spatial cell (for binned spike frames): a 16 × 16 × 16 grid over the network's bounding box,
+    /// numbered `ix + 16·(iy + 16·iz)`.
+    pub cells: Vec<u32>,
     ids: Vec<ActorId>,
     indices: HashMap<ActorId, u32>,
     names: HashMap<String, u32>,
@@ -86,6 +89,7 @@ impl NetworkInfo {
             }
         }
         Self {
+            cells: cells(&neurons),
             names: neurons.iter().map(|n| (n.name.clone(), n.index)).collect(),
             neurons,
             synapses,
@@ -121,4 +125,34 @@ impl NetworkInfo {
         }
         c
     }
+}
+
+/// Cells per axis of the spatial grid.
+pub const GRID: u32 = 16;
+
+fn cells(neurons: &[NeuronInfo]) -> Vec<u32> {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for n in neurons {
+        for a in 0..3 {
+            lo[a] = lo[a].min(n.position[a]);
+            hi[a] = hi[a].max(n.position[a]);
+        }
+    }
+    neurons
+        .iter()
+        .map(|n| {
+            let mut cell = 0;
+            for a in (0..3).rev() {
+                let extent = hi[a] - lo[a];
+                let i = if extent > 0.0 {
+                    (((n.position[a] - lo[a]) / extent * f64::from(GRID)) as u32).min(GRID - 1)
+                } else {
+                    0
+                };
+                cell = cell * GRID + i;
+            }
+            cell
+        })
+        .collect()
 }

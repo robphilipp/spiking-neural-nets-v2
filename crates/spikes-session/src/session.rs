@@ -14,6 +14,7 @@ use spikes_record::{RecordOptions, Recorder, RunInfo, Summary};
 use tempo_runtime::{ClockHandle, Control, Jitter, RuntimeConfig, SimDuration, SimTime};
 
 use crate::network::NetworkInfo;
+use crate::viewer::{Hub, ViewSettings, Viewer};
 use crate::{SessionError, SessionId};
 
 /// How long a query waits for a running simulation to answer.
@@ -182,6 +183,7 @@ struct Shared {
     /// Signalled when a run ends.
     changed: Condvar,
     listeners: Mutex<Vec<Sender<SessionNotice>>>,
+    hub: Arc<Hub>,
 }
 
 /// A handle to a session. Cheap to clone; every method can be called from any thread.
@@ -222,6 +224,7 @@ impl Session {
                 }),
                 changed: Condvar::new(),
                 listeners: Mutex::new(Vec::new()),
+                hub: Hub::start(id.0),
             }),
         })
     }
@@ -325,6 +328,12 @@ impl Session {
         let network = Arc::new(NetworkInfo::new(&rt, &net, &inner.description));
         inner.release_site =
             (!network.modulators.is_empty()).then(|| net.add_release_site(&mut rt, network.centroid()));
+        self.shared.hub.connect(&rt, Arc::clone(&network));
+        for i in self.shared.hub.membrane_neurons() {
+            if let Some(id) = network.id(i) {
+                rt.observe(id, true);
+            }
+        }
         inner.network = Arc::clone(&network);
         inner.settings = settings;
         inner.phase = Stage::Ready(Box::new(Built { rt, net }));
@@ -388,6 +397,7 @@ impl Session {
         let notices = match outcome {
             Ok(_) => {
                 let at = rt.now();
+                self.shared.hub.advance(at);
                 inner.phase = Stage::Ready(Box::new(Built { rt, net }));
                 let mut notices = Vec::new();
                 let recording = match recording {
@@ -463,6 +473,7 @@ impl Session {
             Stage::Ready(built) => {
                 let end = built.rt.now().saturating_add(by);
                 built.rt.run_until(end);
+                self.shared.hub.advance(built.rt.now());
                 Ok(())
             }
             other => Err(SessionError::State {
@@ -513,6 +524,23 @@ impl Session {
             .wait_timeout_while(inner, timeout, |inner| matches!(inner.phase, Stage::Running { .. }))
             .unwrap_or_else(|p| p.into_inner());
         !matches!(inner.phase, Stage::Running { .. })
+    }
+
+    /// Starts a live view. Frames keep coming across runs and rebuilds until the viewer is dropped.
+    pub fn attach(&self, settings: ViewSettings) -> Viewer {
+        let membrane = settings.membrane.clone();
+        let viewer = self.shared.hub.attach(settings, self.network().neurons.len());
+        let _ = self.observe(&membrane, true); // fails harmlessly before the network is built
+        viewer
+    }
+
+    /// Changes what a viewer gets.
+    pub fn update_view(&self, viewer: &Viewer, settings: ViewSettings) {
+        let membrane = settings.membrane.clone();
+        self.shared
+            .hub
+            .update(viewer.id(), settings, self.network().neurons.len());
+        let _ = self.observe(&membrane, true);
     }
 
     /// Sends `mv` of external input to each of `neurons`, now.

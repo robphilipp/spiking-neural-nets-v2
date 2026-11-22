@@ -191,7 +191,9 @@ NRN=[(nid=a, mst=5 mV, mpn=0 mV, LOC=(cst=ct, px1=0, px2=0, px3=0), RCP=[(mod=ac
         "the direct modulator fired it"
     );
 
-    let other = engine.create("plain", "(NRN=[(nid=b, LOC=(cst=ct, px1=0, px2=0, px3=0))])").unwrap();
+    let other = engine
+        .create("plain", "(NRN=[(nid=b, LOC=(cst=ct, px1=0, px2=0, px3=0))])")
+        .unwrap();
     other.build(BuildSettings::default()).unwrap();
     assert!(matches!(other.release_modulator(0, 1.0), Err(SessionError::Invalid(_))));
     assert_eq!(engine.sessions().len(), 2);

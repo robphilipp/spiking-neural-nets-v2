@@ -115,6 +115,10 @@ impl<E: Clone> Subscribers<E> {
     }
 }
 
+/// The runtime behind an [`EventStream`] has gone away.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Closed;
+
 /// A live stream of emitted events, delivered in batches (one per shard per window).
 ///
 /// Events within a batch are in time order. Batches from different shards interleave, so sort by time if you
@@ -138,6 +142,16 @@ impl<E> EventStream<E> {
     /// Waits up to `timeout` for the next batch.
     pub fn next_batch_timeout(&self, timeout: Duration) -> Option<Vec<Emitted<E>>> {
         self.rx.recv_timeout(timeout).ok()
+    }
+
+    /// Waits up to `timeout` for the next batch, telling a timeout (`Ok(None)`) apart from the runtime having
+    /// gone away with everything received (`Err(Closed)`).
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<Option<Vec<Emitted<E>>>, Closed> {
+        match self.rx.recv_timeout(timeout) {
+            Ok(batch) => Ok(Some(batch)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(Closed),
+        }
     }
 
     /// How many events were dropped for this subscriber because it fell behind.

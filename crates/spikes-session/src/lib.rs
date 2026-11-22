@@ -11,13 +11,15 @@
 
 mod network;
 mod session;
+mod viewer;
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-pub use network::{NetworkInfo, NeuronInfo, SynapseInfo};
+pub use network::{GRID, NetworkInfo, NeuronInfo, SynapseInfo};
 pub use session::{BuildSettings, NeuronSnapshot, RunSettings, Session, SessionNotice, Speed, State};
+pub use viewer::{Selection, ViewSettings, Viewer};
 
 /// Identifies a session within its engine.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
