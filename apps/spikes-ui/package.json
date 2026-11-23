@@ -12,6 +12,7 @@
     "tauri": "tauri",
     "desktop": "tauri dev",
     "desktop:build": "tauri build",
+    "desktop:release": "node scripts/release-mac.mjs",
     "desktop:selftest": "tauri build --debug --no-bundle && SPIKES_SELFTEST=1 ../../target/debug/spikes-desktop"
   },
   "dependencies": {

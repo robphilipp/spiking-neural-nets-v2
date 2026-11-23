@@ -1,0 +1,26 @@
+# A coordinator and two node agents on one host, for trying clusters out (on several hosts, run one node agent per
+# host the same way). Host networking: the nodes connect to each other on ports chosen when a network is built.
+#
+#   echo -n "$(openssl rand -hex 16)" > token
+#   docker compose -f docker-compose.cluster.yml up
+#
+# Then open http://localhost:7070, enter the token in Settings, and set Settings > Cluster nodes to
+# "127.0.0.1:7401, 127.0.0.1:7402".
+services:
+  spikes:
+    build: .
+    image: spikes
+    network_mode: host
+    volumes:
+      - ./token:/run/secrets/spikes-token:ro
+      - spikes-data:/data
+  node-1:
+    image: spikes
+    network_mode: host
+    command: ["--node", "--listen", "127.0.0.1:7401"]
+  node-2:
+    image: spikes
+    network_mode: host
+    command: ["--node", "--listen", "127.0.0.1:7402"]
+volumes:
+  spikes-data:

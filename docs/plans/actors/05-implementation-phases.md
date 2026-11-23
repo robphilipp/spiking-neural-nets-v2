@@ -210,6 +210,20 @@ The main new capability.
   - Lateness drops as `time_factor` rises, matching the 02 §4 estimate.
   - A clock change applies on all hosts within 50 ms.
 
+### Phase 4 status: core done (2026-11-23), with app phase A6
+
+Done: the `Link` interface and node placement in `tempo-runtime`; `tempo-cluster` with a TCP mesh (Nagle off,
+batched writes) and an in-memory transport; cross-node delivery of messages, routed spikes, broadcasts, field
+updates, route changes and injections; the coordinator-driven window protocol (which is also phase 5's strict mode:
+exact, identical traces for any partitioning, paced or not); best effort following a shared clock schedule with
+per-link lateness histograms; overload notices forwarded from every node; abort with a clear error when a node fails.
+Exactness, pacing, stopping and lateness are tested (`crates/tempo-cluster/tests`, `crates/spikes-session/tests/
+cluster.rs`).
+
+Not yet: run-ahead by `L_in`; clock-offset estimation (best effort assumes NTP/PTP); per-node links only to peers
+that exchange spikes (the mesh is full); partitioned checkpoint/restore; distributed procedural construction (every
+node builds the whole description and keeps its share); the 10⁸-neuron synthetic test; the LAN acceptance runs.
+
 ## Phase 5: strict mode and validation (2 weeks)
 
 - Strict cross-node windows (reproducible mode). The node-level window report, all-reduce, `Go(T_next)`.

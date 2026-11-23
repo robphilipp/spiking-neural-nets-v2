@@ -1,0 +1,12 @@
+target/
+**/node_modules/
+**/dist/
+.git/
+recordings/
+notes/
+Pipfile
+Pipfile.lock
+.venv/
+**/__pycache__/
+apps/spikes-ui/test-results/
+apps/spikes-ui/playwright-report/

@@ -218,6 +218,40 @@ Acceptance:
 - **Accept**: the UI controls and watches a 2–4 host run with the same screens; lateness per link shows in the
   timing-health panel.
 
+### A6 status: done (2026-11-23), with actors phase 4's core
+
+- **Clusters** (actors phase 4): a runtime can be one node of several. Every node builds the same network and keeps
+  only its partitions' actors, so every directory is identical; events for other nodes leave at the end of each
+  window through a `Link` (`tempo-cluster`: TCP mesh, postcard frames). Field updates, broadcasts and injections
+  cross nodes.
+- **Lockstep** (exact): the coordinator decides each window from every node's report with its own clock, and a node
+  starts a window only once every event sent to it has arrived. **Best effort**: nodes follow copies of the
+  coordinator's clock schedule (anchored a little in the future, then every change sent over the mesh); late events
+  are delivered at once and counted per link.
+- **Sessions**: node agents (`spikes-server --node`); the coordinating session keeps clock, viewers, recordings and
+  sensors; nodes forward their events and system notices (before their run-end report, so views and recordings are
+  complete); per-neuron requests go to the owning node; network summaries and recordings list every node's
+  synapses. API: build `nodes`, start `lockstep`, `getCluster`.
+- **UI**: Settings › Cluster nodes; the Run page's cluster panel (nodes, traffic, waiting, a Lockstep switch, each
+  link's timeliness).
+- **Packaging**: a container image (`Dockerfile`, `docker-compose.cluster.yml`); macOS builds with the hardened
+  runtime, a microphone entitlement, and signing/notarization from the environment (`npm run desktop:release`).
+- Guide: `docs/cluster.md`.
+
+Acceptance:
+- **A 3-node cluster gives exactly the single-process results**: the LIF test network's per-actor traces (in memory
+  and over TCP, 2+1+3 shards, over several runs); a spikes session's spikes, membrane traces, weights, neuron state,
+  synapse list and recording, with connections added and pruned across nodes; dopamine learning on every node.
+- The coordinator's clock paces and stops every node at the same simulation time.
+- Best effort over TCP: late events fall as the clock slows (at 20× slower, under 1%).
+- Browser: a network on two node-agent processes gives the server-alone spike counts, with the cluster panel; a
+  best-effort real-time run shows each link's timeliness.
+- Not checked: 2–4 *separate hosts* on a LAN (everything ran on one machine over loopback TCP); the container image
+  (Docker wasn't running; its UI stage and locked server build were rehearsed locally); signing and notarization (no
+  Developer ID here; the unsigned app bundle builds).
+- Left for later (actors plan, phase 4): run-ahead by inbound lookahead, clock-offset estimation, partitioned
+  checkpoint/restore, distributed procedural construction and the 10⁸-neuron synthetic test, failure recovery.
+
 ## Dependencies to add (when needed)
 
 `axum`, `tokio`, `tower-http` (static files, CORS), `ts-rs`, `serde_json` in the server/api; `tauri` v2 with the

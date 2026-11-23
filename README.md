@@ -9,9 +9,9 @@ This is a monorepo. Projects are added as they're needed.
 
 | Path | Contents | Status |
 |------|----------|--------|
-| `crates/tempo-*` | Timed actor framework (library). Knows nothing about neurons. | phases 1–3 done: `tempo-core`, `tempo-queue`, `tempo-runtime` (parallel shards, live clock, control plane, subscriptions, fields), `tempo-testkit` |
+| `crates/tempo-*` | Timed actor framework (library). Knows nothing about neurons. | phases 1–3 done, phase 4's core: `tempo-core`, `tempo-queue`, `tempo-runtime` (parallel shards, live clock, control plane, subscriptions, fields, cluster nodes), `tempo-cluster` (TCP mesh, lockstep and best-effort windows), `tempo-testkit` |
 | `crates/spikes-*` | Neuron model, `.boo` parser, network actors, recording, API types (libraries) | `spikes-model`, `spikes-dna`, `spikes-network` (with neuromodulation), `spikes-record` done; see `docs/plans/neurons/` |
-| `apps/` | `spikes-cli` (`spikes check/run/parquet`), `spikes-server` (HTTP + WebSocket, serves the UI), `spikes-ui` (web app and Tauri desktop app) | see `docs/plans/app/` |
+| `apps/` | `spikes-cli` (`spikes check/run/parquet`), `spikes-server` (HTTP + WebSocket, serves the UI; `--node` for a cluster node agent), `spikes-ui` (web app and Tauri desktop app) | A1–A6 done; see `docs/plans/app/`, and `docs/cluster.md` for clusters |
 | `packages/` | `spikes-client` (TypeScript client: protocol types, frames, sensors) | done |
 | `clients/` | `python/spikes_sensor` (stream sensor data, microphone example) | done |
 | `test-data/v1/` | v1 network descriptions, a parser conformance suite | |
