@@ -36,6 +36,7 @@ import { Network3D } from "../components/Network3D";
 import { Modulators } from "../components/Modulators";
 import { useConnection } from "../connection";
 import { useAppDispatch, useAppSelector } from "../hooks";
+import { stopInput, useActiveInput } from "../inputStreams";
 import { LiveView, type LiveStats } from "../live";
 import { backgroundChanged, built, runSettingsChanged, simTime } from "../store";
 import { chartColors } from "../theme";
@@ -109,6 +110,7 @@ export function RunPage() {
   /** Record the next run (to the engine's recordings folder; see the Recordings page). */
   const [record, setRecord] = useState(false);
   const replay = session.replayEndMs !== null;
+  const activeInput = useActiveInput();
   const [seekMs, setSeekMs] = useState(0);
   /** The background input the current network was built with (it's applied at Build). */
   const [builtBackground, setBuiltBackground] = useState<string | null>(() => JSON.stringify(background));
@@ -388,6 +390,18 @@ export function RunPage() {
         <Modulators client={client} session={id} modulators={network.modulators} onError={setError} />
       )}
 
+      {activeInput && activeInput.session === id && (
+        <Alert
+          severity="info"
+          action={
+            <Button color="inherit" size="small" onClick={stopInput} data-testid="stop-input-run">
+              Stop
+            </Button>
+          }
+        >
+          {activeInput.kind === "microphone" ? "The microphone is streaming into this network." : "A designed signal is streaming into this network."}
+        </Alert>
+      )}
       {error && (
         <Alert severity="error" onClose={() => setError(null)}>
           {error}

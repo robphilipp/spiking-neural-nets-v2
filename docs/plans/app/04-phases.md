@@ -187,6 +187,29 @@ build; a 7–15% slowdown from empty routes; a flaky hover test.
 - **Accept**: replaying a recording shows the same raster and weights as the live run did (frame-by-frame
   comparison in a test); a designed signal drives a run reproducibly.
 
+### A5 status: done (2026-11-23)
+
+- **Replay**: a recording plays back as an ordinary runtime of ghost actors (one per recorded neuron) fed by a
+  replayer, so the clock, viewers and frames are unchanged; seeking rebuilds from a later time and skips ahead
+  instantly; replays refuse input, queries, connections and re-recording. Protocol: `openRecording`,
+  `exportParquet`, `seek`; sessions carry `replayEndMs`.
+- **Recordings page**: replay, export to Parquet, download tables (browser) or show the folder (desktop). The Run
+  page got a **Record** switch (it had none) and a replay mode (Load, seek slider, live-only controls hidden).
+- **Inputs page**: a signal designer (formula over `t`, `c`, `n` in a small expression language, no JavaScript
+  evaluation, errors with positions; target neurons by name; rate/current/threshold encodings; stream-charts
+  preview); *Inject before running* (the whole signal at exact times: reproducible), *Stream live*, and the
+  **microphone** (Web Audio spectrum in log bands, one per neuron). Streaming inputs keep running while other pages
+  are shown, with a Stop on the Run page.
+- Sensors are numbered afresh at each build, so a rebuilt network with the same inputs reproduces.
+
+Acceptance:
+- **A replay is exact**: the same spikes (to the ns), membrane trace and final weights as the live run (Rust test).
+- Browser: record a reward run with dopamine, replay it, seek, export, download a Parquet table.
+- **A designed signal injected before running gives identical spike counts on two runs** (browser test).
+- Live streaming and the (fake) microphone drive a running network; it goes quiet when they stop.
+- Not checked: a real microphone in the desktop app (`Info.plist` has the usage description; macOS asks the first
+  time).
+
 ## A6: remote and cluster (with actors phase 4)
 
 - The server becomes the coordinator for multi-host runs: sessions span nodes, frames are aggregated per node and

@@ -12,9 +12,19 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     viewport: { width: 1400, height: 900 },
+    permissions: ["microphone"],
     // WebGL on the GPU (ANGLE over Metal on macOS), as in a real window; headless Chromium otherwise draws it in
     // software, which says nothing about the 3D view's real cost.
-    launchOptions: { args: ["--use-angle=metal", "--ignore-gpu-blocklist", "--enable-gpu"] },
+    // A fake microphone (a tone), allowed without asking, for the microphone input.
+    launchOptions: {
+      args: [
+        "--use-angle=metal",
+        "--ignore-gpu-blocklist",
+        "--enable-gpu",
+        "--use-fake-ui-for-media-stream",
+        "--use-fake-device-for-media-stream",
+      ],
+    },
   },
   webServer: {
     command: `${SERVER} --listen 127.0.0.1:${PORT} --ui dist --recordings ../../target/e2e-recordings`,

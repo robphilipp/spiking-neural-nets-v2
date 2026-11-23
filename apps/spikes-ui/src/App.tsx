@@ -1,6 +1,7 @@
 import CodeIcon from "@mui/icons-material/Code";
 import FolderIcon from "@mui/icons-material/Folder";
 import HistoryIcon from "@mui/icons-material/History";
+import SensorsIcon from "@mui/icons-material/Sensors";
 import PlayCircleIcon from "@mui/icons-material/PlayCircle";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { AppBar, Box, Chip, Drawer, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography } from "@mui/material";
@@ -8,16 +9,18 @@ import { type ReactNode, useState } from "react";
 import { useConnection } from "./connection";
 import { SessionPicker } from "./components/SessionPicker";
 import { NetworkPage } from "./pages/NetworkPage";
+import { InputsPage } from "./pages/InputsPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { RecordingsPage } from "./pages/RecordingsPage";
 import { RunPage } from "./pages/RunPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
-type Page = "projects" | "network" | "run" | "recordings" | "settings";
+type Page = "projects" | "network" | "run" | "inputs" | "recordings" | "settings";
 const PAGES: Array<{ id: Page; label: string; icon: ReactNode }> = [
   { id: "projects", label: "Project", icon: <FolderIcon /> },
   { id: "network", label: "Network", icon: <CodeIcon /> },
   { id: "run", label: "Run", icon: <PlayCircleIcon /> },
+  { id: "inputs", label: "Inputs", icon: <SensorsIcon /> },
   { id: "recordings", label: "Recordings", icon: <HistoryIcon /> },
   { id: "settings", label: "Settings", icon: <SettingsIcon /> },
 ];
@@ -60,6 +63,7 @@ export function App() {
           {page === "projects" && <ProjectsPage onOpened={() => setPage("network")} />}
           {page === "network" && <NetworkPage />}
           {page === "run" && <RunPage />}
+          {page === "inputs" && <InputsPage />}
           {page === "recordings" && <RecordingsPage onReplay={() => setPage("run")} />}
           {page === "settings" && <SettingsPage />}
         </Box>

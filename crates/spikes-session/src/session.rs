@@ -397,6 +397,9 @@ impl Session {
             record_weights: settings.record_weights,
         };
         let net = spikes_network::build(&mut rt, &inner.description, &options);
+        // Sensors belong to a built network: numbering them afresh makes a rebuilt network with the same inputs
+        // reproduce (a sensor's random numbers depend on the seed and its id).
+        self.shared.next_sensor.store(0, std::sync::atomic::Ordering::Relaxed);
         let network = Arc::new(NetworkInfo::new(&rt, &net, &inner.description));
         inner.wiring = Some(Arc::new(net.clone()));
         inner.release_site =

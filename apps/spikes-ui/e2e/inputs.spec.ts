@@ -1,0 +1,91 @@
+import { expect, type Page, test } from "@playwright/test";
+import { WebSocketClient } from "@spikes/client";
+
+async function openLineSensor(page: Page) {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click();
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "line-sensor-layers-wta", exact: true }).click();
+  await page.getByTestId("apply").click();
+  await expect(page.getByText("Applied.")).toBeVisible();
+  await page.getByTestId("nav-run").click();
+  await page.getByTestId("build").click();
+  await expect(page.getByText("69 neurons")).toBeVisible();
+}
+
+/** The session the page works with, from the session picker ("… · session N"). */
+async function sessionId(page: Page): Promise<number> {
+  return Number(/session (\d+)/.exec(await page.getByTestId("session-picker").innerText())![1]);
+}
+
+/** Total spikes over all neurons, asked of the engine directly. */
+async function totalSpikes(baseURL: string, session: number): Promise<number> {
+  const client = await WebSocketClient.connect(baseURL);
+  const network = await client.getNetwork(session);
+  let total = 0;
+  for (const n of network.neurons) total += (await client.queryNeuron(session, n.index)).spikes;
+  client.close();
+  return total;
+}
+
+test("a designed signal injected before running drives the network, the same way every time", async ({ page, baseURL }) => {
+  test.setTimeout(90_000);
+  await openLineSensor(page);
+  const session = await sessionId(page);
+  const counts: number[] = [];
+  for (let round = 0; round < 2; round++) {
+    if (round > 0) {
+      await page.getByTestId("nav-run").click();
+      await page.getByTestId("build").click();
+      await expect(page.getByTestId("state")).toHaveText("ready");
+    }
+    await page.getByTestId("nav-inputs").click();
+    await page.getByTestId("formula").fill("floor(t / 100) % 7 == c % 7");
+    await expect(page.getByTestId("preview").locator("canvas")).toBeVisible();
+    await page.getByLabel("Seconds").fill("2");
+    await page.getByTestId("inject").click();
+    await expect(page.getByText(/Injected 2 s of the signal into 49 neurons/)).toBeVisible();
+    await page.getByTestId("nav-run").click();
+    await page.getByLabel("As fast as possible").check();
+    await page.getByLabel("Run for (s)").fill("2");
+    await page.getByLabel("Run for (s)").blur();
+    await page.getByTestId("start").click();
+    // Wait for the run to finish at exactly 2 s (the state chip reads "ready" before the run starts, too).
+    const client = await WebSocketClient.connect(baseURL!);
+    await expect
+      .poll(async () => (await client.listSessions()).find((s) => s.id === session), { timeout: 10_000 })
+      .toMatchObject({ state: "ready", simMs: 2000 });
+    client.close();
+    counts.push(await totalSpikes(baseURL!, session));
+  }
+  expect(counts[0]).toBeGreaterThan(100);
+  expect(counts[1]).toBe(counts[0]); // reproducible
+});
+
+test("a formula with a mistake says where", async ({ page }) => {
+  await openLineSensor(page);
+  await page.getByTestId("nav-inputs").click();
+  await page.getByTestId("formula").fill("sin(t +");
+  await expect(page.getByText(/at character/)).toBeVisible();
+  await expect(page.getByTestId("inject")).toBeDisabled();
+});
+
+test("live streaming and the microphone drive a running network", async ({ page }) => {
+  test.setTimeout(60_000);
+  await openLineSensor(page);
+  await page.getByTestId("start").click();
+  await expect(page.getByTestId("state")).toHaveText("running");
+  for (const source of ["stream", "microphone"]) {
+    await page.getByTestId("nav-inputs").click();
+    if (source === "microphone") await page.getByLabel(/Hz at 1/).fill("400");
+    await page.getByTestId(source).click();
+    await expect(page.getByTestId("stop-input")).toBeVisible();
+    // It keeps streaming while the Run page shows it.
+    await page.getByTestId("nav-run").click();
+    await expect(page.getByTestId("timing")).toContainText(/Spikes\s*[1-9][\d,]*\/s/, { timeout: 5000 });
+    await page.getByTestId("stop-input-run").click();
+    await expect(page.getByTestId("no-spikes")).toBeVisible({ timeout: 5000 }); // quiet again once stopped
+  }
+  await page.getByTestId("stop").click();
+});
