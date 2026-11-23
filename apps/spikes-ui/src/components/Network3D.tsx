@@ -10,14 +10,17 @@ import type { Observable } from "rxjs";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-const FLASH_MS = 100; // wall-clock fade of a spike flash
+const FLASH_MS = 200; // wall-clock fade of a spike flash
 /** Above this many neurons, draw them as point sprites (one vertex each) instead of spheres. */
 const SPHERES_UP_TO = 5000;
+/** Up to this many connections, all are drawn faintly. */
+const MAX_FAINT_LINES = 50_000;
 
 /** The neurons as something to draw, colour and pick: instanced spheres, or points for big networks. */
 interface Drawable {
   object: THREE.Object3D;
-  setColor(i: number, c: THREE.Color): void;
+  /** A neuron's colour, and how lit it is (0…1: a lit sphere swells). */
+  setColor(i: number, c: THREE.Color, lit: number): void;
   /** After colour changes. */
   commit(): void;
   /** The neuron a raycast hit, if any. */
@@ -25,7 +28,7 @@ interface Drawable {
   dispose(): void;
 }
 
-function spheres(network: Network, radius: number, base: THREE.Color[]): Drawable {
+function spheres(network: Network, radius: number, pickRadius: number, base: THREE.Color[]): Drawable {
   const n = network.neurons.length;
   const geometry = new THREE.SphereGeometry(radius, 12, 8);
   const material = new THREE.MeshLambertMaterial();
@@ -39,11 +42,34 @@ function spheres(network: Network, radius: number, base: THREE.Color[]): Drawabl
   mesh.count = n;
   return {
     object: mesh,
-    setColor: (i, c) => mesh.setColorAt(i, c),
+    setColor: (i, c, lit) => {
+      mesh.setColorAt(i, c);
+      const [x, y, z] = network.neurons[i]!.position;
+      const k = 1 + 0.6 * lit;
+      matrix.makeScale(k, k, k).setPosition(x, y, z);
+      mesh.setMatrixAt(i, matrix);
+    },
     commit: () => {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.instanceMatrix.needsUpdate = true;
     },
-    hit: (ray) => ray.intersectObject(mesh)[0]?.instanceId,
+    // The neuron nearest the viewer whose centre passes within the pick radius (the spheres are small to click).
+    hit: (ray) => {
+      const limit = pickRadius * pickRadius;
+      const p = new THREE.Vector3();
+      let best: number | undefined;
+      let bestDistance = Infinity;
+      network.neurons.forEach((neuron, i) => {
+        p.set(...neuron.position);
+        if (ray.ray.distanceSqToPoint(p) > limit) return;
+        const along = p.sub(ray.ray.origin).dot(ray.ray.direction);
+        if (along > 0 && along < bestDistance) {
+          bestDistance = along;
+          best = i;
+        }
+      });
+      return best;
+    },
     dispose: () => {
       geometry.dispose();
       material.dispose();
@@ -51,7 +77,7 @@ function spheres(network: Network, radius: number, base: THREE.Color[]): Drawabl
   };
 }
 
-function points(network: Network, radius: number, base: THREE.Color[]): Drawable {
+function points(network: Network, radius: number, pickRadius: number, base: THREE.Color[]): Drawable {
   const n = network.neurons.length;
   const positions = new Float32Array(n * 3);
   const colours = new Float32Array(n * 3);
@@ -85,7 +111,7 @@ function points(network: Network, radius: number, base: THREE.Color[]): Drawable
       colour.needsUpdate = true;
     },
     hit: (ray) => {
-      ray.params.Points = { threshold: radius };
+      ray.params.Points = { threshold: pickRadius };
       return ray.intersectObject(cloud)[0]?.index;
     },
     dispose: () => {
@@ -96,10 +122,32 @@ function points(network: Network, radius: number, base: THREE.Color[]): Drawable
   };
 }
 
-// Okabe–Ito: distinguishable for colour-blind viewers, and the flash stands out from both kinds.
-const EXCITATORY = 0x0072b2;
-const INHIBITORY = 0xcc79a7;
-const FLASH = 0xe69f00;
+/** The median distance from a neuron to its nearest neighbour (over a sample of up to 300 neurons). */
+function nearestSpacing(network: Network): number {
+  const ns = network.neurons;
+  if (ns.length < 2) return Infinity;
+  const step = Math.max(1, Math.floor(ns.length / 300));
+  const nearest: number[] = [];
+  for (let i = 0; i < ns.length; i += step) {
+    const [x, y, z] = ns[i]!.position;
+    let best = Infinity;
+    for (let j = 0; j < ns.length; j++) {
+      if (j === i) continue;
+      const [a, b, c] = ns[j]!.position;
+      const d = (a - x) ** 2 + (b - y) ** 2 + (c - z) ** 2;
+      if (d > 0 && d < best) best = d;
+    }
+    if (best < Infinity) nearest.push(Math.sqrt(best));
+  }
+  nearest.sort((a, b) => a - b);
+  return nearest.length ? nearest[Math.floor(nearest.length / 2)]! : Infinity;
+}
+
+// Muted Okabe–Ito hues (blue, reddish purple) at rest, so a spike's bright orange (a hue neither has) stands out;
+// still distinguishable for colour-blind viewers.
+const EXCITATORY = 0x8fb3cf;
+const INHIBITORY = 0xd3a6c3;
+const FLASH = 0xff8c00;
 
 interface Props {
   network: Network;
@@ -119,6 +167,7 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
     renderer: THREE.WebGLRenderer;
     camera: THREE.PerspectiveCamera;
     neurons: Drawable;
+    /** The selected neurons' connections (every connection is drawn faintly besides). */
     lines: THREE.LineSegments;
     flash: Float32Array;
     /** Neurons currently lit (so each frame touches only them). */
@@ -128,6 +177,8 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
     /** Something changed: draw the next animation frame. */
     invalidate: () => void;
   } | null>(null);
+  /** Counts scene builds (a new network or theme), so the selection's lines are redrawn into each. */
+  const [built, setBuilt] = useState(0);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const callbacks = useRef({ onPick, onRegion });
   callbacks.current = { onPick, onRegion };
@@ -160,17 +211,31 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
     light.position.set(1, 1, 2);
     world.add(light);
 
-    // Neuron size: a fraction of the typical spacing.
-    const radius = Math.max((size / Math.cbrt(Math.max(n, 1))) * 0.18, size / 2000);
+    // Neuron size: a small fraction of the typical spacing, so the structure and connections show; clicks reach a
+    // little further than the drawn neuron.
+    const spacing = Math.min(nearestSpacing(network), size / Math.cbrt(Math.max(n, 1)));
+    const radius = Math.max(spacing * 0.22, size / 4000);
+    const pickRadius = Math.max(spacing * 0.4, radius);
     const excitatory = new THREE.Color(EXCITATORY);
     const inhibitory = new THREE.Color(INHIBITORY);
     const base = network.neurons.map((neuron) => (neuron.inhibitory ? inhibitory : excitatory));
-    const neurons = n <= SPHERES_UP_TO ? spheres(network, radius, base) : points(network, radius, base);
+    const neurons = n <= SPHERES_UP_TO ? spheres(network, radius, pickRadius, base) : points(network, radius, pickRadius, base);
     world.add(neurons.object);
 
+    // Every connection, faintly (up to a limit: beyond it they'd be a fog), and the selection's, strongly.
+    const all: number[] = [];
+    if (network.synapses.length <= MAX_FAINT_LINES) {
+      for (const syn of network.synapses) all.push(...network.neurons[syn.pre]!.position, ...network.neurons[syn.post]!.position);
+    }
+    const allGeometry = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(all, 3));
+    const faint = new THREE.LineSegments(
+      allGeometry,
+      new THREE.LineBasicMaterial({ color: theme.palette.text.secondary, transparent: true, opacity: n > 500 ? 0.12 : 0.3 }),
+    );
+    world.add(faint);
     const lines = new THREE.LineSegments(
       new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: theme.palette.text.secondary, transparent: true, opacity: 0.5 }),
+      new THREE.LineBasicMaterial({ color: theme.palette.text.primary, transparent: true, opacity: 0.8 }),
     );
     world.add(lines);
 
@@ -195,8 +260,9 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
         const now = performance.now();
         for (const i of litSet) {
           const age = now - flash[i]!;
-          colour.copy(base[i]!).lerp(flashColour, Math.max(0, 1 - age / FLASH_MS));
-          neurons.setColor(i, colour);
+          const lit = Math.max(0, 1 - age / FLASH_MS);
+          colour.copy(base[i]!).lerp(flashColour, lit);
+          neurons.setColor(i, colour, lit);
           if (age >= FLASH_MS) litSet.delete(i); // back to its base colour: no more work for it
         }
         neurons.commit();
@@ -205,11 +271,13 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
     };
     draw();
     scene.current = { renderer, camera, neurons, lines, flash, lit: litSet, base, controls, invalidate };
+    setBuilt((b) => b + 1); // the selection's lines go into the new scene
     return () => {
       cancelAnimationFrame(frame);
       controls.dispose();
       neurons.dispose();
       lines.geometry.dispose();
+      allGeometry.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       scene.current = null;
@@ -272,7 +340,7 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
     s.lines.geometry.dispose();
     s.lines.geometry = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
     s.invalidate();
-  }, [selected, network]);
+  }, [selected, network, built]);
 
   // Click: pick the neuron under the pointer. Shift-drag: select the neurons inside the box.
   const pointer = (e: React.PointerEvent) => {
