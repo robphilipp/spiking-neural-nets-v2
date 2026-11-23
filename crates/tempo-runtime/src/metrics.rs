@@ -28,6 +28,15 @@ pub struct Stats {
     pub lookahead_violations: u64,
     /// The largest such delay error.
     pub max_lookahead_violation: SimDuration,
+    /// Events sent to other nodes of a cluster (also counted in `remote_sends`).
+    pub node_sends: u64,
+    /// Events received from other nodes.
+    pub node_receives: u64,
+    /// Of those, events that arrived after their time had been processed, so were delivered late. Always zero in
+    /// strict mode.
+    pub late_remote: u64,
+    /// The largest such lateness.
+    pub max_remote_lateness: SimDuration,
 }
 
 impl Stats {
@@ -42,6 +51,10 @@ impl Stats {
         self.windows += other.windows;
         self.lookahead_violations += other.lookahead_violations;
         self.max_lookahead_violation = self.max_lookahead_violation.max(other.max_lookahead_violation);
+        self.node_sends += other.node_sends;
+        self.node_receives += other.node_receives;
+        self.late_remote += other.late_remote;
+        self.max_remote_lateness = self.max_remote_lateness.max(other.max_remote_lateness);
     }
 }
 

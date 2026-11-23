@@ -11,6 +11,7 @@ publish.workspace = true
 tempo-runtime = { path = "../tempo-runtime" }
 rand.workspace = true
 rand_xoshiro.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

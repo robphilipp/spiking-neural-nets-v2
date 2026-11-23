@@ -16,12 +16,13 @@ use tempo_queue::{HeapQueue, TimeQueue, WheelQueue};
 use crate::barrier::WindowBarrier;
 use crate::broadcast::GroupId;
 use crate::clock::{ClockHandle, Pacing};
+use crate::cluster::{Link, NodePlacement};
 use crate::control::{Control, ControlShared, Injected, TopologyOp};
 use crate::ctx::ActorMeta;
 use crate::events::{Emitted, EventOut};
 use crate::field::Field;
 use crate::metrics::{PacingStats, Stats};
-use crate::placement::{Partition, shard_of};
+use crate::placement::Partition;
 use crate::route::{Route, splitmix};
 use crate::shard::{
     Arena, BlockEntry, Directory, Item, Queue, RunPlan, RunShared, Shard, ShardOutcome, ShardSettings, TraceEntry,
@@ -78,6 +79,9 @@ pub struct RuntimeConfig {
     pub isolate_panics: bool,
     /// Grid cell size of the spatial index used by spatial broadcasts, in position units.
     pub spatial_cell: f64,
+    /// This runtime is one node of a cluster (see [`crate::cluster`]); its `shards` must match its entry. Install
+    /// the connection to the other nodes with [`Runtime::set_link`] before running.
+    pub cluster: Option<NodePlacement>,
 }
 
 impl Default for RuntimeConfig {
@@ -99,6 +103,7 @@ impl Default for RuntimeConfig {
             journal: false,
             isolate_panics: false,
             spatial_cell: 50.0,
+            cluster: None,
         }
     }
 }
@@ -124,6 +129,8 @@ pub struct Runtime<M, E> {
     system: Arc<SystemBus>,
     dropped_unknown: u64,
     needs_shrink: bool,
+    placement: NodePlacement,
+    link: Option<Arc<dyn Link<M>>>,
 }
 
 impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
@@ -140,10 +147,32 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             config.partitions,
             config.shards
         );
+        let placement = config
+            .cluster
+            .clone()
+            .unwrap_or_else(|| NodePlacement::single(config.shards));
+        assert!(
+            placement.node < placement.nodes() && placement.shards_per_node[placement.node as usize] == config.shards,
+            "node {} of {:?} doesn't have {} shards",
+            placement.node,
+            placement.shards_per_node,
+            config.shards
+        );
+        for node in 0..placement.nodes() {
+            let (first, end) = placement.partitions_of(node, config.partitions);
+            assert!(
+                (end - first) as usize >= placement.shards_per_node[node as usize].max(1),
+                "node {node} has {} partitions for {} shards: use more partitions",
+                end - first,
+                placement.shards_per_node[node as usize]
+            );
+        }
         let subscribers = Arc::new(Subscribers::default());
         let system = Arc::new(SystemBus::default());
         let settings = ShardSettings {
             shards: config.shards,
+            node: placement.node,
+            nodes: placement.nodes(),
             trace: config.trace,
             isolate_panics: config.isolate_panics,
             spatial_cell: config.spatial_cell,
@@ -159,10 +188,14 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             })
             .collect();
         let world = World {
-            dir: Arc::new(Directory::default()),
+            dir: Arc::new(Directory {
+                node: placement.node,
+                ..Directory::default()
+            }),
             kind_types: Vec::new(),
             field_types: Vec::new(),
             shards: config.shards,
+            nodes: placement.nodes(),
             seed: config.seed,
         };
         let clock = ClockHandle::new(config.pacing);
@@ -187,6 +220,8 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             system,
             dropped_unknown: 0,
             needs_shrink: false,
+            placement,
+            link: None,
             config,
         }
     }
@@ -261,6 +296,37 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
         self.system.recent()
     }
 
+    /// A handle for publishing events from elsewhere (another node of a cluster) to this runtime's subscribers, as
+    /// if its own actors had emitted them.
+    pub fn event_publisher(&self) -> EventPublisher<E> {
+        EventPublisher {
+            subscribers: Arc::clone(&self.subscribers),
+        }
+    }
+
+    // ----- cluster -----
+
+    /// Connects this node to the rest of its cluster (see [`crate::cluster`]). Needed before running whenever
+    /// [`RuntimeConfig::cluster`] has more than one node.
+    pub fn set_link(&mut self, link: Arc<dyn Link<M>>) {
+        self.link = Some(link);
+    }
+
+    /// Where this runtime sits in its cluster (a single node without one).
+    pub fn placement(&self) -> &NodePlacement {
+        &self.placement
+    }
+
+    /// `true` if the actor exists and lives on this node.
+    pub fn is_local(&self, id: ActorId) -> bool {
+        self.world.locate(id).is_some()
+    }
+
+    /// The node an actor lives on, if it exists.
+    pub fn node_of(&self, id: ActorId) -> Option<u32> {
+        self.world.dir.home(id).map(|(node, _)| node)
+    }
+
     // ----- control -----
 
     /// A handle for controlling the simulation from other threads while it runs.
@@ -306,7 +372,8 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
     pub fn spawn_in<A: Actor<M, E>>(&mut self, partition: Partition, actor: A) -> ActorId {
         assert!(partition.0 < self.config.partitions, "no {partition:?}");
         let kind = self.kind_of::<A>();
-        let shard = shard_of(partition, self.config.partitions, self.config.shards);
+        let (node, shard) = self.placement.home_of(partition.0, self.config.partitions);
+        let local = node == self.placement.node;
         let dir = Arc::make_mut(&mut self.world.dir);
 
         let (block, index) = match self.open_blocks.get(&(partition.0, kind)) {
@@ -314,16 +381,22 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             _ => {
                 let block = BlockId::new(dir.blocks.len() as u64);
                 assert!(!block.is_reserved(), "actor IDs exhausted");
-                let stores = &mut self.shards[usize::from(shard)].stores;
+                let store = if local {
+                    let stores = &mut self.shards[usize::from(shard)].stores;
+                    stores.push(Box::new(Arena::<A> {
+                        actors: Vec::new(),
+                        meta: Vec::new(),
+                    }));
+                    u32::try_from(stores.len() - 1).expect("too many blocks on one shard")
+                } else {
+                    u32::MAX // lives on another node: only its place in the directory is kept here
+                };
                 dir.blocks.push(Some(BlockEntry {
+                    node,
                     shard,
                     kind,
-                    store: u32::try_from(stores.len()).expect("too many blocks on one shard"),
+                    store,
                     count: 0,
-                }));
-                stores.push(Box::new(Arena::<A> {
-                    actors: Vec::new(),
-                    meta: Vec::new(),
                 }));
                 (block, 0)
             }
@@ -336,6 +409,9 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
         let store = entry.store as usize;
 
         let id = ActorId::from_parts(block, index as u16);
+        if !local {
+            return id;
+        }
         let rng = ActorRng::seed_from_u64(splitmix(self.config.seed) ^ id.raw());
         let shard = &mut self.shards[usize::from(shard)];
         let arena = shard.stores[store]
@@ -403,21 +479,23 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
     /// # Panics
     /// If `owner` doesn't exist.
     pub fn add_route(&mut self, owner: ActorId, edges: Vec<RouteEdge>, jitter: Jitter) -> RouteId {
-        let slot = self.world.locate(owner).expect("route owner exists");
+        let (node, shard) = self.world.dir.home(owner).expect("route owner exists");
         let dir = Arc::make_mut(&mut self.world.dir);
-        let id = RouteId(u32::try_from(dir.route_shards.len()).expect("too many routes"));
-        dir.route_shards.push(slot.shard);
-        self.shards[usize::from(slot.shard)]
-            .routes
-            .insert(id, Route { owner, edges, jitter });
+        let id = RouteId(u32::try_from(dir.route_homes.len()).expect("too many routes"));
+        dir.route_homes.push((node, shard));
+        if node == self.placement.node {
+            self.shards[usize::from(shard)]
+                .routes
+                .insert(id, Route { owner, edges, jitter });
+        }
         id
     }
 
     /// Adds or prunes a route edge now (between runs; while running use [`Control::change_route`] or
     /// [`crate::Ctx::change_route`]). Returns `true` if the route existed (and, for a prune, the edge was found).
     pub fn change_route(&mut self, route: RouteId, op: TopologyOp) -> bool {
-        match self.world.dir.route_shards.get(route.0 as usize) {
-            Some(&shard) => self.shards[usize::from(shard)].apply_topology(&self.world, route, op),
+        match self.world.dir.route_shard(route) {
+            Some(shard) => self.shards[usize::from(shard)].apply_topology(&self.world, route, op),
             None => false,
         }
     }
@@ -442,11 +520,15 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             seq: self.control.world_seq.fetch_add(1, Ordering::AcqRel),
             sub: 0,
         };
-        match self.world.locate(to) {
-            Some(slot) => self.shards[usize::from(slot.shard)]
+        match self.world.dir.home(to) {
+            Some((node, shard)) if node == self.placement.node => self.shards[usize::from(shard)]
                 .core
                 .queue
                 .push(key, Item::Message { dst: to, msg }),
+            // Leaves for its node at the start of the next run.
+            Some((node, shard)) => self.shards[0]
+                .core
+                .send_to_node(node, shard, key, Item::Message { dst: to, msg }),
             None => self.dropped_unknown += 1,
         }
     }
@@ -488,18 +570,20 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
     /// of any route edge between shards (less the jitter allowance), or [`RuntimeConfig::min_remote_delay`] if that
     /// is shorter. `SimDuration::MAX` means nothing crosses shards.
     pub fn lookahead(&self) -> SimDuration {
-        if self.shards.len() == 1 {
+        if self.shards.len() == 1 && self.placement.nodes() == 1 {
             return SimDuration::MAX;
         }
         let mut lookahead = self.config.min_remote_delay.unwrap_or(SimDuration::MAX);
+        let node = self.placement.node;
         for (index, shard) in self.shards.iter().enumerate() {
             for route in shard.routes.values() {
                 let reduction = route.jitter.max_reduction();
                 for edge in &route.edges {
                     if self
                         .world
-                        .locate(edge.target)
-                        .is_some_and(|t| usize::from(t.shard) != index)
+                        .dir
+                        .home(edge.target)
+                        .is_some_and(|home| home != (node, index as u16))
                     {
                         lookahead = lookahead.min(edge.delay.saturating_sub(reduction));
                     }
@@ -592,7 +676,11 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
 
     /// Delivers the single next event (the earliest on any shard) and returns its time, or `None` if nothing is
     /// pending. Runs on the calling thread.
+    ///
+    /// # Panics
+    /// On a node of a cluster: nodes only run in step with each other.
     pub fn step(&mut self) -> Option<SimTime> {
+        assert!(self.placement.nodes() == 1, "a node of a cluster can't step on its own");
         self.start_pending();
         let (i, key) = self
             .shards
@@ -705,7 +793,12 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             clock: &self.clock,
             control: &self.control,
             stop_epoch: token.0,
+            link: self.link.as_deref(),
         };
+        assert!(
+            shared.link.is_some() || self.placement.nodes() == 1,
+            "a node of a cluster needs a link (Runtime::set_link) to run"
+        );
 
         let outcomes: Vec<ShardOutcome> = if n == 1 {
             vec![self.shards[0].work(&shared, &plan, 1)]
@@ -761,6 +854,32 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             self.now.max(last_event)
         };
         self.stats().delivered - delivered_before
+    }
+}
+
+/// Publishes events to a runtime's subscribers from outside it (see [`Runtime::event_publisher`]).
+pub struct EventPublisher<E> {
+    subscribers: Arc<Subscribers<E>>,
+}
+
+impl<E> Clone for EventPublisher<E> {
+    fn clone(&self) -> Self {
+        Self {
+            subscribers: Arc::clone(&self.subscribers),
+        }
+    }
+}
+
+impl<E: Clone> EventPublisher<E> {
+    /// Hands a batch of events to every subscriber, without blocking.
+    pub fn publish(&self, batch: Vec<Emitted<E>>) {
+        self.subscribers.publish(batch);
+    }
+}
+
+impl<E> fmt::Debug for EventPublisher<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EventPublisher").finish_non_exhaustive()
     }
 }
 

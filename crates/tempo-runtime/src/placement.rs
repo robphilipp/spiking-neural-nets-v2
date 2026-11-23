@@ -10,7 +10,8 @@
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Partition(pub u32);
 
-/// The shard that runs `partition`, when `partitions` partitions are spread over `shards` shards.
+/// The shard that runs `partition`, when `partitions` partitions are spread over `shards` shards (on one node).
+#[cfg(test)]
 pub(crate) fn shard_of(partition: Partition, partitions: u32, shards: usize) -> u16 {
     (u64::from(partition.0) * shards as u64 / u64::from(partitions)) as u16
 }
@@ -103,6 +104,39 @@ mod tests {
                 .map(|(_, p)| *p);
             assert_eq!(same_octant_part, Some(*part));
         }
+    }
+
+    #[test]
+    fn partitions_map_to_nodes_then_shards() {
+        use crate::NodePlacement;
+        let one = NodePlacement::single(3);
+        for p in 0..64 {
+            assert_eq!(one.home_of(p, 64), (0, shard_of(Partition(p), 64, 3)));
+        }
+        let three = NodePlacement {
+            node: 0,
+            shards_per_node: vec![2, 1, 3],
+        };
+        let homes: Vec<(u32, u16)> = (0..12).map(|p| three.home_of(p, 12)).collect();
+        assert_eq!(
+            homes,
+            [
+                (0, 0),
+                (0, 0),
+                (0, 1),
+                (0, 1),
+                (1, 0),
+                (1, 0),
+                (1, 0),
+                (1, 0),
+                (2, 0),
+                (2, 0),
+                (2, 1),
+                (2, 2)
+            ]
+            .map(|(n, s)| (n, s as u16))
+        );
+        assert_eq!(three.partitions_of(1, 12), (4, 8));
     }
 
     #[test]

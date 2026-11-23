@@ -12,6 +12,7 @@ publish = false
 [workspace.dependencies]
 # Shared third-party versions; crates opt in with `name.workspace = true`.
 serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
 proptest = "1"
 criterion = "0.8"
 rand = "0.10"

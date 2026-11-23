@@ -124,13 +124,10 @@ impl<M, E> Ctx<'_, M, E> {
             .position(|t| *t == TypeId::of::<F>())
             .unwrap_or_else(|| panic!("no field of type {}", std::any::type_name::<F>()));
         let key = self.next_key(self.now + delay);
-        for shard in 0..self.world.shards {
-            let item = Item::Field {
-                field: field as u16,
-                update: Box::new(update.clone()),
-            };
-            self.core.send_to_shard(shard as u16, key, item);
-        }
+        self.core.send_everywhere(self.world, key, || Item::Field {
+            field: field as u16,
+            update: Box::new(update.clone()),
+        });
     }
 
     /// Adds an edge to, or prunes an edge from, a route (for example structural plasticity). The change is made on
@@ -224,13 +221,10 @@ impl<M: Clone, E> Ctx<'_, M, E> {
 
     fn broadcast(&mut self, target: Target, at: SimTime, msg: M) {
         let key = self.next_key(at);
-        for shard in 0..self.world.shards {
-            let item = Item::Broadcast {
-                target: Box::new(target),
-                msg: msg.clone(),
-            };
-            self.core.send_to_shard(shard as u16, key, item);
-        }
+        self.core.send_everywhere(self.world, key, || Item::Broadcast {
+            target: Box::new(target),
+            msg: msg.clone(),
+        });
     }
 }
 

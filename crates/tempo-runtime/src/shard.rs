@@ -19,6 +19,7 @@ use tempo_queue::{HeapQueue, TimeQueue, WheelQueue};
 use crate::barrier::{Decision, WindowBarrier};
 use crate::broadcast::{GroupId, SpatialIndex, Target};
 use crate::clock::{ClockHandle, ClockState, ClockView, wait_for};
+use crate::cluster::{ALL_SHARDS, Link, Remote, RemoteItem, WindowDecision, WindowReport};
 use crate::control::{ControlShared, TopologyOp};
 use crate::ctx::ActorMeta;
 use crate::events::EventOut;
@@ -109,9 +110,11 @@ impl<T> TimeQueue<T> for Queue<T> {
     }
 }
 
-/// Where an ID block lives: its shard, its actor kind, and which of the shard's stores holds it.
+/// Where an ID block lives: its node and shard, its actor kind, and which of the shard's stores holds it (on its
+/// own node; other nodes keep no store for it).
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct BlockEntry {
+    pub(crate) node: u32,
     pub(crate) shard: u16,
     pub(crate) kind: u16,
     pub(crate) store: u32,
@@ -127,25 +130,44 @@ pub(crate) struct Slot {
     pub(crate) index: u32,
 }
 
-/// Where actors and routes live. Shared (read-only) by shards during a run and by the control plane.
+/// Where actors and routes live. Shared (read-only) by shards during a run and by the control plane. Every node of
+/// a cluster has the same directory.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Directory {
+    /// This node.
+    pub(crate) node: u32,
     pub(crate) blocks: Vec<Option<BlockEntry>>,
-    /// The shard that owns each route.
-    pub(crate) route_shards: Vec<u16>,
+    /// The node and shard that own each route.
+    pub(crate) route_homes: Vec<(u32, u16)>,
 }
 
 impl Directory {
+    /// Where an actor lives on this node, or `None` if it doesn't exist or lives on another node.
     #[inline(always)]
     pub(crate) fn locate(&self, id: ActorId) -> Option<Slot> {
         let entry = self.blocks.get(id.block().raw() as usize)?.as_ref()?;
         let index = u32::from(id.index_in_block());
-        (index < entry.count).then_some(Slot {
+        (index < entry.count && entry.node == self.node).then_some(Slot {
             shard: entry.shard,
             kind: entry.kind,
             store: entry.store,
             index,
         })
+    }
+
+    /// The node and shard an actor lives on, wherever that is.
+    #[inline(always)]
+    pub(crate) fn home(&self, id: ActorId) -> Option<(u32, u16)> {
+        let entry = self.blocks.get(id.block().raw() as usize)?.as_ref()?;
+        (u32::from(id.index_in_block()) < entry.count).then_some((entry.node, entry.shard))
+    }
+
+    /// The shard owning a route, if it's on this node.
+    pub(crate) fn route_shard(&self, route: RouteId) -> Option<u16> {
+        self.route_homes
+            .get(route.0 as usize)
+            .filter(|(node, _)| *node == self.node)
+            .map(|&(_, shard)| shard)
     }
 }
 
@@ -154,7 +176,10 @@ pub(crate) struct World {
     pub(crate) dir: Arc<Directory>,
     pub(crate) kind_types: Vec<TypeId>,
     pub(crate) field_types: Vec<TypeId>,
+    /// Shards on this node.
     pub(crate) shards: usize,
+    /// Nodes in the cluster (1 without one).
+    pub(crate) nodes: u32,
     pub(crate) seed: u64,
 }
 
@@ -167,6 +192,7 @@ impl World {
 
 /// A shard's mutable state that handlers reach through [`Ctx`].
 pub(crate) struct Core<M, E> {
+    pub(crate) node: u32,
     pub(crate) shard: u16,
     pub(crate) queue: Queue<Item<M>>,
     pub(crate) events: EventOut<E>,
@@ -175,6 +201,8 @@ pub(crate) struct Core<M, E> {
     pub(crate) fields: Vec<Box<dyn AnyField>>,
     /// Cross-shard messages produced this window, per destination shard.
     pub(crate) outbox: Vec<Batch<M>>,
+    /// Messages for other nodes produced this window (or while idle), per destination node.
+    pub(crate) remote: Vec<Vec<Remote<M>>>,
     /// Earliest time among this window's cross-shard messages.
     pub(crate) outbound_min: SimTime,
     /// End of the current window: cross-shard messages earlier than this would be late.
@@ -192,15 +220,51 @@ impl<M, E> Core<M, E> {
     /// Queues an event for wherever its target lives.
     #[inline(always)]
     pub(crate) fn send(&mut self, world: &World, key: OrderKey, item: Item<M>) {
-        let shard = match &item {
-            Item::Message { dst, .. } | Item::Routed { dst, .. } => world.locate(*dst).map(|slot| slot.shard),
-            Item::Topology { route, .. } => world.dir.route_shards.get(route.0 as usize).copied(),
+        let home = match &item {
+            Item::Message { dst, .. } | Item::Routed { dst, .. } => world.dir.home(*dst),
+            Item::Topology { route, .. } => world.dir.route_homes.get(route.0 as usize).copied(),
             Item::Broadcast { .. } | Item::Field { .. } => unreachable!("broadcasts are sent to each shard"),
         };
-        match shard {
-            Some(shard) => self.send_to_shard(shard, key, item),
+        match home {
+            Some((node, shard)) if node == self.node => self.send_to_shard(shard, key, item),
+            Some((node, shard)) => self.send_to_node(node, shard, key, item),
             None => self.stats.dropped_unknown += 1,
         }
+    }
+
+    /// Queues a broadcast or field update for every shard of every node; `make` builds each copy.
+    pub(crate) fn send_everywhere(&mut self, world: &World, key: OrderKey, mut make: impl FnMut() -> Item<M>) {
+        for shard in 0..world.shards {
+            self.send_to_shard(shard as u16, key, make());
+        }
+        let me = self.node;
+        for node in (0..world.nodes).filter(|&n| n != me) {
+            self.send_to_node(node, ALL_SHARDS, key, make());
+        }
+    }
+
+    /// Queues an event for a shard of another node (or [`ALL_SHARDS`]). It leaves at the end of the window.
+    pub(crate) fn send_to_node(&mut self, node: u32, shard: u16, mut key: OrderKey, item: Item<M>) {
+        if key.at < self.window_end {
+            // As for cross-shard messages: the receiver may be past this time already.
+            if !matches!(item, Item::Topology { .. }) && key.src != ActorId::WORLD {
+                let error = self.window_end - key.at;
+                self.stats.lookahead_violations += 1;
+                self.stats.max_lookahead_violation = self.stats.max_lookahead_violation.max(error);
+            }
+            key.at = self.window_end;
+        }
+        let item = match item {
+            Item::Message { dst, msg } => RemoteItem::Message { dst, msg },
+            Item::Routed { dst, edge, msg } => RemoteItem::Routed { dst, edge, msg },
+            Item::Broadcast { target, msg } => RemoteItem::Broadcast { target: *target, msg },
+            Item::Field { field, update } => RemoteItem::Field { field, update },
+            Item::Topology { route, op } => RemoteItem::Topology { route, op: *op },
+        };
+        self.outbound_min = self.outbound_min.min(key.at);
+        self.stats.remote_sends += 1;
+        self.stats.node_sends += 1;
+        self.remote[node as usize].push(Remote { shard, key, item });
     }
 
     /// Queues an event on a specific shard.
@@ -354,6 +418,8 @@ impl<M: 'static, E: 'static, A: Actor<M, E>> KindStore<M, E> for Arena<A> {
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct ShardSettings {
     pub(crate) shards: usize,
+    pub(crate) node: u32,
+    pub(crate) nodes: u32,
     pub(crate) trace: bool,
     pub(crate) isolate_panics: bool,
     pub(crate) spatial_cell: f64,
@@ -386,6 +452,8 @@ pub(crate) struct RunShared<'a, M, E> {
     pub(crate) clock: &'a ClockHandle,
     pub(crate) control: &'a ControlShared<M, E>,
     pub(crate) stop_epoch: u64,
+    /// The cluster, if this runtime is one node of several.
+    pub(crate) link: Option<&'a dyn Link<M>>,
 }
 
 impl<M, E> RunShared<'_, M, E> {
@@ -457,12 +525,14 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
     ) -> Self {
         Self {
             core: Core {
+                node: settings.node,
                 shard: index,
                 queue,
                 events,
                 stats: Stats::default(),
                 fields: Vec::new(),
                 outbox: (0..settings.shards).map(|_| Vec::new()).collect(),
+                remote: (0..settings.nodes).map(|_| Vec::new()).collect(),
                 outbound_min: SimTime::MAX,
                 window_end: SimTime::ZERO,
                 lookahead_proposal: SimDuration::MAX,
@@ -515,7 +585,11 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
         };
         match op {
             TopologyOp::Connect(edge) => {
-                if world.locate(edge.target).is_some_and(|t| t.shard != shard) {
+                if world
+                    .dir
+                    .home(edge.target)
+                    .is_some_and(|home| home != (world.dir.node, shard))
+                {
                     let delay = edge.delay.saturating_sub(r.jitter.max_reduction());
                     self.core.lookahead_proposal = self.core.lookahead_proposal.min(delay.max(SimDuration::NANOSECOND));
                 }
@@ -618,8 +692,15 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
         next.min(self.core.outbound_min)
     }
 
-    /// Hands this window's cross-shard messages to their destinations' mailboxes.
+    /// Hands this window's cross-shard messages to their destinations' mailboxes, and other nodes' to the link.
     fn flush_outbox(&mut self, shared: &RunShared<'_, M, E>, n: usize) {
+        if let Some(link) = shared.link {
+            for (node, events) in self.core.remote.iter_mut().enumerate() {
+                if !events.is_empty() {
+                    link.send(node as u32, std::mem::take(events));
+                }
+            }
+        }
         let me = usize::from(self.core.shard);
         for (to, outbox) in self.core.outbox.iter_mut().enumerate() {
             if outbox.is_empty() {
@@ -634,8 +715,36 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
         }
     }
 
-    /// Moves messages other shards sent here into the local queue.
-    fn drain(&mut self, shared: &RunShared<'_, M, E>, n: usize) {
+    /// Moves messages other shards (and nodes) sent here into the local queue. Nothing goes in earlier than
+    /// `start`, the window about to be processed: a message from another node that arrives too late for its time
+    /// is delivered at `start` instead, and counted.
+    fn drain(&mut self, shared: &RunShared<'_, M, E>, n: usize, start: SimTime) {
+        if let Some(link) = shared.link {
+            let core = &mut self.core;
+            link.receive(core.shard, &mut |mut key, item| {
+                if key.at < start {
+                    let late = start - key.at;
+                    core.stats.late_remote += 1;
+                    core.stats.max_remote_lateness = core.stats.max_remote_lateness.max(late);
+                    key.at = start;
+                }
+                let item = match item {
+                    RemoteItem::Message { dst, msg } => Item::Message { dst, msg },
+                    RemoteItem::Routed { dst, edge, msg } => Item::Routed { dst, edge, msg },
+                    RemoteItem::Broadcast { target, msg } => Item::Broadcast {
+                        target: Box::new(target),
+                        msg,
+                    },
+                    RemoteItem::Field { field, update } => Item::Field { field, update },
+                    RemoteItem::Topology { route, op } => Item::Topology {
+                        route,
+                        op: Box::new(op),
+                    },
+                };
+                core.stats.node_receives += 1;
+                core.queue.push(key, item);
+            });
+        }
         let me = usize::from(self.core.shard);
         for from in (0..n).filter(|&from| from != me) {
             {
@@ -676,9 +785,49 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
     fn arrive(&mut self, shared: &RunShared<'_, M, E>, plan: &RunPlan, last_end: SimTime) -> Decision {
         let next = self.local_next().as_nanos();
         let proposal = self.core.lookahead_proposal.as_nanos();
-        let decision = shared.barrier.arrive(next, proposal, |next, lookahead| {
-            decide(plan, shared.clock, shared.stop_requested(), last_end, next, lookahead)
-        });
+        let me = self.core.shard;
+        // In a cluster, waiting at the barrier can take a while (a paused cluster waits here): keep applying control
+        // commands, at the end of the window just processed. (A single node applies them at the next window start.)
+        let mut idle = || {
+            if shared.link.is_some() && shared.control.has_pending(me) {
+                self.apply_commands(shared.control, shared.world, last_end);
+            }
+        };
+        let decision = shared
+            .barrier
+            .arrive(next, proposal, &mut idle, |next, lookahead, idle| match shared.link {
+                None => decide(plan, shared.clock, shared.stop_requested(), last_end, next, lookahead),
+                Some(link) => {
+                    let report = WindowReport {
+                        next: SimTime::from_nanos(next),
+                        lookahead: SimDuration::from_nanos(lookahead),
+                        stop: shared.stop_requested(),
+                    };
+                    let decide_all = |all: WindowReport| {
+                        let d = decide(
+                            plan,
+                            shared.clock,
+                            all.stop,
+                            last_end,
+                            all.next.as_nanos(),
+                            all.lookahead.as_nanos(),
+                        );
+                        WindowDecision {
+                            start: SimTime::from_nanos(d.start),
+                            end: SimTime::from_nanos(d.end),
+                            lookahead: SimDuration::from_nanos(d.lookahead),
+                            stop: d.stop,
+                        }
+                    };
+                    let d = link.decide(report, &decide_all, idle);
+                    Decision {
+                        start: d.start.as_nanos(),
+                        end: d.end.as_nanos(),
+                        lookahead: d.lookahead.as_nanos(),
+                        stop: d.stop,
+                    }
+                }
+            });
         self.core.outbound_min = SimTime::MAX;
         decision
     }
@@ -743,13 +892,16 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
             }
             lookahead = agreed;
             self.core.lookahead_proposal = lookahead;
-            self.drain(shared, n);
             let start = SimTime::from_nanos(decision.start);
+            self.drain(shared, n, start.min(plan.end));
             self.apply_commands(shared.control, world, start);
 
             if start >= plan.end {
                 // Nothing left before the end. A paced run still waits for the clock to reach the end.
-                let reached = plan.end == SimTime::MAX || self.wait_until(&mut clock, plan.end, shared, plan);
+                // (A cluster node treats the end as reached either way: the others may not have waited.)
+                let reached = plan.end == SimTime::MAX
+                    || self.wait_until(&mut clock, plan.end, shared, plan)
+                    || shared.link.is_some();
                 self.publish_outputs(plan.end.min(last_end.max(start)), true);
                 return ShardOutcome {
                     processed: if reached && plan.end != SimTime::MAX {
@@ -762,8 +914,9 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
             }
 
             // If the run is stopped while waiting, skip this window. Other shards may have processed it; that is
-            // safe, since no shard goes beyond it before the next barrier.
-            if self.wait_until(&mut clock, start, shared, plan) {
+            // safe, since no shard goes beyond it before the next barrier. A cluster node processes it anyway, so
+            // every node stops at the same time (the stop takes effect at the next barrier).
+            if self.wait_until(&mut clock, start, shared, plan) || shared.link.is_some() {
                 if leader {
                     shared.clock.publish_progress(start);
                     if let Some(due) = clock.state.wall_for(start) {

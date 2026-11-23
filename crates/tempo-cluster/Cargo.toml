@@ -1,0 +1,20 @@
+[package]
+name = "tempo-cluster"
+description = "Runs a tempo simulation over several processes or hosts: transports and the cross-node window protocol."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+tempo-core = { path = "../tempo-core" }
+tempo-runtime = { path = "../tempo-runtime" }
+serde.workspace = true
+postcard.workspace = true
+
+[dev-dependencies]
+tempo-testkit = { path = "../tempo-testkit" }
+
+[lints]
+workspace = true

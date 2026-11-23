@@ -35,12 +35,8 @@ impl SpatialBroadcast {
     }
 }
 
-/// Where a broadcast goes.
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) enum Target {
-    Group(GroupId),
-    Region(SpatialBroadcast),
-}
+/// Where a broadcast goes (also what crosses to other nodes).
+pub(crate) type Target = crate::cluster::BroadcastTarget;
 
 /// A uniform grid over actor positions, for finding the actors near a point.
 #[derive(Debug, Default)]

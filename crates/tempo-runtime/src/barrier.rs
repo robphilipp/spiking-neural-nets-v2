@@ -73,10 +73,17 @@ impl WindowBarrier {
         }
     }
 
-    /// Waits for every shard. The last to arrive calls `decide(min next, min lookahead)`; everyone gets its result.
-    pub(crate) fn arrive(&self, next: u64, lookahead: u64, decide: impl FnOnce(u64, u64) -> Decision) -> Decision {
+    /// Waits for every shard. The last to arrive calls `decide(min next, min lookahead, idle)`; everyone gets its
+    /// result. Shards that wait call `idle` now and then (and `decide` may too, if it waits).
+    pub(crate) fn arrive(
+        &self,
+        next: u64,
+        lookahead: u64,
+        idle: &mut dyn FnMut(),
+        decide: impl FnOnce(u64, u64, &mut dyn FnMut()) -> Decision,
+    ) -> Decision {
         if self.n == 1 {
-            return self.finish(decide(next, lookahead));
+            return self.finish(decide(next, lookahead, idle));
         }
         let generation = self.generation.load(Ordering::Acquire);
         let slot = &self.slots[(generation & 1) as usize];
@@ -86,6 +93,7 @@ impl WindowBarrier {
             let decision = self.finish(decide(
                 slot.next.load(Ordering::Acquire),
                 slot.lookahead.load(Ordering::Acquire),
+                idle,
             ));
             slot.start.store(decision.start, Ordering::Relaxed);
             slot.end.store(decision.end, Ordering::Relaxed);
@@ -105,7 +113,9 @@ impl WindowBarrier {
                 if self.is_poisoned() {
                     return Decision::STOP;
                 }
-                backoff(&mut spins);
+                if backoff(&mut spins) {
+                    idle();
+                }
             }
             Decision {
                 start: slot.start.load(Ordering::Relaxed),
@@ -132,12 +142,15 @@ impl WindowBarrier {
 }
 
 /// Spin briefly, then yield the CPU (so oversubscribed runs, with more shards than cores, still make progress).
-fn backoff(spins: &mut u32) {
+/// Returns `true` once spinning has given way to yielding.
+fn backoff(spins: &mut u32) -> bool {
     if *spins < 128 {
         std::hint::spin_loop();
         *spins += 1;
+        false
     } else {
         std::thread::yield_now();
+        true
     }
 }
 
@@ -145,7 +158,7 @@ fn backoff(spins: &mut u32) {
 mod tests {
     use super::*;
 
-    fn decide(next: u64, lookahead: u64) -> Decision {
+    fn decide(next: u64, lookahead: u64, _: &mut dyn FnMut()) -> Decision {
         Decision {
             start: next,
             end: next + lookahead,
@@ -167,8 +180,8 @@ mod tests {
                         // The minima move between shards from round to round.
                         let next = 1_000 * round + (shard + round) % n as u64;
                         let lookahead = 50 + (shard + 2 * round) % n as u64;
-                        let d = barrier.arrive(next, lookahead, decide);
-                        assert_eq!(d, decide(1_000 * round, 50));
+                        let d = barrier.arrive(next, lookahead, &mut || {}, decide);
+                        assert_eq!(d, decide(1_000 * round, 50, &mut || {}));
                     }
                 });
             }
@@ -179,7 +192,7 @@ mod tests {
     fn poisoning_releases_waiters() {
         let barrier = WindowBarrier::new(2);
         std::thread::scope(|s| {
-            let waiter = s.spawn(|| barrier.arrive(5, 5, decide));
+            let waiter = s.spawn(|| barrier.arrive(5, 5, &mut || {}, decide));
             std::thread::sleep(std::time::Duration::from_millis(10));
             barrier.poison();
             assert_eq!(waiter.join().unwrap(), Decision::STOP);

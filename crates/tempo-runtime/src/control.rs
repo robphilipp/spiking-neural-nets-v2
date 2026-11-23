@@ -104,7 +104,41 @@ impl<M, E> ControlShared<M, E> {
     }
 
     fn shard_of_route(&self, route: RouteId) -> Option<u16> {
-        lock(&self.directory).route_shards.get(route.0 as usize).copied()
+        lock(&self.directory).route_shard(route)
+    }
+
+    /// `true` if the actor lives on another node of the cluster.
+    fn is_remote(&self, id: ActorId) -> bool {
+        let dir = lock(&self.directory);
+        dir.home(id).is_some_and(|(node, _)| node != dir.node)
+    }
+
+    /// Sends injected messages for actors on other nodes from shard 0: they leave with its next window's messages.
+    fn inject_remote(self: &Arc<Self>, messages: Vec<(ActorId, SimTime, M)>) -> Reply<SimTime>
+    where
+        M: Send + 'static,
+        E: 'static,
+    {
+        let (tx, rx) = reply();
+        let control = Arc::clone(self);
+        self.submit(
+            0,
+            Box::new(move |shard, world, window_start| {
+                let mut last = window_start;
+                for (to, at, msg) in messages {
+                    let key = OrderKey {
+                        at: at.max(window_start),
+                        src: ActorId::WORLD,
+                        seq: control.world_seq.fetch_add(1, Ordering::AcqRel),
+                        sub: 0,
+                    };
+                    last = key.at;
+                    shard.core.send(world, key, Item::Message { dst: to, msg });
+                }
+                tx.send(last);
+            }),
+        );
+        rx
     }
 }
 
@@ -185,6 +219,9 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Control<M, E> {
     /// Delivers `msg` to `to` at `at` (or at the start of the window being processed, if `at` is already past).
     /// Replies with the delivery time used.
     pub fn inject(&self, to: ActorId, at: SimTime, msg: M) -> Reply<SimTime> {
+        if self.shared.is_remote(to) {
+            return self.shared.inject_remote(vec![(to, at, msg)]);
+        }
         let (tx, rx) = reply();
         let Some(shard) = self.shared.shard_of(to) else {
             drop(tx);
@@ -221,10 +258,16 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Control<M, E> {
     pub fn inject_batch(&self, messages: Vec<(ActorId, SimTime, M)>) -> Reply<usize> {
         let (tx, rx) = reply();
         let mut per_shard: std::collections::BTreeMap<u16, Vec<(ActorId, SimTime, M)>> = Default::default();
+        let mut remote = Vec::new();
         for (to, at, msg) in messages {
             if let Some(shard) = self.shared.shard_of(to) {
                 per_shard.entry(shard).or_default().push((to, at, msg));
+            } else if self.shared.is_remote(to) {
+                remote.push((to, at, msg));
             }
+        }
+        if !remote.is_empty() {
+            drop(self.shared.inject_remote(remote));
         }
         let late = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let remaining = Arc::new(std::sync::atomic::AtomicUsize::new(per_shard.len()));

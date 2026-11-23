@@ -13,7 +13,7 @@ use tempo_runtime::placement::spatial_partitions;
 use tempo_runtime::{Actor, ActorId, Ctx, EdgeIdx, Jitter, RouteEdge, RouteId, Runtime, SimDuration, SimTime};
 
 /// Messages in the LIF network.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum LifMsg {
     /// A spike from a pre-synaptic neuron (delivered through a route).
     Spike,
@@ -24,7 +24,7 @@ pub enum LifMsg {
 }
 
 /// Events emitted by the LIF network.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LifEvent {
     /// A neuron fired.
     Spike,
@@ -271,9 +271,11 @@ pub fn build(rt: &mut Runtime<LifMsg, LifEvent>, config: &LifConfig) -> LifNetwo
 
     for (i, (synapses, edges)) in incoming.into_iter().zip(outgoing).enumerate() {
         let route = rt.add_route(neurons[i], edges, config.jitter);
-        let neuron = rt.actor_mut::<LifNeuron>(neurons[i]).expect("just spawned");
-        neuron.synapses = synapses;
-        neuron.out = Some(route);
+        // On a node of a cluster, neurons living on other nodes aren't stored here.
+        if let Some(neuron) = rt.actor_mut::<LifNeuron>(neurons[i]) {
+            neuron.synapses = synapses;
+            neuron.out = Some(route);
+        }
     }
 
     let sources = (0..config.sources)
