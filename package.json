@@ -1,0 +1,8 @@
+{
+  "name": "spikes",
+  "private": true,
+  "workspaces": ["packages/*", "apps/spikes-ui"],
+  "scripts": {
+    "test": "npm test --workspaces --if-present"
+  }
+}

@@ -68,7 +68,13 @@ class SensorClient:
         params = {"v": PROTOCOL_VERSION}
         if token:
             params["token"] = token
-        self._connection = connect(f"{base}/api/ws?{urlencode(params)}", max_size=None)
+        try:
+            self._connection = connect(f"{base}/api/ws?{urlencode(params)}", max_size=None)
+        except ConnectionRefusedError as e:
+            raise ConnectionRefusedError(
+                f"no spikes-server at {base} (start one with `cargo run --release -p spikes-server`, "
+                f"or pass --server)"
+            ) from e
         self._socket = self._connection.__enter__()
         self._timeout = timeout
         self._next_id = 1

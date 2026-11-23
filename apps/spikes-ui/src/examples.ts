@@ -1,0 +1,6 @@
+// The v1 test networks, bundled as examples.
+const files = import.meta.glob("../../../test-data/v1/*.boo", { query: "?raw", import: "default", eager: true }) as Record<string, string>;
+
+export const examples: Array<{ name: string; text: string }> = Object.entries(files)
+  .map(([path, text]) => ({ name: path.split("/").pop()!.replace(/\.boo$/, ""), text }))
+  .sort((a, b) => a.name.localeCompare(b.name));

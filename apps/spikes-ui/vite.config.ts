@@ -1,0 +1,19 @@
+import { fileURLToPath } from "node:url";
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+const root = fileURLToPath(new URL("../..", import.meta.url));
+
+export default defineConfig({
+  plugins: [react()],
+  // Tauri serves the built files from disk; relative paths work there and under spikes-server alike.
+  base: "./",
+  clearScreen: false,
+  server: {
+    port: 5173,
+    strictPort: true,
+    // Example networks are bundled from test-data/ at the repository root.
+    fs: { allow: [root] },
+  },
+  build: { outDir: "dist", chunkSizeWarningLimit: 6000 },
+});
