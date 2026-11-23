@@ -201,7 +201,8 @@ pub struct NeuronSnapshot {
 
 struct Built {
     rt: Runtime,
-    net: Network,
+    /// The built network (`None` for a replay, whose actors are ghosts of a recorded run).
+    net: Option<Network>,
 }
 
 enum Stage {
@@ -221,6 +222,8 @@ struct Inner {
     speed: Speed,
     phase: Stage,
     network: Arc<NetworkInfo>,
+    /// For a replay: the recording.
+    replay: Option<Arc<crate::replay::ReplayData>>,
     /// The built network's wiring (routes, delays, synapse parameter sets), for connections made later.
     wiring: Option<Arc<Network>>,
     release_site: Option<ModulatorRef>,
@@ -278,6 +281,7 @@ impl Session {
                     phase: Stage::Loaded,
                     network: Arc::default(),
                     wiring: None,
+                    replay: None,
                     release_site: None,
                 }),
                 changed: Condvar::new(),
@@ -377,6 +381,9 @@ impl Session {
         }
         let mut inner = self.inner();
         expect_not_running(&inner)?;
+        if let Some(data) = inner.replay.clone() {
+            return Ok(self.build_replay(&mut inner, &data, settings, SimTime::ZERO));
+        }
         let mut rt = Runtime::new(RuntimeConfig {
             seed: settings.seed,
             shards: settings.shards,
@@ -402,7 +409,7 @@ impl Session {
         }
         inner.network = Arc::clone(&network);
         inner.settings = settings;
-        inner.phase = Stage::Ready(Box::new(Built { rt, net }));
+        inner.phase = Stage::Ready(Box::new(Built { rt, net: Some(net) }));
         drop(inner);
         self.notify(SessionNotice::StateChanged(State::Ready));
         Ok(network)
@@ -421,13 +428,17 @@ impl Session {
             }
         };
         let Built { rt, net } = *built;
-        let recorder = match &run.record {
-            Some(dir) => {
+        let recorder = match (&run.record, &net) {
+            (Some(_), None) => {
+                inner.phase = Stage::Ready(Box::new(Built { rt, net }));
+                return Err(SessionError::Invalid("a replay can't be recorded again".into()));
+            }
+            (Some(dir), Some(network)) => {
                 let info = RunInfo {
                     seed: inner.settings.seed,
                     description: &inner.text,
                 };
-                let started = Recorder::start(dir, &rt, &net, &inner.description, info, RecordOptions::default())
+                let started = Recorder::start(dir, &rt, network, &inner.description, info, RecordOptions::default())
                     .and_then(|recorder| Ok((recorder, SensorLog::create(dir, RecordOptions::default().batch_rows)?)));
                 match started {
                     Ok((recorder, sensor_log)) => {
@@ -440,7 +451,7 @@ impl Session {
                     }
                 }
             }
-            None => None,
+            (None, _) => None,
         };
         let clock = rt.clock();
         // Taken before the run thread exists, so a stop() right after start() returns can't be missed.
@@ -466,7 +477,7 @@ impl Session {
     fn run_thread(
         self,
         mut rt: Runtime,
-        net: Network,
+        net: Option<Network>,
         recorder: Option<Recorder>,
         end: SimTime,
         stop_token: tempo_runtime::StopToken,
@@ -644,6 +655,7 @@ impl Session {
     /// Adds a synthetic input that runs inside the simulation. Only while ready (actors can't be added during a
     /// run); a rebuild removes it.
     pub fn add_input(&self, input: InputSpec) -> Result<(), SessionError> {
+        self.not_replay("take input")?;
         let network = self.network();
         let targets = input
             .targets()
@@ -700,6 +712,75 @@ impl Session {
         Ok(())
     }
 
+    pub(crate) fn replay_of(id: SessionId, data: crate::replay::ReplayData) -> Self {
+        let description = spikes_dna::parse(&data.description).unwrap_or_default();
+        let session = Self::described(
+            id,
+            format!("replay: {}", data.name),
+            data.description.clone(),
+            description,
+        );
+        session.inner().replay = Some(Arc::new(data));
+        session
+    }
+
+    /// Whether this session replays a recording.
+    pub fn is_replay(&self) -> bool {
+        self.inner().replay.is_some()
+    }
+
+    /// For a replay: the recording's last event time.
+    pub fn replay_end(&self) -> Option<SimTime> {
+        self.inner().replay.as_ref().map(|r| r.end)
+    }
+
+    fn build_replay(
+        &self,
+        inner: &mut MutexGuard<'_, Inner>,
+        data: &Arc<crate::replay::ReplayData>,
+        settings: BuildSettings,
+        from: SimTime,
+    ) -> Arc<NetworkInfo> {
+        let (mut rt, info) = data.runtime(settings.seed, from);
+        let network = Arc::new(info);
+        self.shared.hub.connect(&rt, Arc::clone(&network));
+        self.shared.hub.advance(rt.now());
+        for i in self.shared.hub.membrane_neurons() {
+            if let Some(id) = network.id(i) {
+                rt.observe(id, true);
+            }
+        }
+        inner.network = Arc::clone(&network);
+        inner.settings = settings;
+        inner.wiring = None;
+        inner.release_site = None;
+        inner.phase = Stage::Ready(Box::new(Built { rt, net: None }));
+        self.notify(SessionNotice::StateChanged(State::Ready));
+        network
+    }
+
+    /// For a replay: jumps to simulated time `to` (not while running).
+    pub fn seek(&self, to: SimTime) -> Result<(), SessionError> {
+        let mut inner = self.inner();
+        expect_not_running(&inner)?;
+        let Some(data) = inner.replay.clone() else {
+            return Err(SessionError::Invalid("only a replay can seek".into()));
+        };
+        let settings = inner.settings;
+        self.build_replay(&mut inner, &data, settings, to);
+        Ok(())
+    }
+
+    fn not_replay(&self, action: &str) -> Result<(), SessionError> {
+        if self.is_replay() {
+            Err(SessionError::Invalid(format!(
+                "a replay plays back what was recorded: it can't {action}"
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Adds a connection from neuron `pre` to neuron `post` (indices), now. Its delay is the sending neuron's
     /// synaptic delay plus conduction time; its sign defaults to the sending neuron's; `learning` names one of the
     /// description's learning rules (`None`: no learning). Works while running.
@@ -711,6 +792,7 @@ impl Session {
         inhibitory: Option<bool>,
         learning: Option<&str>,
     ) -> Result<(), SessionError> {
+        self.not_replay("change its connections")?;
         let (network, wiring) = self.wiring()?;
         let (pre_id, post_id) = (self.neuron_id(&network, pre)?, self.neuron_id(&network, post)?);
         let new = wiring
@@ -877,6 +959,7 @@ impl Session {
 
     /// Connects an external sensor. The network must be built.
     pub fn connect_sensor(&self, spec: SensorSpec) -> Result<Sensor, SessionError> {
+        self.not_replay("take sensor input")?;
         let network = self.network();
         if network.neurons.is_empty() {
             return Err(SessionError::State {
@@ -996,12 +1079,14 @@ impl Session {
 
     /// Sends `mv` of external input to each of `neurons`, now.
     pub fn stimulate(&self, neurons: &[u32], mv: f32) -> Result<(), SessionError> {
+        self.not_replay("take input")?;
         let msg = SimMsg::Neuron(NeuronMsg::External { mv });
         self.send_now(neurons, msg)
     }
 
     /// Releases `amount` of a modulator (by index) at the network's release site.
     pub fn release_modulator(&self, modulator: u16, amount: f32) -> Result<(), SessionError> {
+        self.not_replay("release modulators")?;
         let site = self.inner().release_site;
         let Some(site) = site else {
             return Err(SessionError::Invalid("the network defines no modulators (MOD)".into()));
@@ -1078,6 +1163,7 @@ impl Session {
 
     /// A neuron's current state.
     pub fn query_neuron(&self, neuron: u32) -> Result<NeuronSnapshot, SessionError> {
+        self.not_replay("be queried (its neurons were recorded, not simulated)")?;
         let network = self.network();
         let id = network
             .id(neuron)

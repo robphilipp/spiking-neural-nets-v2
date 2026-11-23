@@ -290,6 +290,23 @@ pub enum Request {
     },
     /// Recorded runs.
     ListRecordings,
+    /// Opens a recorded run (by its id from `listRecordings`) as a replay session; build and start it like a run.
+    OpenRecording {
+        /// The recording.
+        id: String,
+    },
+    /// Converts a recorded run's tables to Parquet (sorted by time), beside its Arrow files.
+    ExportParquet {
+        /// The recording.
+        id: String,
+    },
+    /// A replay: jumps to this simulated time (not while running).
+    Seek {
+        /// The session.
+        session: u32,
+        /// Where to.
+        ms: f64,
+    },
 }
 
 /// How to build a network.
@@ -520,6 +537,8 @@ pub struct SessionSummary {
     pub speed: Option<f64>,
     /// Neurons (0 until built).
     pub neurons: u32,
+    /// A replay of a recording: the recording's last event time; `null` for a live session.
+    pub replay_end_ms: Option<f64>,
 }
 
 /// A built network.

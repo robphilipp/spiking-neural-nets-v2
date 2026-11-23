@@ -22,7 +22,9 @@ export function SessionPicker() {
       client.getDescription(id),
       summary.state === "loaded" ? Promise.resolve(null) : client.getNetwork(id),
     ]);
-    dispatch(opened({ id, name: summary.name, description, state: summary.state, simMs: summary.simMs, network }));
+    dispatch(
+      opened({ id, name: summary.name, description, state: summary.state, simMs: summary.simMs, network, replayEndMs: summary.replayEndMs }),
+    );
   };
 
   return (

@@ -219,4 +219,20 @@ session: number,
 /**
  * The sensor.
  */
-sensor: number, } | { "type": "listRecordings" };
+sensor: number, } | { "type": "listRecordings" } | { "type": "openRecording", 
+/**
+ * The recording.
+ */
+id: string, } | { "type": "exportParquet", 
+/**
+ * The recording.
+ */
+id: string, } | { "type": "seek", 
+/**
+ * The session.
+ */
+session: number, 
+/**
+ * Where to.
+ */
+ms: number, };

@@ -11,6 +11,7 @@
 
 mod connection;
 mod network;
+mod replay;
 mod sensors;
 mod session;
 mod viewer;
@@ -113,6 +114,15 @@ impl Engine {
         let session = Session::described(id, name.into(), text.into(), description);
         self.lock().insert(id, session.clone());
         session
+    }
+
+    /// Opens a recorded run (a `spikes-record` directory) as a replay session: build it, then start it like a run.
+    pub fn open_recording(&self, dir: &std::path::Path) -> Result<Session, SessionError> {
+        let data = replay::ReplayData::load(dir)?;
+        let id = SessionId(self.next.fetch_add(1, Ordering::Relaxed));
+        let session = Session::replay_of(id, data);
+        self.lock().insert(id, session.clone());
+        Ok(session)
     }
 
     /// The session with this id.

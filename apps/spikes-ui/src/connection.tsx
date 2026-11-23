@@ -13,7 +13,7 @@ interface Connection {
 const ConnectionContext = createContext<Connection>({ client: null, status: "disconnected", error: null });
 
 /** The server this page came from, or the dev server's backend. */
-function defaultServer(): string {
+export function defaultServer(): string {
   const { protocol, host, port } = window.location;
   if (port === "5173") return "http://127.0.0.1:7070"; // vite dev server: the engine runs separately
   return `${protocol}//${host}`;

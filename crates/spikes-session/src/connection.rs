@@ -431,7 +431,36 @@ impl Connection {
             Request::ListRecordings => Ok(Response::Recordings {
                 recordings: list_recordings(&self.recordings),
             }),
+            Request::OpenRecording { id } => {
+                let dir = self.recording(&id)?;
+                let session = self.engine.open_recording(&dir).map_err(api_error)?;
+                self.watch(&session);
+                Ok(Response::Session {
+                    session: summary(&session),
+                })
+            }
+            Request::ExportParquet { id } => {
+                let dir = self.recording(&id)?;
+                spikes_record::to_parquet(&dir).map_err(|e| error(ErrorCode::Io, e.to_string()))?;
+                Ok(Response::Done)
+            }
+            Request::Seek { session, ms } => self
+                .session(session)?
+                .seek(SimTime::from_start(duration(ms)?))
+                .map(done)
+                .map_err(api_error),
         }
+    }
+
+    /// A recording's directory, from its id (one plain path segment under the recordings folder).
+    fn recording(&self, id: &str) -> Result<PathBuf, ApiError> {
+        let mut parts = Path::new(id).components();
+        let plain = matches!(parts.next(), Some(std::path::Component::Normal(_))) && parts.next().is_none();
+        let dir = self.recordings.join(id);
+        if !plain || !dir.is_dir() {
+            return Err(error(ErrorCode::NotFound, format!("recording '{id}'")));
+        }
+        Ok(dir)
     }
 
     fn recording_dir(&self, session: &Session) -> PathBuf {
@@ -540,6 +569,7 @@ fn summary(s: &Session) -> api::SessionSummary {
             Speed::Factor(f) => Some(f),
         },
         neurons: s.network().neurons.len() as u32,
+        replay_end_ms: s.replay_end().map(ms_of),
     }
 }
 

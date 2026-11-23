@@ -54,6 +54,8 @@ export function Inspector(props: {
   /** The neurons being inspected (shared with the 3D view). */
   picked: Neuron[];
   onPicked: (neurons: Neuron[]) => void;
+  /** A replay: recorded traces only (no neuron state, no connecting). */
+  replay?: boolean;
 }) {
   const { client, session, network, width, labelWidth, colors, windowMs, picked } = props;
   const setPicked = (value: Neuron[] | ((p: Neuron[]) => Neuron[])) =>
@@ -102,9 +104,9 @@ export function Inspector(props: {
     };
   }, [client, session, picked, incoming]);
 
-  // The first picked neuron's state, twice a second.
+  // The first picked neuron's state, twice a second (a replay has none: its neurons were recorded).
   useEffect(() => {
-    if (!first) return setState(null);
+    if (!first || props.replay) return setState(null);
     let stop = false;
     const poll = () =>
       client
@@ -117,7 +119,7 @@ export function Inspector(props: {
       stop = true;
       clearInterval(timer);
     };
-  }, [client, session, first]);
+  }, [client, session, first, props.replay]);
 
   const act = (f: () => Promise<unknown>) => async () => {
     setError(null);
@@ -160,6 +162,7 @@ export function Inspector(props: {
       )}
       {first && (
         <Stack spacing={1.5}>
+          {!props.replay && (
           <Stack direction="row" spacing={3} sx={{ flexWrap: "wrap" }} useFlexGap data-testid="neuron-state">
             {[
               ["Neuron", first.name],
@@ -182,6 +185,7 @@ export function Inspector(props: {
               </Box>
             ))}
           </Stack>
+          )}
 
           <Box>
             <Typography variant="subtitle2" gutterBottom>
@@ -211,6 +215,8 @@ export function Inspector(props: {
             )}
           </Box>
 
+          {!props.replay && (
+          <>
           <Table size="small" data-testid="synapses">
             <TableHead>
               <TableRow>
@@ -269,6 +275,8 @@ export function Inspector(props: {
               Connect
             </Button>
           </Stack>
+          </>
+          )}
         </Stack>
       )}
     </Paper>

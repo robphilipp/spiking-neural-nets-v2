@@ -20,6 +20,17 @@ pub enum SimMsg {
     Input(InputMsg),
     /// For a modulator release site.
     Modulator(ModulatorMsg),
+    /// For the actors that replay a recorded run.
+    Replay(ReplayMsg),
+}
+
+/// Messages of a replayed run (see `spikes-session`'s replay).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ReplayMsg {
+    /// Emit recorded event number `.0` (an index into the replay's event table, so messages stay small).
+    Emit(u32),
+    /// The replayer: schedule the next stretch of events.
+    Tick,
 }
 
 /// Messages a modulator release site accepts.

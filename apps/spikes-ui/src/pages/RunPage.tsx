@@ -106,6 +106,10 @@ export function RunPage() {
   const [error, setError] = useState<string | null>(null);
   /** Building (and applying background input): nothing else may start meanwhile. */
   const [building, setBuilding] = useState(false);
+  /** Record the next run (to the engine's recordings folder; see the Recordings page). */
+  const [record, setRecord] = useState(false);
+  const replay = session.replayEndMs !== null;
+  const [seekMs, setSeekMs] = useState(0);
   /** The background input the current network was built with (it's applied at Build). */
   const [builtBackground, setBuiltBackground] = useState<string | null>(() => JSON.stringify(background));
   const needsRebuild = network !== null && JSON.stringify(background) !== builtBackground;
@@ -191,7 +195,7 @@ export function RunPage() {
               try {
               await client!.build(id, { shards, seed });
               const net = await client!.getNetwork(id);
-              if (background) {
+              if (background && !replay) {
                 const targets = net.neurons.filter((n) => n.name.startsWith(background.prefix)).map((n) => n.index);
                 if (!targets.length) throw new Error(`background input: no neuron names start with '${background.prefix}'`);
                 await client!.addInput(id, { type: "poisson", targets, rateHz: background.rateHz * targets.length, mv: background.mv, durationMs: null });
@@ -203,7 +207,7 @@ export function RunPage() {
               }
             })}
           >
-            {building ? "Building…" : needsRebuild && network ? "Rebuild to apply" : "Build"}
+            {building ? "Building…" : replay ? "Load" : needsRebuild && network ? "Rebuild to apply" : "Build"}
           </Button>
           <Box sx={{ flex: 1 }} />
           {network && (
@@ -227,7 +231,9 @@ export function RunPage() {
               startIcon={<PlayArrowIcon />}
               disabled={!network || running || building}
               data-testid="start"
-              onClick={act(() => client!.start(id, { speed, durationMs: run.durationS === null ? null : run.durationS * 1000 }))}
+              onClick={act(() =>
+                client!.start(id, { speed, durationMs: run.durationS === null ? null : run.durationS * 1000, record: record && !replay }),
+              )}
             >
               Start
             </Button>
@@ -278,7 +284,36 @@ export function RunPage() {
             }
             label="As fast as possible"
           />
+          {!replay && (
+            <FormControlLabel
+              control={<Switch checked={record} disabled={running} onChange={(e) => setRecord(e.target.checked)} data-testid="record" />}
+              label="Record"
+              title="Record the run (spikes, weights, membrane of inspected neurons); see the Recordings page"
+            />
+          )}
         </Stack>
+        {replay && (
+          <Stack direction="row" spacing={2} sx={{ alignItems: "center", mt: 1.5 }} data-testid="seek">
+            <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
+              Replay · seek
+            </Typography>
+            <Slider
+              size="small"
+              min={0}
+              max={Math.max(session.replayEndMs ?? 0, 1)}
+              value={running ? session.simMs : seekMs}
+              disabled={running || !network}
+              valueLabelDisplay="auto"
+              valueLabelFormat={(v) => `${(v / 1000).toFixed(2)} s`}
+              onChange={(_, v) => setSeekMs(v as number)}
+              onChangeCommitted={(_, v) => void act(() => client!.seek(id, v as number))()}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
+              {running ? "stop to seek" : `of ${((session.replayEndMs ?? 0) / 1000).toFixed(2)} s`}
+            </Typography>
+          </Stack>
+        )}
+        {!replay && (
         <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mt: 1.5 }}>
           <TextField label="Stimulate neurons starting with" value={stimulus.prefix} sx={{ width: 240 }} onChange={(e) => setStimulus({ ...stimulus, prefix: e.target.value })} />
           <TextField label="mV" type="number" value={stimulus.mv} sx={{ width: 80 }} onChange={(e) => setStimulus({ ...stimulus, mv: Number(e.target.value) })} />
@@ -340,7 +375,8 @@ export function RunPage() {
             }}
           />
         </Stack>
-        {needsRebuild && (
+        )}
+        {needsRebuild && !replay && (
           <Typography variant="caption" color="warning.main" sx={{ display: "block", mt: 1 }} data-testid="rebuild-hint">
             Background input is applied when the network is built: {running ? "stop and rebuild" : "press Rebuild"} to
             apply the change.
@@ -348,7 +384,7 @@ export function RunPage() {
         )}
       </Paper>
 
-      {network && client && (
+      {network && client && !replay && (
         <Modulators client={client} session={id} modulators={network.modulators} onError={setError} />
       )}
 
@@ -479,6 +515,7 @@ export function RunPage() {
           windowMs={windowMs}
           picked={picked}
           onPicked={setPicked}
+          replay={replay}
         />
       )}
     </Stack>

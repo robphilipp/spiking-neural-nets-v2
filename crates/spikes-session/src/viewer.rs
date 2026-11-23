@@ -182,7 +182,9 @@ impl Hub {
             let settings = slot.settings.clone();
             slot.configure(settings, n);
             slot.pending = Pending::default();
-            slot.last_t1 = 0;
+            // No frame has this end: the next frame goes out even if nothing happens, so viewers learn the new
+            // time (a rebuilt network starts at 0; a replay can start anywhere).
+            slot.last_t1 = u64::MAX;
         }
         self.known_ns.store(0, Ordering::Relaxed);
         *source = Some(Source {

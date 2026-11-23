@@ -28,4 +28,8 @@ speed: number | null,
 /**
  * Neurons (0 until built).
  */
-neurons: number, };
+neurons: number, 
+/**
+ * A replay of a recording: the recording's last event time; `null` for a live session.
+ */
+replayEndMs: number | null, };

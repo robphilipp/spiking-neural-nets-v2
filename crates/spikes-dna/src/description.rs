@@ -7,7 +7,7 @@ use spikes_model::{LearningRule, NeuronParams, Receptor, Release, Sign, Stickine
 use crate::Span;
 
 /// A whole network.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct NetworkDescription {
     /// Execution groups (`GRP`).
     pub groups: Vec<GroupDescription>,

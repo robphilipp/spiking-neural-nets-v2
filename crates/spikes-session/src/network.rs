@@ -107,6 +107,20 @@ impl NetworkInfo {
         self.ids.get(index as usize).copied()
     }
 
+    /// A network for a replayed recording: neurons and synapses as recorded, played by the actors `ids`.
+    pub(crate) fn replayed(neurons: Vec<NeuronInfo>, synapses: Vec<SynapseInfo>, ids: Vec<ActorId>) -> Self {
+        Self {
+            cells: cells(&neurons),
+            names: neurons.iter().map(|n| (n.name.clone(), n.index)).collect(),
+            indices: ids.iter().enumerate().map(|(i, &id)| (id, i as u32)).collect(),
+            ids,
+            neurons,
+            synapses,
+            modulators: Vec::new(),
+            learning_rules: Vec::new(),
+        }
+    }
+
     /// The index of the neuron behind actor `id`.
     pub fn index(&self, id: ActorId) -> Option<u32> {
         self.indices.get(&id).copied()

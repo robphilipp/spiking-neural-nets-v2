@@ -165,7 +165,7 @@ impl Actor<SimMsg, Event> for NeuronActor {
             SimMsg::Neuron(NeuronMsg::Spike { mv }) => {
                 self.update(ctx, Update::Input(Input::External { mv: f64::from(mv) }));
             }
-            SimMsg::Input(_) | SimMsg::Modulator(_) => {}
+            SimMsg::Input(_) | SimMsg::Modulator(_) | SimMsg::Replay(_) => {}
         }
     }
 

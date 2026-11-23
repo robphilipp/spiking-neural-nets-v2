@@ -223,6 +223,21 @@ export abstract class ProtocolClient {
     return (await this.expect({ type: "listRecordings" }, "recordings")).recordings;
   }
 
+  /** Opens a recorded run as a replay session (build and start it like a run). */
+  async openRecording(id: string): Promise<SessionSummary> {
+    return (await this.expect({ type: "openRecording", id }, "session")).session;
+  }
+
+  /** Converts a recorded run to Parquet, beside its Arrow files. */
+  async exportParquet(id: string): Promise<void> {
+    await this.request({ type: "exportParquet", id });
+  }
+
+  /** A replay: jumps to simulated time `ms` (not while running). */
+  async seek(session: number, ms: number): Promise<void> {
+    await this.request({ type: "seek", session, ms });
+  }
+
   /** Starts a live view; `onFrame` gets each frame until the view is detached. */
   async attach(session: number, view: View, onFrame: (frame: Frame) => void): Promise<Viewer> {
     const { viewer: id } = await this.expect({ type: "attach", session, view }, "viewer");

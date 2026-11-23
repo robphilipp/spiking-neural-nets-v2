@@ -108,6 +108,8 @@ export interface CurrentSession {
   state: SessionState | null;
   simMs: number;
   network: Network | null;
+  /** A replay: the recording's last event time; null for a live session. */
+  replayEndMs: number | null;
 }
 
 const initialSession: CurrentSession = {
@@ -119,6 +121,7 @@ const initialSession: CurrentSession = {
   state: null,
   simMs: 0,
   network: null,
+  replayEndMs: null,
 };
 
 const session = createSlice({
@@ -154,9 +157,20 @@ const session = createSlice({
       state.network = action.payload;
     },
     /** Switched to a session that already exists on the engine. */
-    opened(_, action: PayloadAction<{ id: number; name: string; description: string; state: SessionState; simMs: number; network: Network | null }>) {
+    opened(
+      _,
+      action: PayloadAction<{
+        id: number;
+        name: string;
+        description: string;
+        state: SessionState;
+        simMs: number;
+        network: Network | null;
+        replayEndMs?: number | null;
+      }>,
+    ) {
       const s = action.payload;
-      return { ...initialSession, ...s, applied: s.description };
+      return { ...initialSession, ...s, replayEndMs: s.replayEndMs ?? null, applied: s.description };
     },
     forget() {
       return initialSession;
