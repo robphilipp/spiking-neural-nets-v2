@@ -7,6 +7,7 @@ import BoltIcon from "@mui/icons-material/Bolt";
 import {
   Alert,
   Box,
+  MenuItem,
   Button,
   Chip,
   FormControlLabel,
@@ -93,8 +94,11 @@ export function RunPage() {
   useEffect(() => setDurationText(run.durationS === null ? "" : String(run.durationS)), [run.durationS]);
   const [filter, setFilter] = useState("");
   const [stimulus, setStimulus] = useState({ prefix: "", mv: 10 });
-  const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12 });
+  const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12, prefix: "" });
+  const [windowMs, setWindowMs] = useState(1000);
   const [error, setError] = useState<string | null>(null);
+  /** Building (and applying background input): nothing else may start meanwhile. */
+  const [building, setBuilding] = useState(false);
   const [live, setLive] = useState<LiveView | null>(null);
   const [stats, setStats] = useState<LiveStats | null>(null);
   const [rasterRef, width] = useWidth();
@@ -142,10 +146,11 @@ export function RunPage() {
   }
   const running = state === "running" || state === "paused";
   // Row names are readable up to ~40 rows; beyond that they're hidden (filter the rows, or use the tooltip).
-  const showNames = selection.length <= 40;
+  const showNames = selection.length <= 100;
+  const rowHeight = selection.length <= 40 ? 14 : showNames ? 12 : 3;
   // Room for the longest row name (≈ 7 px a character at the axis font), so both charts line up.
   const labelWidth = showNames ? 24 + 7 * Math.max(4, ...selection.map((n) => n.name.length)) : 48;
-  const rasterHeight = Math.min(640, Math.max(200, 60 + selection.length * (showNames ? 14 : 3)));
+  const rasterHeight = Math.max(200, 60 + selection.length * rowHeight);
   const lineStyles = new Map<string, SeriesLineStyle>(
     [...selection.map((n) => n.name), "rate"].map((name) => [
       name,
@@ -162,19 +167,25 @@ export function RunPage() {
           <Button
             variant="outlined"
             startIcon={<BuildIcon />}
-            disabled={!client || running}
+            disabled={!client || running || building}
             data-testid="build"
             onClick={act(async () => {
+              setBuilding(true);
+              try {
               await client!.build(id, { shards, seed });
               const net = await client!.getNetwork(id);
               if (background) {
-                const targets = net.neurons.map((n) => n.index);
+                const targets = net.neurons.filter((n) => n.name.startsWith(background.prefix)).map((n) => n.index);
+                if (!targets.length) throw new Error(`background input: no neuron names start with '${background.prefix}'`);
                 await client!.addInput(id, { type: "poisson", targets, rateHz: background.rateHz * targets.length, mv: background.mv, durationMs: null });
               }
               dispatch(built(net));
+              } finally {
+                setBuilding(false);
+              }
             })}
           >
-            Build
+            {building ? "Building…" : "Build"}
           </Button>
           <Box sx={{ flex: 1 }} />
           {network && (
@@ -196,7 +207,7 @@ export function RunPage() {
             <Button
               variant="contained"
               startIcon={<PlayArrowIcon />}
-              disabled={!network || running}
+              disabled={!network || running || building}
               data-testid="start"
               onClick={act(() => client!.start(id, { speed, durationMs: run.durationS === null ? null : run.durationS * 1000 }))}
             >
@@ -206,7 +217,7 @@ export function RunPage() {
           <Button startIcon={<PauseIcon />} disabled={state !== "running"} onClick={act(() => client!.pause(id))} data-testid="pause">
             Pause
           </Button>
-          <Button startIcon={<SkipNextIcon />} disabled={!network || state === "running"} onClick={act(() => client!.step(id, 10))}>
+          <Button startIcon={<SkipNextIcon />} disabled={!network || state === "running" || building} onClick={act(() => client!.step(id, 10))}>
             Step 10 ms
           </Button>
           <Button startIcon={<StopIcon />} disabled={!running} onClick={act(() => client!.stop(id))} data-testid="stop">
@@ -278,6 +289,17 @@ export function RunPage() {
             title="Poisson input to every neuron, applied when the network is built"
           />
           <TextField
+            label="Neurons starting with"
+            placeholder="all"
+            value={backgroundDraft.prefix}
+            sx={{ width: 170 }}
+            onChange={(e) => {
+              const next = { ...backgroundDraft, prefix: e.target.value };
+              setBackgroundDraft(next);
+              if (background) dispatch(backgroundChanged(next));
+            }}
+          />
+          <TextField
             label="Hz per neuron"
             type="number"
             value={backgroundDraft.rateHz}
@@ -326,7 +348,20 @@ export function RunPage() {
             Spikes {selection.length < (network?.neurons.length ?? 0) ? `(${selection.length} of ${network?.neurons.length})` : ""}
           </Typography>
           <TextField label="Show neurons starting with" value={filter} sx={{ width: 240 }} onChange={(e) => setFilter(e.target.value)} />
+          <TextField select label="Time window" value={windowMs} sx={{ width: 120 }} onChange={(e) => setWindowMs(Number(e.target.value))}>
+            {[1000, 5000, 20_000].map((ms) => (
+              <MenuItem key={ms} value={ms}>
+                {ms / 1000} s
+              </MenuItem>
+            ))}
+          </TextField>
         </Stack>
+        {running && stats !== null && stats.spikesPerS === 0 && (
+          <Alert severity="info" sx={{ mb: 1 }} data-testid="no-spikes">
+            No spikes in the last second. Most networks need input: stimulate their input neurons, or turn on
+            background input (e.g. neurons starting with <code>input-</code>) and build again.
+          </Alert>
+        )}
         <Box ref={rasterRef} data-testid="raster">
           {live && selection.length > 0 && (
             <Chart
@@ -341,12 +376,12 @@ export function RunPage() {
               dataUpdatePeriod={16}
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
-              <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, 5000]} label="t (ms)" />
+              <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
               <OrdinalAxis axisId="y-axis-1" location={AxisLocation.Left} categories={selection.map((n) => n.name)}
                 label={showNames ? "" : `${selection.length} neurons`}
-                font={showNames ? undefined : { color: "transparent" }}
+                font={showNames ? (rowHeight < 14 ? { size: 9 } : undefined) : { color: "transparent" }}
               />
-              <RasterPlot spikeMargin={showNames ? 1 : 0} />
+              <RasterPlot spikeMargin={rowHeight >= 10 ? 1 : 0} />
             </Chart>
           )}
         </Box>
@@ -367,8 +402,8 @@ export function RunPage() {
               dataUpdatePeriod={16}
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
-              <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, 5000]} label="t (ms)" />
-              <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[0, 10]} label="Hz" autoScale autoScaleMin={0} />
+              <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
+              <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-1, 10]} label="Hz" autoScale autoScaleMin={-1} />
               <ScatterPlot />
             </Chart>
           )}

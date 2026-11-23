@@ -7,6 +7,7 @@ import { appDataDir, join } from "@tauri-apps/api/path";
 import { examples } from "./examples";
 import { readProject, writeProject } from "./files";
 import { newProject } from "./project";
+import { LiveView } from "./live";
 import { TauriClient } from "./tauriClient";
 
 export async function selftest(): Promise<void> {
@@ -14,7 +15,7 @@ export async function selftest(): Promise<void> {
   try {
     // Project files through the real fs plugin and its permissions (the app's data folder is in scope).
     const folder = await join(await appDataDir(), "selftest-project");
-    const project = { ...newProject("selftest"), background: { rateHz: 5, mv: 12 } };
+    const project = { ...newProject("selftest"), background: { rateHz: 5, mv: 12, prefix: "" } };
     await writeProject(folder, project, "(NRN=[(nid=a, LOC=(px1=0, px2=0, px3=0))])");
     const back = await readProject(folder);
     const projectOk = JSON.stringify(back.project) === JSON.stringify(project) && back.description.includes("nid=a");
@@ -30,6 +31,8 @@ export async function selftest(): Promise<void> {
     client.onNotice((_, n) => {
       if (n.type === "runEnded") ended = true;
     });
+    // The charts' data path too: a LiveView, as the Run page uses.
+    const live = await LiveView.attach(client, id, network.neurons, network.neurons.length);
     const group1 = network.neurons.filter((n) => n.name.startsWith("hidden-10")).map((n) => n.index);
     await client.stimulate(id, group1, 10);
     await client.start(id, { durationMs: 200 });
@@ -38,8 +41,12 @@ export async function selftest(): Promise<void> {
       await new Promise((r) => setTimeout(r, 20));
     }
     const spikes = frames.reduce((n, f) => n + spikeCount(f), 0);
-    const ok = projectOk && ended && spikes === 25 && network.neurons.length === 25;
-    await report(ok, `project=${projectOk} neurons=${network.neurons.length} frames=${frames.length} spikes=${spikes} runEnded=${ended}`);
+    await new Promise((r) => setTimeout(r, 300));
+    const rasterPoints = live.raster.seriesList().reduce((n, s) => n + s.length(), 0);
+    const ratePoints = live.rate.seriesList().reduce((n, s) => n + s.length(), 0);
+    await live.dispose();
+    const ok = rasterPoints === 25 && ratePoints > 0 && projectOk && ended && spikes === 25 && network.neurons.length === 25;
+    await report(ok, `raster=${rasterPoints} rate=${ratePoints} project=${projectOk} neurons=${network.neurons.length} frames=${frames.length} spikes=${spikes} runEnded=${ended}`);
   } catch (e) {
     await report(false, `error: ${e instanceof Error ? e.message : String(e)}`);
   }

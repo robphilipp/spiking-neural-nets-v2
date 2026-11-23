@@ -187,3 +187,45 @@ fn viewers_survive_a_rebuild() {
     let second = collect(&viewer).iter().map(|f| f.spikes.len()).sum::<usize>();
     assert_eq!((first, second), (25, 25));
 }
+
+#[test]
+fn frames_keep_coming_after_stop_and_rebuild() {
+    // Rebuilding resets simulation time to zero. A frame made from the old run's clock just after the reset
+    // used to make a frame end before it started: an overflow that killed the session's frames for good.
+    let engine = Engine::new();
+    let session = ring(&engine);
+    let viewer = session.attach(ViewSettings {
+        frame: Duration::from_millis(2),
+        ..ViewSettings::default()
+    });
+    for round in 0..15 {
+        session
+            .build(BuildSettings {
+                shards: 2,
+                ..BuildSettings::default()
+            })
+            .unwrap();
+        session
+            .start(RunSettings {
+                speed: Speed::Factor(1.0),
+                duration: None,
+                record: None,
+            })
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(40 + round * 7));
+        session.stop().unwrap();
+        // Frames arrive for this run: at least one ends past 20 ms of this run's time.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut latest = 0;
+        while std::time::Instant::now() < deadline && latest < 20_000_000 {
+            if let Some(bytes) = viewer.recv_timeout(Duration::from_millis(20)) {
+                latest = latest.max(decode(&bytes).unwrap().header.t1_ns);
+            }
+        }
+        assert!(
+            latest >= 20_000_000,
+            "round {round}: frames stopped (latest t1 {latest} ns)"
+        );
+        while viewer.try_recv().is_some() {}
+    }
+}

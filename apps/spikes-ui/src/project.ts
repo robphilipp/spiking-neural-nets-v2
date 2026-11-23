@@ -9,9 +9,10 @@
 //   speed = 1.0          # simulated s per wall s; "max" for as fast as possible
 //   duration_s = 10      # omit to run until stopped
 //
-//   [background]         # optional: Poisson input to every neuron
-//   rate_hz = 5
+//   [background]         # optional: Poisson input
+//   rate_hz = 5          # per neuron
 //   mv = 12
+//   neurons = "input-"   # only neurons whose names start with this (default: all)
 
 import { parse, stringify } from "smol-toml";
 
@@ -27,6 +28,8 @@ export interface RunSettings {
 export interface Background {
   rateHz: number;
   mv: number;
+  /** Only neurons whose names start with this; empty: all. */
+  prefix: string;
 }
 
 export interface Project {
@@ -72,7 +75,11 @@ export function parseProject(text: string): Project {
       durationS: run.duration_s === undefined ? null : number(run.duration_s, "run.duration_s", (n) => n > 0),
     },
     background: background
-      ? { rateHz: number(background.rate_hz, "background.rate_hz", (n) => n > 0), mv: number(background.mv, "background.mv", Number.isFinite) }
+      ? {
+          rateHz: number(background.rate_hz, "background.rate_hz", (n) => n > 0),
+          mv: number(background.mv, "background.mv", Number.isFinite),
+          prefix: typeof background.neurons === "string" ? background.neurons : "",
+        }
       : null,
   };
 }
@@ -82,6 +89,10 @@ export function serializeProject(p: Project): string {
   const run: Record<string, unknown> = { seed: p.run.seed, shards: p.run.shards, speed: p.run.speed ?? "max" };
   if (p.run.durationS !== null) run.duration_s = p.run.durationS;
   const toml: Record<string, unknown> = { name: p.name, network: p.network, run };
-  if (p.background) toml.background = { rate_hz: p.background.rateHz, mv: p.background.mv };
+  if (p.background) {
+    const b: Record<string, unknown> = { rate_hz: p.background.rateHz, mv: p.background.mv };
+    if (p.background.prefix) b.neurons = p.background.prefix;
+    toml.background = b;
+  }
   return stringify(toml) + "\n";
 }

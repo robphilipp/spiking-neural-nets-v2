@@ -76,3 +76,34 @@ test("open a .boo file and download it again (browser projects)", async ({ page 
   const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("download-network").click()]);
   expect(readFileSync(await download.path(), "utf8")).toBe(readFileSync(example("ring.boo"), "utf8"));
 });
+
+test("a quiet network explains itself; background input on its inputs brings it to life", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click();
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "line-sensor-layers-wta", exact: true }).click();
+  await page.getByTestId("apply").click();
+  await expect(page.getByText("Applied.")).toBeVisible();
+  await page.getByTestId("nav-run").click();
+  await page.getByTestId("build").click();
+  await expect(page.getByText("69 neurons")).toBeVisible();
+
+  // Nothing drives the input layer: no spikes, and the page says why.
+  await page.getByTestId("start").click();
+  await expect(page.getByTestId("no-spikes")).toBeVisible({ timeout: 5000 });
+  await page.getByTestId("stop").click();
+
+  // Background input on the input layer, then build and run again.
+  await page.getByLabel("Neurons starting with", { exact: true }).fill("input-");
+  await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
+  await page.getByLabel("mV", { exact: true }).nth(1).fill("6");
+  await page.getByTestId("background").check();
+  await page.getByTestId("build").click();
+  await page.getByTestId("start").click();
+  await expect(page.getByTestId("timing")).toContainText(/Spikes\s*[1-9][\d,]*\/s/, { timeout: 5000 });
+  await expect(page.getByTestId("no-spikes")).toBeHidden();
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: "test-results/line-sensor.png", fullPage: true });
+  await page.getByTestId("stop").click();
+});

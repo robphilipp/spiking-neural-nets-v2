@@ -174,14 +174,18 @@ impl Hub {
     /// Switches to a newly built runtime's events.
     pub(crate) fn connect(&self, rt: &Runtime, network: Arc<NetworkInfo>) {
         let n = network.neurons.len();
-        for slot in lock(&self.slots).iter_mut() {
+        // Swap the source and reset the viewers together, holding both locks in the aggregator's order (source,
+        // then slots), so it never makes a frame from the old run's clock with the new run's bookkeeping.
+        let mut source = lock(&self.source);
+        let mut slots = lock(&self.slots);
+        for slot in slots.iter_mut() {
             let settings = slot.settings.clone();
             slot.configure(settings, n);
             slot.pending = Pending::default();
             slot.last_t1 = 0;
         }
         self.known_ns.store(0, Ordering::Relaxed);
-        *lock(&self.source) = Some(Source {
+        *source = Some(Source {
             stream: rt.subscribe(SUBSCRIPTION_BATCHES),
             clock: rt.clock(),
             network,
@@ -323,13 +327,17 @@ fn aggregate(hub: &Weak<Hub>) {
         for slot in slots.iter_mut().filter(|s| s.deadline <= now) {
             slot.deadline = now + slot.settings.frame;
             let t = Instant::now();
-            if emit(
-                hub.session,
-                slot,
-                source,
-                dropped_events,
-                hub.known_ns.load(Ordering::Relaxed),
-            ) {
+            let known = hub.known_ns.load(Ordering::Relaxed);
+            // A bug in one frame must not end the session's frames for good: drop that frame and go on.
+            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                emit(hub.session, slot, source, dropped_events, known)
+            }))
+            .unwrap_or_else(|_| {
+                eprintln!("spikes: a frame for session {} failed; it was dropped", hub.session);
+                slot.pending = Pending::default();
+                false
+            });
+            if made {
                 let ns = t.elapsed().as_nanos() as u64;
                 hub.stats.frames.fetch_add(1, Ordering::Relaxed);
                 hub.stats.encode_ns.fetch_add(ns, Ordering::Relaxed);
@@ -381,11 +389,13 @@ fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, kno
         return false; // nothing new to show
     }
     let p = std::mem::take(&mut slot.pending);
-    let t0 = p.t_min.unwrap_or(slot.last_t1).min(sim.max(slot.last_t1));
-    let t1 = p.t_max.unwrap_or(0).max(sim);
+    // Simulation time can go back to zero (a rebuilt network): then the previous frame's end doesn't count.
+    let previous = if sim < slot.last_t1 { sim } else { slot.last_t1 };
+    let t0 = p.t_min.unwrap_or(previous).min(previous);
+    let t1 = p.t_max.unwrap_or(0).max(sim).max(t0);
     slot.last_t1 = sim;
     let unit = (t1 - t0).div_ceil(u64::from(u32::MAX)).max(1);
-    let offset = |t: u64| ((t - t0) / unit) as u32;
+    let offset = |t: u64| (t.saturating_sub(t0) / unit) as u32;
 
     // Spikes: exact if they fit the budget, else counts per neuron, else per cell. The budget is for section
     // payloads; the 64-byte header and 16-byte section headers are on top.

@@ -3,7 +3,7 @@ import { newProject, parseProject, ProjectError, serializeProject } from "../src
 
 describe("project.toml", () => {
   it("round-trips", () => {
-    const p = { ...newProject("ring"), run: { seed: 7, shards: 4, speed: null, durationS: 30 }, background: { rateHz: 5, mv: 12 } };
+    const p = { ...newProject("ring"), run: { seed: 7, shards: 4, speed: null, durationS: 30 }, background: { rateHz: 5, mv: 12, prefix: "input-" } };
     expect(parseProject(serializeProject(p))).toEqual(p);
   });
 
