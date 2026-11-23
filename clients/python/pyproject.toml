@@ -1,0 +1,16 @@
+[project]
+name = "spikes-sensor"
+version = "0.1.0"
+description = "Stream sensor data (e.g. a microphone) into a spikes-server session"
+requires-python = ">=3.10"
+dependencies = ["websockets>=13"]
+
+[project.optional-dependencies]
+microphone = ["numpy", "sounddevice"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["spikes_sensor"]

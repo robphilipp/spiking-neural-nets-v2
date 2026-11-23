@@ -8,7 +8,9 @@ use spikes_api::frame::{FrameBuilder, FrameHeader, Lod};
 use spikes_api::input::InputBatch;
 
 fn golden(name: &str) -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/spikes-client/test/golden").join(name)
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/spikes-client/test/golden")
+        .join(name)
 }
 
 #[test]

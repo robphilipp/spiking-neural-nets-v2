@@ -1,0 +1,15 @@
+[package]
+name = "spikes-sensor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json = "1.0.154"
+spikes-api = { version = "0.1.0", path = "../spikes-api" }
+tungstenite = "0.29"
+
+[lints]
+workspace = true

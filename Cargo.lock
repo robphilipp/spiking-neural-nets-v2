@@ -1721,6 +1721,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spikes-sensor"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spikes-api",
+ "tungstenite",
+]
+
+[[package]]
 name = "spikes-server"
 version = "0.1.0"
 dependencies = [
