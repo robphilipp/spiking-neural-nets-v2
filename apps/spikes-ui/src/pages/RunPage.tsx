@@ -19,7 +19,7 @@ import {
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { Lod } from "@spikes/client";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AxisLocation,
   Chart,
@@ -36,15 +36,15 @@ import { LiveView, type LiveStats } from "../live";
 import { built, simTime } from "../store";
 import { chartColors } from "../theme";
 
-/** The width of an element, following resizes. */
-function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
+/** The width of an element, following resizes. A callback ref, so it starts measuring whenever the element appears. */
+function useWidth(): [(element: HTMLElement | null) => void, number] {
   const [width, setWidth] = useState(600);
-  useEffect(() => {
-    if (!ref.current) return;
-    const observer = new ResizeObserver(([entry]) => entry && setWidth(Math.max(200, Math.floor(entry.contentRect.width))));
-    observer.observe(ref.current);
-    return () => observer.disconnect();
+  const observer = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((element: HTMLElement | null) => {
+    observer.current?.disconnect();
+    if (!element) return;
+    observer.current = new ResizeObserver(([entry]) => entry && setWidth(Math.max(200, Math.floor(entry.contentRect.width))));
+    observer.current.observe(element);
   }, []);
   return [ref, width];
 }
@@ -84,10 +84,11 @@ export function RunPage() {
   const [durationS, setDurationS] = useState("");
   const [filter, setFilter] = useState("");
   const [stimulus, setStimulus] = useState({ prefix: "", mv: 10 });
+  const [background, setBackground] = useState({ hz: 5, mv: 12 });
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState<LiveView | null>(null);
   const [stats, setStats] = useState<LiveStats | null>(null);
-  const [rasterRef, width] = useWidth<HTMLDivElement>();
+  const [rasterRef, width] = useWidth();
 
   const selection = useMemo(() => {
     const neurons = network?.neurons ?? [];
@@ -131,8 +132,11 @@ export function RunPage() {
     return <Alert severity="info">Open or write a network on the Network page and apply it first.</Alert>;
   }
   const running = state === "running" || state === "paused";
+  // Row names are readable up to ~40 rows; beyond that they're hidden (filter the rows, or use the tooltip).
+  const showNames = selection.length <= 40;
   // Room for the longest row name (≈ 7 px a character at the axis font), so both charts line up.
-  const labelWidth = 24 + 7 * Math.max(4, ...selection.map((n) => n.name.length));
+  const labelWidth = showNames ? 24 + 7 * Math.max(4, ...selection.map((n) => n.name.length)) : 48;
+  const rasterHeight = Math.min(640, Math.max(200, 60 + selection.length * (showNames ? 14 : 3)));
   const lineStyles = new Map<string, SeriesLineStyle>(
     [...selection.map((n) => n.name), "rate"].map((name) => [
       name,
@@ -240,6 +244,20 @@ export function RunPage() {
           >
             Stimulate
           </Button>
+          <Box sx={{ flex: 1 }} />
+          <TextField label="Background input (Hz per neuron)" type="number" value={background.hz} sx={{ width: 230 }} onChange={(e) => setBackground({ ...background, hz: Number(e.target.value) })} />
+          <TextField label="mV" type="number" value={background.mv} sx={{ width: 80 }} onChange={(e) => setBackground({ ...background, mv: Number(e.target.value) })} />
+          <Button
+            disabled={!network || state !== "ready"}
+            data-testid="background"
+            title="Poisson input to every neuron, from now until the network is rebuilt (only while not running)"
+            onClick={act(async () => {
+              const targets = network!.neurons.map((n) => n.index);
+              await client!.addInput(id, { type: "poisson", targets, rateHz: background.hz * targets.length, mv: background.mv, durationMs: null });
+            })}
+          >
+            Add background input
+          </Button>
         </Stack>
       </Paper>
 
@@ -273,7 +291,7 @@ export function RunPage() {
             <Chart
               chartId={1}
               width={width}
-              height={Math.min(480, 60 + selection.length * 14)}
+              height={rasterHeight}
               dataSource={live.raster}
               color={colors.color}
               backgroundColor={colors.backgroundColor}
@@ -283,8 +301,11 @@ export function RunPage() {
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
               <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, 5000]} label="t (ms)" />
-              <OrdinalAxis axisId="y-axis-1" location={AxisLocation.Left} categories={selection.map((n) => n.name)} label="" />
-              <RasterPlot spikeMargin={1} />
+              <OrdinalAxis axisId="y-axis-1" location={AxisLocation.Left} categories={selection.map((n) => n.name)}
+                label={showNames ? "" : `${selection.length} neurons`}
+                font={showNames ? undefined : { color: "transparent" }}
+              />
+              <RasterPlot spikeMargin={showNames ? 1 : 0} />
             </Chart>
           )}
         </Box>

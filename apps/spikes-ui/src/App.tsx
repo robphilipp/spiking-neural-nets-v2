@@ -4,7 +4,7 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import { AppBar, Box, Chip, Drawer, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography } from "@mui/material";
 import { type ReactNode, useState } from "react";
 import { useConnection } from "./connection";
-import { useAppSelector } from "./hooks";
+import { SessionPicker } from "./components/SessionPicker";
 import { NetworkPage } from "./pages/NetworkPage";
 import { RunPage } from "./pages/RunPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -20,7 +20,6 @@ const DRAWER = 168;
 export function App() {
   const [page, setPage] = useState<Page>("network");
   const { status } = useConnection();
-  const name = useAppSelector((s) => s.session.name);
   return (
     <Box sx={{ display: "flex", height: "100vh" }}>
       <AppBar position="fixed" elevation={0} sx={{ zIndex: (t) => t.zIndex.drawer + 1 }}>
@@ -28,9 +27,8 @@ export function App() {
           <Typography variant="h6" sx={{ mr: 2 }}>
             Spikes
           </Typography>
-          <Typography variant="body2" sx={{ flex: 1, opacity: 0.8 }}>
-            {name}
-          </Typography>
+          <SessionPicker />
+          <Box sx={{ flex: 1 }} />
           <Chip
             size="small"
             label={status}

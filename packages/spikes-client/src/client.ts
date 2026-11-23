@@ -150,6 +150,10 @@ export abstract class ProtocolClient {
     await this.request({ type: "build", session, settings });
   }
 
+  async getDescription(session: number): Promise<string> {
+    return (await this.expect({ type: "getDescription", session }, "description")).text;
+  }
+
   async getNetwork(session: number): Promise<Network> {
     return (await this.expect({ type: "getNetwork", session }, "network")).network;
   }

@@ -86,6 +86,11 @@ const session = createSlice({
       state.network = action.payload;
       state.state = "ready";
     },
+    /** Switched to a session that already exists on the engine. */
+    opened(_, action: PayloadAction<{ id: number; name: string; description: string; state: SessionState; simMs: number; network: Network | null }>) {
+      const s = action.payload;
+      return { ...initialSession, ...s, applied: s.description };
+    },
     forget() {
       return initialSession;
     },
@@ -93,7 +98,7 @@ const session = createSlice({
 });
 
 export const { updateSettings } = settings.actions;
-export const { setDescription, applied, parseFailed, stateChanged, simTime, built, forget } = session.actions;
+export const { setDescription, applied, parseFailed, stateChanged, simTime, built, opened, forget } = session.actions;
 
 export const store = configureStore({
   reducer: { settings: settings.reducer, session: session.reducer },

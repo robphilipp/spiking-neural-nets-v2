@@ -132,6 +132,11 @@ pub enum Request {
         #[serde(default)]
         settings: BuildSettings,
     },
+    /// The session's description text.
+    GetDescription {
+        /// The session.
+        session: u32,
+    },
     /// The built network: neurons, synapses, modulators.
     GetNetwork {
         /// The session.
@@ -427,6 +432,11 @@ pub enum Response {
     Network {
         /// The network.
         network: Network,
+    },
+    /// A description's text.
+    Description {
+        /// The `.boo` text.
+        text: String,
     },
     /// A neuron's state.
     Neuron {

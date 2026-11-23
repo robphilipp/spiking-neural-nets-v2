@@ -19,7 +19,11 @@ session: SessionSummary, } | { "type": "network",
 /**
  * The network.
  */
-network: Network, } | { "type": "neuron", 
+network: Network, } | { "type": "description", 
+/**
+ * The `.boo` text.
+ */
+text: string, } | { "type": "neuron", 
 /**
  * The state.
  */

@@ -223,6 +223,9 @@ impl Connection {
                 .map_err(api_error)?;
                 Ok(Response::Done)
             }
+            Request::GetDescription { session } => Ok(Response::Description {
+                text: self.session(session)?.description_text(),
+            }),
             Request::GetNetwork { session } => {
                 let network = self.session(session)?.network();
                 Ok(Response::Network {

@@ -35,7 +35,11 @@ session: number,
 /**
  * Settings; omitted ones take their defaults.
  */
-settings: BuildSettings, } | { "type": "getNetwork", 
+settings: BuildSettings, } | { "type": "getDescription", 
+/**
+ * The session.
+ */
+session: number, } | { "type": "getNetwork", 
 /**
  * The session.
  */
