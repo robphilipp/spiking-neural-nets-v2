@@ -37,7 +37,7 @@ test("the 3D view draws the network, flashes spikes, and selects a region for th
   await expect(page.getByText("Spikes (")).toHaveCount(0); // all 25 shown, not "(n of 25)"
 
   // Clearing the region goes back to the name filter.
-  await page.getByTestId("region").locator(".MuiChip-deleteIcon").click();
+  await page.getByRole("button", { name: "Clear the region" }).click();
   await expect(page.getByTestId("region")).toHaveCount(0);
   await page.getByTestId("stop").click();
 });

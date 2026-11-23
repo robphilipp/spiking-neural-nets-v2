@@ -1,26 +1,11 @@
-import AddLinkIcon from "@mui/icons-material/AddLink";
-import LinkOffIcon from "@mui/icons-material/LinkOff";
-import {
-  Alert,
-  Autocomplete,
-  Box,
-  Button,
-  Chip,
-  IconButton,
-  MenuItem,
-  Paper,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
-  TextField,
-  Typography,
-} from "@mui/material";
 import type { Network, Neuron, NeuronState, ProtocolClient } from "@spikes/client";
+import { Link2, Unlink } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AxisLocation, Chart, ContinuousAxis, defaultLineStyle, ScatterPlot, type SeriesLineStyle } from "stream-charts";
+import { Choice, Field, Heading, NeuronPicker, Notice, Panel, Row, Stat } from "@/components/kit";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { InspectView, type WeightSeries } from "../live";
 import type { ChartColors } from "../theme";
 
@@ -30,11 +15,13 @@ const MAX_PICKED = 6;
 
 function Legend({ names }: { names: string[] }) {
   return (
-    <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", mb: 0.5 }} useFlexGap>
+    <div className="mb-1 flex flex-wrap gap-1">
       {names.map((n, i) => (
-        <Chip key={n} size="small" variant="outlined" label={n} sx={{ borderColor: PALETTE[i % PALETTE.length], borderWidth: 2 }} />
+        <Badge key={n} variant="outline" className="border-2" style={{ borderColor: PALETTE[i % PALETTE.length] }}>
+          {n}
+        </Badge>
       ))}
-    </Stack>
+    </div>
   );
 }
 
@@ -148,59 +135,46 @@ export function Inspector(props: {
   const weightNames = incoming.map((s) => s.name);
 
   return (
-    <Paper variant="outlined" sx={{ p: 1.5 }} data-testid="inspector">
-      <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 1.5 }}>
-        <Typography variant="subtitle2">Inspect</Typography>
-        <Autocomplete
-          multiple
-          size="small"
-          sx={{ flex: 1 }}
+    <Panel data-testid="inspector">
+      <div className="flex items-end gap-3">
+        <Heading className="pb-2">Inspect</Heading>
+        <NeuronPicker
+          className="flex-1"
+          label={`Neurons (up to ${MAX_PICKED})`}
           options={network.neurons}
           value={picked}
-          getOptionLabel={(n) => n.name}
-          isOptionEqualToValue={(a, b) => a.index === b.index}
-          getOptionDisabled={() => picked.length >= MAX_PICKED}
-          onChange={(_, value) => setPicked(value.slice(0, MAX_PICKED))}
-          renderInput={(params) => <TextField {...params} label={`Neurons (up to ${MAX_PICKED})`} />}
-          data-testid="inspect-picker"
+          max={MAX_PICKED}
+          onChange={(value) => setPicked(value.slice(0, MAX_PICKED))}
+          testId="inspect-picker"
         />
-      </Stack>
+      </div>
       {error && (
-        <Alert severity="error" sx={{ mb: 1 }} onClose={() => setError(null)}>
+        <Notice tone="error" onClose={() => setError(null)}>
           {error}
-        </Alert>
+        </Notice>
       )}
       {first && (
-        <Stack spacing={1.5}>
+        <div className="flex flex-col gap-3">
           {!props.replay && (
-          <Stack direction="row" spacing={3} sx={{ flexWrap: "wrap" }} useFlexGap data-testid="neuron-state">
-            {[
-              ["Neuron", first.name],
-              ["Kind", first.kind.replace("_", " ")],
-              ["Membrane", `${fmt(state?.membraneMv)} mV`],
-              ["Threshold shift", `${fmt(state?.intrinsicMv)} mV`],
-              // The rate estimate is kept only for homeostatic plasticity (HIP); otherwise it stays 0.
-              ["Rate (homeostasis)", state?.rateHz ? `${fmt(state.rateHz, 1)} Hz` : "—"],
-              ["Spikes", String(state?.spikes ?? "—")],
-              ["Last spike", state?.lastSpikeMs == null ? "—" : `${fmt(state.lastSpikeMs, 1)} ms`],
-              ["Tonic", state?.tonic ? "yes" : "no"],
-            ].map(([label, value]) => (
-              <Box key={label}>
-                <Typography variant="caption" color="text.secondary">
-                  {label}
-                </Typography>
-                <Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
-                  {value}
-                </Typography>
-              </Box>
-            ))}
-          </Stack>
+            <div className="flex flex-wrap gap-x-8 gap-y-2" data-testid="neuron-state">
+              {[
+                ["Neuron", first.name],
+                ["Kind", first.kind.replace("_", " ")],
+                ["Membrane", `${fmt(state?.membraneMv)} mV`],
+                ["Threshold shift", `${fmt(state?.intrinsicMv)} mV`],
+                // The rate estimate is kept only for homeostatic plasticity (HIP); otherwise it stays 0.
+                ["Rate (homeostasis)", state?.rateHz ? `${fmt(state.rateHz, 1)} Hz` : "—"],
+                ["Spikes", String(state?.spikes ?? "—")],
+                ["Last spike", state?.lastSpikeMs == null ? "—" : `${fmt(state.lastSpikeMs, 1)} ms`],
+                ["Tonic", state?.tonic ? "yes" : "no"],
+              ].map(([label, value]) => (
+                <Stat key={label} label={label!} value={value} />
+              ))}
+            </div>
           )}
 
-          <Box>
-            <Typography variant="subtitle2" gutterBottom>
-              Membrane potential (mV)
-            </Typography>
+          <div>
+            <Heading className="mb-1">Membrane potential (mV)</Heading>
             <Legend names={membraneNames} />
             {view && (
               <Chart chartId={3} width={width} height={200} dataSource={view.membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membraneNames)} windowingTime={50} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
@@ -209,13 +183,11 @@ export function Inspector(props: {
                 <ScatterPlot />
               </Chart>
             )}
-          </Box>
+          </div>
 
-          <Box>
-            <Typography variant="subtitle2" gutterBottom>
-              Incoming weights
-            </Typography>
-            {weightNames.length ? <Legend names={weightNames} /> : <Typography variant="body2" color="text.secondary">No incoming connections.</Typography>}
+          <div>
+            <Heading className="mb-1">Incoming weights</Heading>
+            {weightNames.length ? <Legend names={weightNames} /> : <p className="text-sm text-muted-foreground">No incoming connections.</p>}
             {view && weightNames.length > 0 && (
               <Chart chartId={4} width={width} height={180} dataSource={view.weights} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(weightNames)} windowingTime={50} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
                 <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
@@ -223,72 +195,60 @@ export function Inspector(props: {
                 <ScatterPlot />
               </Chart>
             )}
-          </Box>
+          </div>
 
           {!props.replay && (
-          <>
-          <Table size="small" data-testid="synapses">
-            <TableHead>
-              <TableRow>
-                <TableCell>From</TableCell>
-                <TableCell>To</TableCell>
-                <TableCell align="right">Weight</TableCell>
-                <TableCell align="right">Eligibility</TableCell>
-                <TableCell />
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {(state?.synapses ?? [])
-                .map((s, i) => ({ ...s, index: i }))
-                .filter((s) => names.has(s.pre))
-                .map((s) => (
-                  <TableRow key={s.index}>
-                    <TableCell>{names.get(s.pre)}</TableCell>
-                    <TableCell>{first.name}</TableCell>
-                    <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>
-                      {fmt(s.weight, 4)}
-                    </TableCell>
-                    <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>
-                      {fmt(s.eligibility, 4)}
-                    </TableCell>
-                    <TableCell align="right">
-                      <IconButton size="small" title="Prune this connection" onClick={act(() => client.prune(session, s.pre, first.index))}>
-                        <LinkOffIcon fontSize="small" />
-                      </IconButton>
-                    </TableCell>
+            <>
+              <Table data-testid="synapses">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>From</TableHead>
+                    <TableHead>To</TableHead>
+                    <TableHead className="text-right">Weight</TableHead>
+                    <TableHead className="text-right">Eligibility</TableHead>
+                    <TableHead />
                   </TableRow>
-                ))}
-            </TableBody>
-          </Table>
+                </TableHeader>
+                <TableBody>
+                  {(state?.synapses ?? [])
+                    .map((s, i) => ({ ...s, index: i }))
+                    .filter((s) => names.has(s.pre))
+                    .map((s) => (
+                      <TableRow key={s.index}>
+                        <TableCell>{names.get(s.pre)}</TableCell>
+                        <TableCell>{first.name}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmt(s.weight, 4)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmt(s.eligibility, 4)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="icon-xs" title="Prune this connection" aria-label="Prune this connection" onClick={act(() => client.prune(session, s.pre, first.index))}>
+                            <Unlink />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
 
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
-            <Typography variant="body2">Connect to {first.name} from</Typography>
-            <Autocomplete
-              size="small"
-              sx={{ width: 220 }}
-              options={network.neurons}
-              value={from}
-              getOptionLabel={(n) => n.name}
-              isOptionEqualToValue={(a, b) => a.index === b.index}
-              onChange={(_, value) => setFrom(value)}
-              renderInput={(params) => <TextField {...params} label="Sender" />}
-            />
-            <TextField label="Weight" type="number" value={weight} sx={{ width: 100 }} onChange={(e) => setWeight(Number(e.target.value))} />
-            <TextField select label="Learning" value={learning} sx={{ width: 150 }} onChange={(e) => setLearning(e.target.value)}>
-              {(network.learningRules.length ? network.learningRules : ["flat"]).map((l) => (
-                <MenuItem key={l} value={l}>
-                  {l}
-                </MenuItem>
-              ))}
-            </TextField>
-            <Button startIcon={<AddLinkIcon />} disabled={!from} onClick={act(() => client.connect(session, from!.index, first.index, weight, { learning }))} data-testid="connect">
-              Connect
-            </Button>
-          </Stack>
-          </>
+              <Row>
+                <span className="pb-2 text-sm">Connect to {first.name} from</span>
+                <NeuronPicker label="Sender" width={220} options={network.neurons} value={from ? [from] : []} max={1} onChange={(v) => setFrom(v[0] ?? null)} />
+                <Field label="Weight" type="number" width={100} value={weight} onChange={(e) => setWeight(Number(e.target.value))} />
+                <Choice
+                  label="Learning"
+                  width={150}
+                  value={learning}
+                  onChange={setLearning}
+                  options={(network.learningRules.length ? network.learningRules : ["flat"]).map((l) => ({ value: l, label: l }))}
+                />
+                <Button variant="outline" disabled={!from} onClick={act(() => client.connect(session, from!.index, first.index, weight, { learning }))} data-testid="connect">
+                  <Link2 data-icon="inline-start" />
+                  Connect
+                </Button>
+              </Row>
+            </>
           )}
-        </Stack>
+        </div>
       )}
-    </Paper>
+    </Panel>
   );
 }

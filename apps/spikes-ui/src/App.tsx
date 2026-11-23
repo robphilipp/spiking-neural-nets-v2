@@ -1,15 +1,24 @@
-import CodeIcon from "@mui/icons-material/Code";
-import FolderIcon from "@mui/icons-material/Folder";
-import HistoryIcon from "@mui/icons-material/History";
-import SensorsIcon from "@mui/icons-material/Sensors";
-import PlayCircleIcon from "@mui/icons-material/PlayCircle";
-import SettingsIcon from "@mui/icons-material/Settings";
-import { AppBar, Box, Chip, Drawer, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography } from "@mui/material";
+import { Activity, Code2, FolderOpen, History, PlayCircle, Radio, Settings } from "lucide-react";
 import { type ReactNode, useState } from "react";
-import { useConnection } from "./connection";
+import { StateBadge } from "@/components/kit";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { SessionPicker } from "./components/SessionPicker";
-import { NetworkPage } from "./pages/NetworkPage";
+import { useConnection } from "./connection";
 import { InputsPage } from "./pages/InputsPage";
+import { NetworkPage } from "./pages/NetworkPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
 import { RecordingsPage } from "./pages/RecordingsPage";
 import { RunPage } from "./pages/RunPage";
@@ -17,57 +26,66 @@ import { SettingsPage } from "./pages/SettingsPage";
 
 type Page = "projects" | "network" | "run" | "inputs" | "recordings" | "settings";
 const PAGES: Array<{ id: Page; label: string; icon: ReactNode }> = [
-  { id: "projects", label: "Project", icon: <FolderIcon /> },
-  { id: "network", label: "Network", icon: <CodeIcon /> },
-  { id: "run", label: "Run", icon: <PlayCircleIcon /> },
-  { id: "inputs", label: "Inputs", icon: <SensorsIcon /> },
-  { id: "recordings", label: "Recordings", icon: <HistoryIcon /> },
-  { id: "settings", label: "Settings", icon: <SettingsIcon /> },
+  { id: "projects", label: "Project", icon: <FolderOpen /> },
+  { id: "network", label: "Network", icon: <Code2 /> },
+  { id: "run", label: "Run", icon: <PlayCircle /> },
+  { id: "inputs", label: "Inputs", icon: <Radio /> },
+  { id: "recordings", label: "Recordings", icon: <History /> },
+  { id: "settings", label: "Settings", icon: <Settings /> },
 ];
-const DRAWER = 168;
 
 export function App() {
   const [page, setPage] = useState<Page>("network");
   const { status } = useConnection();
   return (
-    <Box sx={{ display: "flex", height: "100vh" }}>
-      <AppBar position="fixed" elevation={0} sx={{ zIndex: (t) => t.zIndex.drawer + 1 }}>
-        <Toolbar variant="dense">
-          <Typography variant="h6" sx={{ mr: 2 }}>
-            Spikes
-          </Typography>
-          <SessionPicker />
-          <Box sx={{ flex: 1 }} />
-          <Chip
-            size="small"
-            label={status}
-            color={status === "connected" ? "success" : status === "connecting" ? "warning" : "error"}
-            data-testid="connection"
-          />
-        </Toolbar>
-      </AppBar>
-      <Drawer variant="permanent" sx={{ width: DRAWER, [`& .MuiDrawer-paper`]: { width: DRAWER, boxSizing: "border-box" } }}>
-        <Toolbar variant="dense" />
-        <List dense>
-          {PAGES.map((p) => (
-            <ListItemButton key={p.id} selected={page === p.id} onClick={() => setPage(p.id)} data-testid={`nav-${p.id}`}>
-              <ListItemIcon sx={{ minWidth: 36 }}>{p.icon}</ListItemIcon>
-              <ListItemText primary={p.label} />
-            </ListItemButton>
-          ))}
-        </List>
-      </Drawer>
-      <Box component="main" sx={{ flex: 1, p: 2, display: "flex", flexDirection: "column", minWidth: 0, overflow: "auto" }}>
-        <Toolbar variant="dense" />
-        <Box sx={{ flex: 1, minHeight: 0 }}>
-          {page === "projects" && <ProjectsPage onOpened={() => setPage("network")} />}
-          {page === "network" && <NetworkPage />}
-          {page === "run" && <RunPage />}
-          {page === "inputs" && <InputsPage />}
-          {page === "recordings" && <RecordingsPage onReplay={() => setPage("run")} />}
-          {page === "settings" && <SettingsPage />}
-        </Box>
-      </Box>
-    </Box>
+    <TooltipProvider>
+      <SidebarProvider style={{ "--sidebar-width": "11rem" } as React.CSSProperties}>
+        <Sidebar collapsible="icon">
+          <SidebarHeader>
+            <div className="flex h-8 items-center gap-2 px-2 font-semibold">
+              <Activity className="size-4 shrink-0 text-series" />
+              <span className="group-data-[collapsible=icon]:hidden">Spikes</span>
+            </div>
+          </SidebarHeader>
+          <SidebarContent>
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {PAGES.map((p) => (
+                    <SidebarMenuItem key={p.id}>
+                      <SidebarMenuButton
+                        isActive={page === p.id}
+                        tooltip={p.label}
+                        onClick={() => setPage(p.id)}
+                        data-testid={`nav-${p.id}`}
+                      >
+                        {p.icon}
+                        <span>{p.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </SidebarContent>
+        </Sidebar>
+        <SidebarInset className="min-w-0">
+          <header className="sticky top-0 z-10 flex h-12 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur">
+            <SidebarTrigger />
+            <SessionPicker />
+            <div className="flex-1" />
+            <StateBadge state={status} data-testid="connection" />
+          </header>
+          <div className="min-w-0 flex-1 p-4">
+            {page === "projects" && <ProjectsPage onOpened={() => setPage("network")} />}
+            {page === "network" && <NetworkPage />}
+            {page === "run" && <RunPage />}
+            {page === "inputs" && <InputsPage />}
+            {page === "recordings" && <RecordingsPage onReplay={() => setPage("run")} />}
+            {page === "settings" && <SettingsPage />}
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }

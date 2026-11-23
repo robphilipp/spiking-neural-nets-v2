@@ -63,7 +63,8 @@ Arrow/Parquet files are the durable one.
    stimulus. See [01 §5](01-architecture.md#5-sensors).
 6. **Projects live with the user.** A project is a directory (`project.toml`, `.boo` files, input files);
    recordings are written where the simulation runs and can be downloaded as Parquet.
-7. **The UI is React 19 + TypeScript + Vite with Material UI** (`@mui/material`, replacing v1's Fluent UI) and
+7. **The UI is React 19 + TypeScript + Vite with shadcn/ui** (Radix + Tailwind; Material UI until November 2026,
+   replacing v1's Fluent UI) and
    **`stream-charts` 2.1** for every chart (raster, membrane, weights, timing health), porting the v1 Monaco
    language support, Redux slices and three.js scenes. Only the 3D view uses WebGL directly.
 8. **Generated types.** `ts-rs` derives TypeScript for every protocol type; CI fails if the generated files are
@@ -72,7 +73,7 @@ Arrow/Parquet files are the durable one.
 ## Decisions (2026-11-22)
 
 1. Kafka: dropped for now; an exporter can be added later as a subscriber.
-2. UI: React with Material UI and `stream-charts` 2.1.
+2. UI: React with shadcn/ui (originally Material UI) and `stream-charts` 2.1.
 3. Sensors: external programs streaming into the network (decision 5), e.g. a microphone routed to neurons.
 4. `spikes-server` also serves the UI as a web app.
 5. Order: engine (A1) → protocol and server (A2) → Tauri app (A3) → the rest.

@@ -1,6 +1,7 @@
-import { Alert, Box, FormControlLabel, Paper, Stack, Switch, Table, TableBody, TableCell, TableHead, TableRow, Typography } from "@mui/material";
 import type { Cluster, ProtocolClient } from "@spikes/client";
 import { useEffect, useState } from "react";
+import { Heading, Notice, Panel, Toggle } from "@/components/kit";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -41,73 +42,67 @@ export function ClusterPanel({
     };
   }, [client, session, running]);
 
-  if (error) return <Alert severity="warning">Cluster: {error}</Alert>;
+  if (error) return <Notice tone="warning">Cluster: {error}</Notice>;
   if (!cluster) return null;
+  const muted = "text-sm text-muted-foreground";
   return (
-    <Paper variant="outlined" sx={{ p: 1.5 }} data-testid="cluster">
-      <Stack direction="row" spacing={3} sx={{ alignItems: "baseline", flexWrap: "wrap", mb: 1 }} useFlexGap>
-        <Typography variant="subtitle2">Cluster · {cluster.nodes.length} nodes</Typography>
-        <Typography variant="body2" color="text.secondary" title="Windows agreed with every node">
+    <Panel data-testid="cluster">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
+        <Heading>Cluster · {cluster.nodes.length} nodes</Heading>
+        <span className={muted} title="Windows agreed with every node">
           {cluster.rounds.toLocaleString()} windows
-        </Typography>
-        <Typography variant="body2" color="text.secondary" title="Wall time the coordinator waited for the other nodes">
+        </span>
+        <span className={muted} title="Wall time the coordinator waited for the other nodes">
           waited {(cluster.waitedMs / 1000).toFixed(2)} s
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {cluster.received.toLocaleString()} events received
-        </Typography>
-        <Typography variant="body2" color={cluster.late > 0 ? "warning.main" : "text.secondary"} title="Spikes that arrived after their time and were delivered late">
+        </span>
+        <span className={muted}>{cluster.received.toLocaleString()} events received</span>
+        <span className={cluster.late > 0 ? "text-sm text-warning" : muted} title="Spikes that arrived after their time and were delivered late">
           {cluster.late.toLocaleString()} late
-        </Typography>
-        <Box sx={{ flex: 1 }} />
-        <FormControlLabel
-          control={<Switch checked={lockstep} disabled={running} onChange={(e) => onLockstep(e.target.checked)} data-testid="lockstep" />}
+        </span>
+        <div className="flex-1" />
+        <Toggle
           label="Lockstep (exact)"
+          checked={lockstep}
+          disabled={running}
+          onChange={onLockstep}
+          testId="lockstep"
           title="On: every window waits for every node, so results are exactly those of one machine. Off: each node follows its copy of the clock (faster over a network); spikes that arrive late are delivered late and counted below. Runs as fast as possible always use lockstep."
         />
-      </Stack>
-      {cluster.failure && (
-        <Alert severity="error" sx={{ mb: 1 }}>
-          The cluster failed: {cluster.failure}
-        </Alert>
-      )}
-      <Box sx={{ overflowX: "auto" }}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Node</TableCell>
-              <TableCell>Address</TableCell>
-              <TableCell align="right">Events sent to it</TableCell>
-              <TableCell align="right">Data sent to it</TableCell>
+      </div>
+      {cluster.failure && <Notice tone="error">The cluster failed: {cluster.failure}</Notice>}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Node</TableHead>
+            <TableHead>Address</TableHead>
+            <TableHead className="text-right">Events sent to it</TableHead>
+            <TableHead className="text-right">Data sent to it</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {cluster.nodes.map((n, i) => (
+            <TableRow key={i} data-testid="cluster-node">
+              <TableCell>{i}</TableCell>
+              <TableCell>{n.address}</TableCell>
+              <TableCell className="text-right">{i === 0 ? "—" : n.eventsSent.toLocaleString()}</TableCell>
+              <TableCell className="text-right">{i === 0 ? "—" : bytes(n.bytesSent)}</TableCell>
             </TableRow>
-          </TableHead>
-          <TableBody>
-            {cluster.nodes.map((n, i) => (
-              <TableRow key={i} data-testid="cluster-node">
-                <TableCell>{i}</TableCell>
-                <TableCell>{n.address}</TableCell>
-                <TableCell align="right">{i === 0 ? "—" : n.eventsSent.toLocaleString()}</TableCell>
-                <TableCell align="right">{i === 0 ? "—" : bytes(n.bytesSent)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Box>
+          ))}
+        </TableBody>
+      </Table>
       {!cluster.lockstep && cluster.links.length > 0 && (
-        <Box sx={{ overflowX: "auto", mt: 1.5 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            Timeliness (best effort)
-          </Typography>
-          <Table size="small" data-testid="cluster-links">
-            <TableHead>
+        <div>
+          <Heading className="mb-1">Timeliness (best effort)</Heading>
+          <Table data-testid="cluster-links">
+            <TableHeader>
               <TableRow>
-                <TableCell>Link</TableCell>
-                <TableCell align="right">Spikes</TableCell>
-                <TableCell align="right">Late</TableCell>
-                <TableCell align="right">p99 lateness</TableCell>
-                <TableCell align="right">Max lateness</TableCell>
+                <TableHead>Link</TableHead>
+                <TableHead className="text-right">Spikes</TableHead>
+                <TableHead className="text-right">Late</TableHead>
+                <TableHead className="text-right">p99 lateness</TableHead>
+                <TableHead className="text-right">Max lateness</TableHead>
               </TableRow>
-            </TableHead>
+            </TableHeader>
             <TableBody>
               {cluster.links
                 .filter((l) => l.events > 0)
@@ -116,21 +111,17 @@ export function ClusterPanel({
                     <TableCell>
                       {l.from} → {l.to}
                     </TableCell>
-                    <TableCell align="right">{l.events.toLocaleString()}</TableCell>
-                    <TableCell align="right" sx={{ color: l.late > 0 ? "warning.main" : undefined }}>
-                      {((100 * l.late) / l.events).toFixed(1)}%
-                    </TableCell>
-                    <TableCell align="right">{l.p99LateMs.toFixed(2)} ms</TableCell>
-                    <TableCell align="right">{l.maxLateMs.toFixed(2)} ms</TableCell>
+                    <TableCell className="text-right">{l.events.toLocaleString()}</TableCell>
+                    <TableCell className={l.late > 0 ? "text-right text-warning" : "text-right"}>{((100 * l.late) / l.events).toFixed(1)}%</TableCell>
+                    <TableCell className="text-right">{l.p99LateMs.toFixed(2)} ms</TableCell>
+                    <TableCell className="text-right">{l.maxLateMs.toFixed(2)} ms</TableCell>
                   </TableRow>
                 ))}
             </TableBody>
           </Table>
-          <Typography variant="caption" color="text.secondary">
-            Slower runs give spikes more time to cross: lateness falls as the speed drops.
-          </Typography>
-        </Box>
+          <p className="text-xs text-muted-foreground">Slower runs give spikes more time to cross: lateness falls as the speed drops.</p>
+        </div>
       )}
-    </Paper>
+    </Panel>
   );
 }

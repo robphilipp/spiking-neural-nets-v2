@@ -1,23 +1,26 @@
-import CheckIcon from "@mui/icons-material/Check";
-import { Alert, Autocomplete, Box, Button, Stack, TextField, Typography } from "@mui/material";
-import { useColorScheme } from "@mui/material/styles";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { SpikesError } from "@spikes/client";
-import { useEffect, useRef, useState } from "react";
+import { Check } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { Notice } from "@/components/kit";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConnection } from "../connection";
 import { examples } from "../examples";
 import { useAppDispatch, useAppSelector } from "../hooks";
 import { LANGUAGE_ID } from "../language/register";
 import { monaco } from "../monaco";
 import { applied, parseFailed, setDescription } from "../store";
+import { useThemeMode } from "../theme";
 
 /** The network description editor: edit, then apply to the engine, which reports parse errors in place. */
 export function NetworkPage() {
   const { client } = useConnection();
   const dispatch = useAppDispatch();
   const { id, name, description, applied: appliedText, errors, state } = useAppSelector((s) => s.session);
-  const { mode, systemMode } = useColorScheme();
-  const dark = (mode === "system" ? systemMode : mode) === "dark";
+  const dark = useThemeMode() === "dark";
+  const exampleId = useId();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -67,36 +70,47 @@ export function NetworkPage() {
 
   const running = state === "running" || state === "paused";
   return (
-    <Stack spacing={1.5} sx={{ height: "100%" }}>
-      <Stack sx={{ alignItems: "center" }} direction="row" spacing={1.5}>
-        <Autocomplete
-          sx={{ width: 280 }}
-          options={examples}
-          getOptionLabel={(o) => o.name}
-          renderInput={(params) => <TextField {...params} label="Open an example" />}
-          onChange={(_, example) => example && dispatch(setDescription({ name: example.name, description: example.text }))}
-        />
-        <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
+    <div className="flex h-[calc(100vh-5rem)] flex-col gap-3">
+      <div className="flex items-end gap-3">
+        <div className="grid w-72 gap-1">
+          <Label htmlFor={exampleId} className="text-xs font-normal text-muted-foreground">
+            Open an example
+          </Label>
+          <Select
+            value=""
+            onValueChange={(v) => {
+              const example = examples.find((e) => e.name === v);
+              if (example) dispatch(setDescription({ name: example.name, description: example.text }));
+            }}
+          >
+            <SelectTrigger id={exampleId} className="w-full" aria-label="Open an example">
+              <SelectValue placeholder="Choose…" />
+            </SelectTrigger>
+            <SelectContent>
+              {examples.map((e) => (
+                <SelectItem key={e.name} value={e.name}>
+                  {e.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <span className="flex-1 pb-1.5 text-sm text-muted-foreground">
           {name}
           {appliedText !== null && appliedText !== description ? " (changed)" : ""}
-        </Typography>
-        <Button
-          variant="contained"
-          startIcon={<CheckIcon />}
-          disabled={!client || busy || running || !description.trim()}
-          onClick={apply}
-          data-testid="apply"
-        >
+        </span>
+        <Button disabled={!client || busy || running || !description.trim()} onClick={apply} data-testid="apply">
+          <Check data-icon="inline-start" />
           Apply
         </Button>
-      </Stack>
+      </div>
       {message && (
-        <Alert severity={errors.length ? "error" : "success"} onClose={() => setMessage(null)}>
+        <Notice tone={errors.length ? "error" : "success"} onClose={() => setMessage(null)}>
           {message}
-        </Alert>
+        </Notice>
       )}
-      {running && <Alert severity="info">Stop the run to change the network.</Alert>}
-      <Box sx={{ flex: 1, minHeight: 300, border: 1, borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
+      {running && <Notice>Stop the run to change the network.</Notice>}
+      <div className="min-h-[300px] flex-1 overflow-hidden rounded-lg border">
         <Editor
           language={LANGUAGE_ID}
           theme={dark ? "vs-dark" : "vs"}
@@ -107,7 +121,7 @@ export function NetworkPage() {
           }}
           options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: "on", scrollBeyondLastLine: false }}
         />
-      </Box>
-    </Stack>
+      </div>
+    </div>
   );
 }

@@ -52,7 +52,7 @@ test("record a run, replay it in the same views, seek, export and download", asy
 
   // Seek back to the start: click the slider's left end.
   await expect(page.getByTestId("state")).toHaveText("ready");
-  const track = (await page.getByTestId("seek").locator(".MuiSlider-root").boundingBox())!;
+  const track = (await page.getByTestId("seek").locator("[data-slot=slider]").boundingBox())!;
   await page.mouse.click(track.x + 1, track.y + track.height / 2);
   await expect(page.getByTestId("timing")).toContainText(/Simulated time\s*0\.0/, { timeout: 5000 });
 

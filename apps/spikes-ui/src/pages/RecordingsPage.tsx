@@ -1,10 +1,9 @@
-import DownloadIcon from "@mui/icons-material/Download";
-import PlayCircleIcon from "@mui/icons-material/PlayCircle";
-import RefreshIcon from "@mui/icons-material/Refresh";
-import TableChartIcon from "@mui/icons-material/TableChart";
-import { Alert, Button, Chip, IconButton, Paper, Stack, Typography } from "@mui/material";
 import type { Recording } from "@spikes/client";
+import { Download, PlayCircle, RefreshCw, Table2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { Heading, Notice, Panel } from "@/components/kit";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { defaultServer, useConnection } from "../connection";
 import { useAppDispatch, useAppSelector } from "../hooks";
 import { opened } from "../store";
@@ -45,37 +44,26 @@ export function RecordingsPage({ onReplay }: { onReplay: () => void }) {
   const base = (server || defaultServer()).replace(/\/$/, "");
 
   return (
-    <Stack spacing={2} sx={{ maxWidth: 900 }}>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-        <Typography variant="subtitle1" sx={{ flex: 1 }}>
-          Recorded runs
-        </Typography>
-        <IconButton onClick={refresh} title="Refresh">
-          <RefreshIcon />
-        </IconButton>
-      </Stack>
+    <div className="flex max-w-4xl flex-col gap-3">
+      <div className="flex items-center gap-2">
+        <h2 className="flex-1 text-base font-medium">Recorded runs</h2>
+        <Button variant="ghost" size="icon" onClick={refresh} title="Refresh" aria-label="Refresh">
+          <RefreshCw />
+        </Button>
+      </div>
       {message && (
-        <Alert severity={message.ok ? "success" : "error"} onClose={() => setMessage(null)}>
+        <Notice tone={message.ok ? "success" : "error"} onClose={() => setMessage(null)}>
           {message.text}
-        </Alert>
+        </Notice>
       )}
-      {!recordings.length && (
-        <Typography variant="body2" color="text.secondary">
-          No recordings yet. Turn on Record on the Run page to record a run.
-        </Typography>
-      )}
+      {!recordings.length && <p className="text-sm text-muted-foreground">No recordings yet. Turn on Record on the Run page to record a run.</p>}
       {recordings.map((r) => (
-        <Paper key={r.id} variant="outlined" sx={{ p: 1.5 }} data-testid="recording">
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 1 }}>
-            <Typography variant="subtitle2" sx={{ flex: 1 }}>
-              {r.id.split("-").slice(1, -1).join("-") || r.id}{" "}
-              <Typography component="span" variant="body2" color="text.secondary">
-                {made(r.id)}
-              </Typography>
-            </Typography>
+        <Panel key={r.id} data-testid="recording">
+          <div className="flex items-center gap-3">
+            <Heading className="flex-1">
+              {r.id.split("-").slice(1, -1).join("-") || r.id} <span className="font-normal text-muted-foreground">{made(r.id)}</span>
+            </Heading>
             <Button
-              variant="contained"
-              startIcon={<PlayCircleIcon />}
               data-testid="replay"
               onClick={attempt(async () => {
                 const s = await client!.openRecording(r.id);
@@ -83,43 +71,40 @@ export function RecordingsPage({ onReplay }: { onReplay: () => void }) {
                 onReplay();
               })}
             >
+              <PlayCircle data-icon="inline-start" />
               Replay
             </Button>
             <Button
-              startIcon={<TableChartIcon />}
+              variant="outline"
               onClick={attempt(async () => {
                 await client!.exportParquet(r.id);
                 setMessage({ ok: true, text: `Exported ${r.id} to Parquet.` });
                 refresh();
               })}
             >
+              <Table2 data-icon="inline-start" />
               Export to Parquet
             </Button>
-          </Stack>
-          <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }} useFlexGap>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
             {r.files.map((f) =>
               downloads ? (
-                <Chip
-                  key={f.name}
-                  size="small"
-                  icon={<DownloadIcon />}
-                  label={`${f.name} · ${size(f.bytes)}`}
-                  component="a"
-                  href={`${base}/api/recordings/${encodeURIComponent(r.id)}/${encodeURIComponent(f.name)}`}
-                  clickable
-                />
+                <Badge key={f.name} variant="outline" asChild>
+                  <a href={`${base}/api/recordings/${encodeURIComponent(r.id)}/${encodeURIComponent(f.name)}`}>
+                    <Download />
+                    {f.name} · {size(f.bytes)}
+                  </a>
+                </Badge>
               ) : (
-                <Chip key={f.name} size="small" label={`${f.name} · ${size(f.bytes)}`} />
+                <Badge key={f.name} variant="outline">
+                  {f.name} · {size(f.bytes)}
+                </Badge>
               ),
             )}
-          </Stack>
-          {!downloads && (
-            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
-              {r.path}
-            </Typography>
-          )}
-        </Paper>
+          </div>
+          {!downloads && <p className="text-xs text-muted-foreground">{r.path}</p>}
+        </Panel>
       ))}
-    </Stack>
+    </div>
   );
 }

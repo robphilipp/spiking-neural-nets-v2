@@ -1,9 +1,4 @@
-import GraphicEqIcon from "@mui/icons-material/GraphicEq";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import SaveAltIcon from "@mui/icons-material/SaveAlt";
-import StopIcon from "@mui/icons-material/Stop";
-import { Alert, Box, Button, MenuItem, Paper, Stack, TextField, Typography } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import { AudioLines, Download, Play, Square } from "lucide-react";
 import type { Encoding, Neuron, ProtocolClient, Sensor } from "@spikes/client";
 import { useMemo, useState } from "react";
 import { NEVER } from "rxjs";
@@ -22,7 +17,9 @@ import { useConnection } from "../connection";
 import { useAppSelector } from "../hooks";
 import { startInput, stopInput, useActiveInput } from "../inputStreams";
 import { compile, sample, type Signal, SignalError } from "../signal";
-import { chartColors } from "../theme";
+import { Choice, Field, Heading, Notice, Panel, Row } from "@/components/kit";
+import { Button } from "@/components/ui/button";
+import { useChartColors } from "../theme";
 
 const PALETTE = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#F0E442", "#999999"];
 const DT_MS = 1; // sample spacing for designed signals
@@ -78,8 +75,7 @@ function bands(spectrum: Float32Array, channels: number, sampleRate: number): Fl
 }
 
 export function InputsPage() {
-  const theme = useTheme();
-  const colors = chartColors(theme);
+  const colors = useChartColors();
   const { client } = useConnection();
   const { id, network, state, replayEndMs } = useAppSelector((s) => s.session);
   const [prefix, setPrefix] = useState("input-");
@@ -117,10 +113,10 @@ export function InputsPage() {
 
 
   if (id === null || !network) {
-    return <Alert severity="info">Build a network on the Run page first; its neurons are the inputs' targets.</Alert>;
+    return <Notice>Build a network on the Run page first; its neurons are the inputs' targets.</Notice>;
   }
   if (replayEndMs !== null) {
-    return <Alert severity="info">This session is a replay: it plays back what was recorded and takes no input.</Alert>;
+    return <Notice>This session is a replay: it plays back what was recorded and takes no input.</Notice>;
   }
   const ready = state === "ready";
   const running = state === "running" || state === "paused";
@@ -144,50 +140,59 @@ export function InputsPage() {
   };
 
   return (
-    <Stack spacing={2} sx={{ maxWidth: 1000 }}>
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Typography variant="subtitle1" gutterBottom>
-          Signal
-        </Typography>
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", mb: 1.5 }} useFlexGap>
-          <TextField label="Target neurons starting with" value={prefix} sx={{ width: 230 }} onChange={(e) => setPrefix(e.target.value)} helperText={`${channels} channel${channels === 1 ? "" : "s"}, one per neuron`} />
-          <TextField select label="Encoding" value={kind} sx={{ width: 150 }} onChange={(e) => setKind(e.target.value as EncodingKind)}>
-            <MenuItem value="rate">rate (Poisson)</MenuItem>
-            <MenuItem value="current">current</MenuItem>
-            <MenuItem value="threshold">threshold (delta)</MenuItem>
-          </TextField>
-          <TextField label={kind === "rate" ? "Hz at 1" : kind === "current" ? "mV per unit" : "Change per event"} type="number" value={a} sx={{ width: 130 }} onChange={(e) => setA(Number(e.target.value))} />
-          {kind !== "current" && <TextField label="mV per event" type="number" value={b} sx={{ width: 120 }} onChange={(e) => setB(Number(e.target.value))} />}
-        </Stack>
-        <TextField
-          fullWidth
+    <div className="flex max-w-5xl flex-col gap-3">
+      <Panel>
+        <Heading>Signal</Heading>
+        <Row>
+          <Field
+            label="Target neurons starting with"
+            width={230}
+            value={prefix}
+            onChange={(e) => setPrefix(e.target.value)}
+            help={`${channels} channel${channels === 1 ? "" : "s"}, one per neuron`}
+          />
+          <Choice
+            label="Encoding"
+            width={160}
+            value={kind}
+            onChange={setKind}
+            options={[
+              { value: "rate", label: "rate (Poisson)" },
+              { value: "current", label: "current" },
+              { value: "threshold", label: "threshold (delta)" },
+            ]}
+          />
+          <Field label={kind === "rate" ? "Hz at 1" : kind === "current" ? "mV per unit" : "Change per event"} type="number" width={130} value={a} onChange={(e) => setA(Number(e.target.value))} />
+          {kind !== "current" && <Field label="mV per event" type="number" width={120} value={b} onChange={(e) => setB(Number(e.target.value))} />}
+        </Row>
+        <Field
           label="Value of channel c at time t (ms); n channels"
           value={formula}
           onChange={(e) => setFormula(e.target.value)}
           error={"error" in compiled}
-          helperText={"error" in compiled ? compiled.error : "e.g. pulse(t, 200, 50) · sin(2*pi*t/500 + c) · floor(t/100) % 7 == c % 7 · t > 300 ? 1 : 0"}
-          slotProps={{ htmlInput: { "data-testid": "formula", spellCheck: false, style: { fontFamily: "monospace" } } }}
+          help={"error" in compiled ? compiled.error : "e.g. pulse(t, 200, 50) · sin(2*pi*t/500 + c) · floor(t/100) % 7 == c % 7 · t > 300 ? 1 : 0"}
+          data-testid="formula"
+          spellCheck={false}
+          className="[&_input]:font-mono"
         />
         {preview && (
-          <Box sx={{ mt: 1.5 }} data-testid="preview">
-            <Typography variant="caption" color="text.secondary">
+          <div data-testid="preview">
+            <p className="text-xs text-muted-foreground">
               First {PREVIEW_MS / 1000} s of {preview.shown < channels ? `the first ${preview.shown} of ${channels}` : "all"} channels (offset for clarity)
-            </Typography>
+            </p>
             <Chart chartId={10} width={900} height={200} dataSource={preview.source} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={preview.styles}>
               <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, PREVIEW_MS]} label="t (ms)" />
               <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-0.2, preview.shown * 1.2]} label="value" />
               <ScatterPlot />
             </Chart>
-          </Box>
+          </div>
         )}
-      </Paper>
+      </Panel>
 
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
-          <TextField label="Seconds" type="number" value={seconds} sx={{ width: 100 }} onChange={(e) => setSeconds(Math.max(0.01, Number(e.target.value)))} />
+      <Panel>
+        <Row>
+          <Field label="Seconds" type="number" width={100} value={seconds} onChange={(e) => setSeconds(Math.max(0.01, Number(e.target.value)))} />
           <Button
-            variant="contained"
-            startIcon={<SaveAltIcon />}
             disabled={!client || !ready || !channels || !("signal" in compiled)}
             data-testid="inject"
             title="Inject the whole signal now, at exact times from the current time: every run with it is the same"
@@ -203,10 +208,11 @@ export function InputsPage() {
               setMessage({ ok: true, text: `Injected ${seconds} s of the signal into ${channels} neurons. Start the run on the Run page.` });
             })}
           >
+            <Download data-icon="inline-start" />
             Inject before running
           </Button>
           <Button
-            startIcon={<PlayArrowIcon />}
+            variant="outline"
             disabled={!client || !running || active !== null || !channels || !("signal" in compiled)}
             data-testid="stream"
             title="Stream the signal as the run goes, like a sensor"
@@ -217,10 +223,11 @@ export function InputsPage() {
               startInput({ kind: "live", session: id, stop: stream(sensor, channels, DT_MS, (first, count) => sample(signal, channels, DT_MS, first, count)) });
             })}
           >
+            <Play data-icon="inline-start" />
             Stream live
           </Button>
           <Button
-            startIcon={<GraphicEqIcon />}
+            variant="outline"
             disabled={!client || !running || active !== null || !channels}
             data-testid="microphone"
             title="The microphone's spectrum in log-spaced bands, one per target neuron"
@@ -254,27 +261,29 @@ export function InputsPage() {
               });
             })}
           >
+            <AudioLines data-icon="inline-start" />
             Microphone
           </Button>
           {active && (
-            <Button color="warning" startIcon={<StopIcon />} onClick={stopInput} data-testid="stop-input">
+            <Button className="bg-warning text-black hover:bg-warning/80" onClick={stopInput} data-testid="stop-input">
+              <Square data-icon="inline-start" />
               Stop {active === "microphone" ? "the microphone" : "streaming"}
             </Button>
           )}
-        </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+        </Row>
+        <p className="text-xs text-muted-foreground">
           {ready
             ? "Inject before running: the signal is placed at exact times from now, so every run with it is the same."
             : running
               ? "Streaming follows the wall clock, like a real sensor."
               : "Build the network first."}
-        </Typography>
+        </p>
         {message && (
-          <Alert severity={message.ok ? "success" : "error"} sx={{ mt: 1.5 }} onClose={() => setMessage(null)}>
+          <Notice tone={message.ok ? "success" : "error"} onClose={() => setMessage(null)}>
             {message.text}
-          </Alert>
+          </Notice>
         )}
-      </Paper>
-    </Stack>
+      </Panel>
+    </div>
   );
 }

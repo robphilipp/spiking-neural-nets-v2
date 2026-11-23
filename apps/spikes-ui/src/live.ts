@@ -37,9 +37,9 @@ const EMPTY_STATS: LiveStats = {
 };
 
 /** How much simulated time the charts keep, ms. */
-const KEEP_MS = 10_000;
+export const KEEP_MS = 10_000;
 
-function chartData(names: string[], time: number, points: Map<string, Datum[]>): TimeSeriesChartData {
+export function chartData(names: string[], time: number, points: Map<string, Datum[]>): TimeSeriesChartData {
   return {
     seriesNames: new Set(names),
     maxTime: time,

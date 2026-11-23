@@ -1,25 +1,8 @@
-import CreateNewFolderIcon from "@mui/icons-material/CreateNewFolder";
-import DeleteIcon from "@mui/icons-material/Close";
-import DownloadIcon from "@mui/icons-material/Download";
-import FolderOpenIcon from "@mui/icons-material/FolderOpen";
-import NoteAddIcon from "@mui/icons-material/NoteAdd";
-import SaveIcon from "@mui/icons-material/Save";
-import UploadFileIcon from "@mui/icons-material/UploadFile";
-import {
-  Alert,
-  Button,
-  Chip,
-  IconButton,
-  List,
-  ListItem,
-  ListItemButton,
-  ListItemText,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from "@mui/material";
+import { Download, FilePlus, FolderOpen, FolderPlus, Save, Upload, X } from "lucide-react";
 import { useRef, useState } from "react";
+import { Field, Heading, Notice, Panel } from "@/components/kit";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { pickFolder, readProject, writeProject } from "../files";
 import { useAppDispatch, useAppSelector } from "../hooks";
 import { serializeProject } from "../project";
@@ -67,54 +50,75 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
   };
 
   return (
-    <Stack spacing={2} sx={{ maxWidth: 760 }}>
-      <Paper variant="outlined" sx={{ p: 2 }}>
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 1.5 }}>
-          <TextField
+    <div className="flex max-w-3xl flex-col gap-3">
+      <Panel>
+        <div className="flex items-end gap-3">
+          <Field
+            className="flex-1"
             label="Project name"
             value={project.name}
-            sx={{ flex: 1 }}
             onChange={(e) => {
               dispatch(projectRenamed(e.target.value));
               dispatch(setDescription({ name: e.target.value, description }));
             }}
           />
-          {unsaved && <Chip label="unsaved changes" color="warning" size="small" data-testid="unsaved" />}
-        </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          {unsaved && (
+            <Badge className="mb-1.5 border-0 bg-warning text-black" data-testid="unsaved">
+              unsaved changes
+            </Badge>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">
           {folder ?? (desktop ? "Not saved to a folder yet." : "In this browser only; download the files to keep them.")}
-        </Typography>
+        </p>
         {desktop ? (
-          <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }} useFlexGap>
-            <Button startIcon={<NoteAddIcon />} onClick={() => {
-              dispatch(forget());
-              dispatch(newProjectStarted());
-              dispatch(setDescription({ name: "untitled", description: "" }));
-            }}>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                dispatch(forget());
+                dispatch(newProjectStarted());
+                dispatch(setDescription({ name: "untitled", description: "" }));
+              }}
+            >
+              <FilePlus data-icon="inline-start" />
               New
             </Button>
-            <Button startIcon={<FolderOpenIcon />} onClick={attempt(async () => {
-              const dir = await pickFolder("Open a project folder");
-              if (dir) await open(dir);
-            })}>
+            <Button
+              variant="outline"
+              onClick={attempt(async () => {
+                const dir = await pickFolder("Open a project folder");
+                if (dir) await open(dir);
+              })}
+            >
+              <FolderOpen data-icon="inline-start" />
               Open folder…
             </Button>
-            <Button variant="contained" startIcon={<SaveIcon />} disabled={!unsaved && folder !== null} onClick={attempt(async () => {
-              const dir = folder ?? (await pickFolder("Choose a folder for the project"));
-              if (dir) await save(dir);
-            })}>
+            <Button
+              disabled={!unsaved && folder !== null}
+              onClick={attempt(async () => {
+                const dir = folder ?? (await pickFolder("Choose a folder for the project"));
+                if (dir) await save(dir);
+              })}
+            >
+              <Save data-icon="inline-start" />
               Save
             </Button>
-            <Button startIcon={<CreateNewFolderIcon />} onClick={attempt(async () => {
-              const dir = await pickFolder("Save the project into a folder");
-              if (dir) await save(dir);
-            })}>
+            <Button
+              variant="outline"
+              onClick={attempt(async () => {
+                const dir = await pickFolder("Save the project into a folder");
+                if (dir) await save(dir);
+              })}
+            >
+              <FolderPlus data-icon="inline-start" />
               Save as…
             </Button>
-          </Stack>
+          </div>
         ) : (
-          <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap" }} useFlexGap>
-            <Button startIcon={<UploadFileIcon />} onClick={() => fileInput.current?.click()} data-testid="open-file">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => fileInput.current?.click()} data-testid="open-file">
+              <Upload data-icon="inline-start" />
               Open a .boo file…
             </Button>
             <input
@@ -136,44 +140,40 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
                 e.target.value = "";
               }}
             />
-            <Button startIcon={<DownloadIcon />} onClick={() => download(project.network, description)} data-testid="download-network">
+            <Button variant="outline" onClick={() => download(project.network, description)} data-testid="download-network">
+              <Download data-icon="inline-start" />
               Download {project.network}
             </Button>
-            <Button startIcon={<DownloadIcon />} onClick={() => download("project.toml", serializeProject(project))}>
+            <Button variant="outline" onClick={() => download("project.toml", serializeProject(project))}>
+              <Download data-icon="inline-start" />
               Download project.toml
             </Button>
-          </Stack>
+          </div>
         )}
         {message && (
-          <Alert severity={message.ok ? "success" : "error"} sx={{ mt: 1.5 }} onClose={() => setMessage(null)}>
+          <Notice tone={message.ok ? "success" : "error"} onClose={() => setMessage(null)}>
             {message.text}
-          </Alert>
+          </Notice>
         )}
-      </Paper>
+      </Panel>
       {desktop && recent.length > 0 && (
-        <Paper variant="outlined">
-          <Typography variant="subtitle2" sx={{ px: 2, pt: 1.5 }}>
-            Recent projects
-          </Typography>
-          <List dense>
+        <Panel className="gap-1">
+          <Heading>Recent projects</Heading>
+          <ul className="flex flex-col">
             {recent.map((dir) => (
-              <ListItem
-                key={dir}
-                disablePadding
-                secondaryAction={
-                  <IconButton edge="end" size="small" title="Remove from the list" onClick={() => dispatch(forgetRecent(dir))}>
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
-                }
-              >
-                <ListItemButton onClick={attempt(() => open(dir))}>
-                  <ListItemText primary={dir.split(/[\\/]/).pop()} secondary={dir} />
-                </ListItemButton>
-              </ListItem>
+              <li key={dir} className="flex items-center gap-2 rounded-md hover:bg-muted">
+                <button type="button" className="flex-1 px-2 py-1.5 text-left" onClick={attempt(() => open(dir))}>
+                  <div className="text-sm">{dir.split(/[\\/]/).pop()}</div>
+                  <div className="text-xs text-muted-foreground">{dir}</div>
+                </button>
+                <Button variant="ghost" size="icon-xs" title="Remove from the list" aria-label="Remove from the list" onClick={() => dispatch(forgetRecent(dir))}>
+                  <X />
+                </Button>
+              </li>
             ))}
-          </List>
-        </Paper>
+          </ul>
+        </Panel>
       )}
-    </Stack>
+    </div>
   );
 }

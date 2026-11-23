@@ -1,26 +1,6 @@
-import PauseIcon from "@mui/icons-material/Pause";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import SkipNextIcon from "@mui/icons-material/SkipNext";
-import StopIcon from "@mui/icons-material/Stop";
-import BuildIcon from "@mui/icons-material/Build";
-import BoltIcon from "@mui/icons-material/Bolt";
-import {
-  Alert,
-  Box,
-  MenuItem,
-  Button,
-  Chip,
-  FormControlLabel,
-  Paper,
-  Slider,
-  Stack,
-  Switch,
-  TextField,
-  Typography,
-} from "@mui/material";
-import { useTheme } from "@mui/material/styles";
 import { Lod, type Neuron } from "@spikes/client";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Hammer, Pause, Play, SkipForward, Square, X, Zap } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AxisLocation,
   Chart,
@@ -31,16 +11,21 @@ import {
   ScatterPlot,
   type SeriesLineStyle,
 } from "stream-charts";
+import { Choice, Field, Heading, Notice, Panel, Row, Stat, StateBadge, Toggle } from "@/components/kit";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import { ClusterPanel } from "../components/ClusterPanel";
 import { Inspector } from "../components/Inspector";
-import { Network3D } from "../components/Network3D";
 import { Modulators } from "../components/Modulators";
+import { Network3D } from "../components/Network3D";
+import { WeightsPanel } from "../components/WeightsPanel";
 import { useConnection } from "../connection";
 import { useAppDispatch, useAppSelector } from "../hooks";
 import { stopInput, useActiveInput } from "../inputStreams";
-import { LiveView, type LiveStats } from "../live";
+import { type LiveStats, LiveView } from "../live";
 import { backgroundChanged, built, runSettingsChanged, simTime } from "../store";
-import { chartColors } from "../theme";
+import { useChartColors } from "../theme";
 
 /** The width of an element, following resizes. A callback ref, so it starts measuring whenever the element appears. */
 function useWidth(): [(element: HTMLElement | null) => void, number] {
@@ -62,22 +47,8 @@ const speedLabel = (v: number) => (v >= 0 ? `×${speedOf(v)}` : `×1/${2 ** -v}`
 /** How many raster rows at most. */
 const MAX_ROWS = 300;
 
-function Stat({ label, value, warn }: { label: string; value: ReactNode; warn?: boolean }) {
-  return (
-    <Box>
-      <Typography variant="caption" color="text.secondary">
-        {label}
-      </Typography>
-      <Typography variant="body2" color={warn ? "warning.main" : "text.primary"} sx={{ fontVariantNumeric: "tabular-nums" }}>
-        {value}
-      </Typography>
-    </Box>
-  );
-}
-
 export function RunPage() {
-  const theme = useTheme();
-  const colors = chartColors(theme);
+  const colors = useChartColors();
   const { client } = useConnection();
   const dispatch = useAppDispatch();
   const session = useAppSelector((s) => s.session);
@@ -117,6 +88,11 @@ export function RunPage() {
   const replay = session.replayEndMs !== null;
   const activeInput = useActiveInput();
   const [seekMs, setSeekMs] = useState(0);
+  const [seeking, setSeeking] = useState(false);
+  // The seek slider shows where the replay is, except while it's being dragged.
+  useEffect(() => {
+    if (!seeking) setSeekMs(session.simMs);
+  }, [session.simMs, seeking]);
   /** The background input the current network was built with (it's applied at Build). */
   const [builtBackground, setBuiltBackground] = useState<string | null>(() => JSON.stringify(background));
   const needsRebuild = network !== null && JSON.stringify(background) !== builtBackground;
@@ -169,7 +145,7 @@ export function RunPage() {
   const speed = asFastAsPossible ? null : speedOf(speedLog);
 
   if (id === null) {
-    return <Alert severity="info">Open or write a network on the Network page and apply it first.</Alert>;
+    return <Notice>Open or write a network on the Network page and apply it first.</Notice>;
   }
   const running = state === "running" || state === "paused";
   // Row names are readable up to ~40 rows; beyond that they're hidden (filter the rows, or use the tooltip).
@@ -179,65 +155,67 @@ export function RunPage() {
   const labelWidth = showNames ? 24 + 7 * Math.max(4, ...selection.map((n) => n.name.length)) : 48;
   const rasterHeight = Math.max(200, 60 + selection.length * rowHeight);
   const lineStyles = new Map<string, SeriesLineStyle>(
-    [...selection.map((n) => n.name), "rate"].map((name) => [
-      name,
-      { ...defaultLineStyle(), color: colors.series, highlightColor: colors.highlight },
-    ]),
+    [...selection.map((n) => n.name), "rate"].map((name) => [name, { ...defaultLineStyle(), color: colors.series, highlightColor: colors.highlight }]),
   );
+  const setBackground = (next: typeof backgroundDraft) => {
+    setBackgroundDraft(next);
+    if (background) dispatch(backgroundChanged(next));
+  };
 
   return (
-    <Stack spacing={1.5}>
-      <Paper variant="outlined" sx={{ p: 1.5 }}>
-        <Stack sx={{ alignItems: "center", flexWrap: "wrap" }} direction="row" spacing={1.5} useFlexGap>
-          <TextField label="Shards" type="number" value={shards} sx={{ width: 90 }} onChange={(e) => dispatch(runSettingsChanged({ shards: Math.max(1, Math.round(Number(e.target.value)) || 1) }))} />
-          <TextField label="Seed" type="number" value={seed} sx={{ width: 90 }} onChange={(e) => dispatch(runSettingsChanged({ seed: Math.round(Number(e.target.value)) || 0 }))} />
+    <div className="flex flex-col gap-3">
+      <Panel>
+        <Row className="items-end">
+          <Field label="Shards" type="number" width={90} value={shards} onChange={(e) => dispatch(runSettingsChanged({ shards: Math.max(1, Math.round(Number(e.target.value)) || 1) }))} />
+          <Field label="Seed" type="number" width={90} value={seed} onChange={(e) => dispatch(runSettingsChanged({ seed: Math.round(Number(e.target.value)) || 0 }))} />
           <Button
-            variant={needsRebuild && !running ? "contained" : "outlined"}
-            color={needsRebuild && !running ? "warning" : "primary"}
-            startIcon={<BuildIcon />}
+            variant={needsRebuild && !running ? "default" : "outline"}
+            className={needsRebuild && !running ? "bg-warning text-black hover:bg-warning/80" : undefined}
             disabled={!client || running || building}
             data-testid="build"
             onClick={act(async () => {
               setBuilding(true);
               try {
-              const nodes = replay ? [] : nodesSetting.split(",").map((n) => n.trim()).filter(Boolean);
-              await client!.build(id, { shards, seed, nodes });
-              setBuiltNodes(nodes);
-              const net = await client!.getNetwork(id);
-              if (background && !replay) {
-                const targets = net.neurons.filter((n) => n.name.startsWith(background.prefix)).map((n) => n.index);
-                if (!targets.length) throw new Error(`background input: no neuron names start with '${background.prefix}'`);
-                await client!.addInput(id, { type: "poisson", targets, rateHz: background.rateHz * targets.length, mv: background.mv, durationMs: null });
-              }
-              dispatch(built(net));
-              setBuiltBackground(JSON.stringify(background));
+                const nodes = replay ? [] : nodesSetting.split(",").map((n) => n.trim()).filter(Boolean);
+                await client!.build(id, { shards, seed, nodes });
+                setBuiltNodes(nodes);
+                const net = await client!.getNetwork(id);
+                if (background && !replay) {
+                  const targets = net.neurons.filter((n) => n.name.startsWith(background.prefix)).map((n) => n.index);
+                  if (!targets.length) throw new Error(`background input: no neuron names start with '${background.prefix}'`);
+                  await client!.addInput(id, { type: "poisson", targets, rateHz: background.rateHz * targets.length, mv: background.mv, durationMs: null });
+                }
+                dispatch(built(net));
+                setBuiltBackground(JSON.stringify(background));
               } finally {
                 setBuilding(false);
               }
             })}
           >
+            <Hammer data-icon="inline-start" />
             {building ? "Building…" : replay ? "Load" : needsRebuild && network ? "Rebuild to apply" : "Build"}
           </Button>
-          <Box sx={{ flex: 1 }} />
+          <div className="flex-1" />
           {network && (
-            <Typography variant="body2" color="text.secondary">
+            <span className="pb-1.5 text-sm text-muted-foreground">
               {network.neurons.length.toLocaleString()} neurons · {network.synapseCount.toLocaleString()} synapses
-            </Typography>
+            </span>
           )}
-          <Chip size="small" label={state ?? "—"} color={state === "running" ? "success" : state === "paused" ? "warning" : "default"} data-testid="state" />
-        </Stack>
-      </Paper>
+          <div className="pb-1.5">
+            <StateBadge state={state} data-testid="state" />
+          </div>
+        </Row>
+      </Panel>
 
-      <Paper variant="outlined" sx={{ p: 1.5 }}>
-        <Stack sx={{ alignItems: "center", flexWrap: "wrap" }} direction="row" spacing={1.5} useFlexGap>
+      <Panel>
+        <Row>
           {state === "paused" ? (
-            <Button variant="contained" startIcon={<PlayArrowIcon />} onClick={act(() => client!.resume(id))}>
+            <Button onClick={act(() => client!.resume(id))}>
+              <Play data-icon="inline-start" />
               Resume
             </Button>
           ) : (
             <Button
-              variant="contained"
-              startIcon={<PlayArrowIcon />}
               disabled={!network || running || building}
               data-testid="start"
               onClick={act(() =>
@@ -249,179 +227,144 @@ export function RunPage() {
                 }),
               )}
             >
+              <Play data-icon="inline-start" />
               Start
             </Button>
           )}
-          <Button startIcon={<PauseIcon />} disabled={state !== "running"} onClick={act(() => client!.pause(id))} data-testid="pause">
+          <Button variant="outline" disabled={state !== "running"} onClick={act(() => client!.pause(id))} data-testid="pause">
+            <Pause data-icon="inline-start" />
             Pause
           </Button>
-          <Button startIcon={<SkipNextIcon />} disabled={!network || state === "running" || building} onClick={act(() => client!.step(id, 10))}>
+          <Button variant="outline" disabled={!network || state === "running" || building} onClick={act(() => client!.step(id, 10))}>
+            <SkipForward data-icon="inline-start" />
             Step 10 ms
           </Button>
-          <Button startIcon={<StopIcon />} disabled={!running} onClick={act(() => client!.stop(id))} data-testid="stop">
+          <Button variant="outline" disabled={!running} onClick={act(() => client!.stop(id))} data-testid="stop">
+            <Square data-icon="inline-start" />
             Stop
           </Button>
-          <TextField
+          <Field
             label="Run for (s)"
+            width={110}
             value={durationText}
-            sx={{ width: 110 }}
             placeholder="until stopped"
             onChange={(e) => setDurationText(e.target.value.replace(/[^\d.]/g, ""))}
             onBlur={() => dispatch(runSettingsChanged({ durationS: Number(durationText) > 0 ? Number(durationText) : null }))}
           />
-          <Box sx={{ width: 220, px: 1 }}>
-            <Typography variant="caption" color="text.secondary">
-              Speed {asFastAsPossible ? "max" : speedLabel(speedLog)}
-            </Typography>
+          <div className="grid w-52 gap-2 pb-1.5">
+            <span className="text-xs text-muted-foreground">Speed {asFastAsPossible ? "max" : speedLabel(speedLog)}</span>
             <Slider
-              size="small"
               min={-6}
               max={6}
               step={1}
-              value={speedLog}
+              value={[speedLog]}
               disabled={asFastAsPossible}
-              valueLabelDisplay="auto"
-              valueLabelFormat={speedLabel}
-              onChange={(_, v) => setSpeedLog(v as number)}
-              onChangeCommitted={(_, v) => running && void act(() => client!.setSpeed(id, speedOf(v as number)))()}
+              aria-label="Speed"
+              onValueChange={([v]) => setSpeedLog(v!)}
+              onValueCommit={([v]) => running && void act(() => client!.setSpeed(id, speedOf(v!)))()}
             />
-          </Box>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={asFastAsPossible}
-                onChange={(e) => {
-                  setAsFastAsPossible(e.target.checked);
-                  if (running) void act(() => client!.setSpeed(id, e.target.checked ? null : speedOf(speedLog)))();
-                }}
-              />
-            }
+          </div>
+          <Toggle
             label="As fast as possible"
+            checked={asFastAsPossible}
+            onChange={(on) => {
+              setAsFastAsPossible(on);
+              if (running) void act(() => client!.setSpeed(id, on ? null : speedOf(speedLog)))();
+            }}
           />
           {!replay && (
-            <FormControlLabel
-              control={<Switch checked={record} disabled={running} onChange={(e) => setRecord(e.target.checked)} data-testid="record" />}
+            <Toggle
               label="Record"
+              checked={record}
+              disabled={running}
+              onChange={setRecord}
+              testId="record"
               title="Record the run (spikes, weights, membrane of inspected neurons); see the Recordings page"
             />
           )}
-        </Stack>
+        </Row>
         {replay && (
-          <Stack direction="row" spacing={2} sx={{ alignItems: "center", mt: 1.5 }} data-testid="seek">
-            <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
-              Replay · seek
-            </Typography>
+          <div className="flex items-center gap-4" data-testid="seek">
+            <span className="text-sm whitespace-nowrap">Replay · seek</span>
             <Slider
-              size="small"
+              className="flex-1"
               min={0}
               max={Math.max(session.replayEndMs ?? 0, 1)}
-              value={running ? session.simMs : seekMs}
+              value={[running ? session.simMs : seekMs]}
               disabled={running || !network}
-              valueLabelDisplay="auto"
-              valueLabelFormat={(v) => `${(v / 1000).toFixed(2)} s`}
-              onChange={(_, v) => setSeekMs(v as number)}
-              onChangeCommitted={(_, v) => void act(() => client!.seek(id, v as number))()}
+              aria-label="Seek"
+              onValueChange={([v]) => {
+                setSeeking(true);
+                setSeekMs(v!);
+              }}
+              onValueCommit={([v]) => {
+                setSeeking(false);
+                void act(() => client!.seek(id, v!))();
+              }}
             />
-            <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
-              {running ? "stop to seek" : `of ${((session.replayEndMs ?? 0) / 1000).toFixed(2)} s`}
-            </Typography>
-          </Stack>
+            <span className="text-xs whitespace-nowrap text-muted-foreground">
+              {running ? "stop to seek" : `${(seekMs / 1000).toFixed(2)} of ${((session.replayEndMs ?? 0) / 1000).toFixed(2)} s`}
+            </span>
+          </div>
         )}
         {!replay && (
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mt: 1.5 }}>
-          <TextField label="Stimulate neurons starting with" value={stimulus.prefix} sx={{ width: 240 }} onChange={(e) => setStimulus({ ...stimulus, prefix: e.target.value })} />
-          <TextField label="mV" type="number" value={stimulus.mv} sx={{ width: 80 }} onChange={(e) => setStimulus({ ...stimulus, mv: Number(e.target.value) })} />
-          <Button
-            startIcon={<BoltIcon />}
-            disabled={!network}
-            data-testid="stimulate"
-            onClick={act(async () => {
-              const targets = network!.neurons.filter((n) => n.name.startsWith(stimulus.prefix)).map((n) => n.index);
-              if (!targets.length) throw new Error(`no neuron names start with '${stimulus.prefix}'`);
-              await client!.stimulate(id, targets, stimulus.mv);
-            })}
-          >
-            Stimulate
-          </Button>
-          <Box sx={{ flex: 1 }} />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={background !== null}
-                onChange={(e) => dispatch(backgroundChanged(e.target.checked ? backgroundDraft : null))}
-                data-testid="background"
-              />
-            }
-            label="Background input"
-            title="Poisson input, applied when the network is built"
-          />
-          <TextField
-            label="Neurons starting with"
-            placeholder="all"
-            value={backgroundDraft.prefix}
-            sx={{ width: 170 }}
-            onChange={(e) => {
-              const next = { ...backgroundDraft, prefix: e.target.value };
-              setBackgroundDraft(next);
-              if (background) dispatch(backgroundChanged(next));
-            }}
-          />
-          <TextField
-            label="Hz per neuron"
-            type="number"
-            value={backgroundDraft.rateHz}
-            sx={{ width: 120 }}
-            onChange={(e) => {
-              const next = { ...backgroundDraft, rateHz: Math.max(0.001, Number(e.target.value)) };
-              setBackgroundDraft(next);
-              if (background) dispatch(backgroundChanged(next));
-            }}
-          />
-          <TextField
-            label="mV"
-            type="number"
-            value={backgroundDraft.mv}
-            sx={{ width: 80 }}
-            onChange={(e) => {
-              const next = { ...backgroundDraft, mv: Number(e.target.value) };
-              setBackgroundDraft(next);
-              if (background) dispatch(backgroundChanged(next));
-            }}
-          />
-        </Stack>
+          <Row>
+            <Field label="Stimulate neurons starting with" width={240} value={stimulus.prefix} onChange={(e) => setStimulus({ ...stimulus, prefix: e.target.value })} />
+            <Field label="mV" type="number" width={80} value={stimulus.mv} onChange={(e) => setStimulus({ ...stimulus, mv: Number(e.target.value) })} />
+            <Button
+              variant="outline"
+              disabled={!network}
+              data-testid="stimulate"
+              onClick={act(async () => {
+                const targets = network!.neurons.filter((n) => n.name.startsWith(stimulus.prefix)).map((n) => n.index);
+                if (!targets.length) throw new Error(`no neuron names start with '${stimulus.prefix}'`);
+                await client!.stimulate(id, targets, stimulus.mv);
+              })}
+            >
+              <Zap data-icon="inline-start" />
+              Stimulate
+            </Button>
+            <div className="flex-1" />
+            <Toggle
+              label="Background input"
+              checked={background !== null}
+              onChange={(on) => dispatch(backgroundChanged(on ? backgroundDraft : null))}
+              testId="background"
+              title="Poisson input, applied when the network is built"
+            />
+            <Field label="Neurons starting with" width={170} placeholder="all" value={backgroundDraft.prefix} onChange={(e) => setBackground({ ...backgroundDraft, prefix: e.target.value })} />
+            <Field label="Hz per neuron" type="number" width={120} value={backgroundDraft.rateHz} onChange={(e) => setBackground({ ...backgroundDraft, rateHz: Math.max(0.001, Number(e.target.value)) })} />
+            <Field label="mV" type="number" width={80} value={backgroundDraft.mv} onChange={(e) => setBackground({ ...backgroundDraft, mv: Number(e.target.value) })} />
+          </Row>
         )}
         {needsRebuild && !replay && (
-          <Typography variant="caption" color="warning.main" sx={{ display: "block", mt: 1 }} data-testid="rebuild-hint">
-            Background input is applied when the network is built: {running ? "stop and rebuild" : "press Rebuild"} to
-            apply the change.
-          </Typography>
+          <p className="text-xs text-warning" data-testid="rebuild-hint">
+            Background input is applied when the network is built: {running ? "stop and rebuild" : "press Rebuild"} to apply the change.
+          </p>
         )}
-      </Paper>
+      </Panel>
 
-      {network && client && !replay && (
-        <Modulators client={client} session={id} modulators={network.modulators} onError={setError} />
-      )}
+      {network && client && !replay && <Modulators client={client} session={id} modulators={network.modulators} onError={setError} />}
 
       {activeInput && activeInput.session === id && (
-        <Alert
-          severity="info"
+        <Notice
           action={
-            <Button color="inherit" size="small" onClick={stopInput} data-testid="stop-input-run">
+            <Button size="sm" variant="outline" onClick={stopInput} data-testid="stop-input-run">
               Stop
             </Button>
           }
         >
           {activeInput.kind === "microphone" ? "The microphone is streaming into this network." : "A designed signal is streaming into this network."}
-        </Alert>
+        </Notice>
       )}
       {error && (
-        <Alert severity="error" onClose={() => setError(null)}>
+        <Notice tone="error" onClose={() => setError(null)}>
           {error}
-        </Alert>
+        </Notice>
       )}
 
-      <Paper variant="outlined" sx={{ p: 1.5 }}>
-        <Stack sx={{ flexWrap: "wrap" }} direction="row" spacing={3} useFlexGap data-testid="timing">
+      <Panel>
+        <div className="flex flex-wrap gap-x-8 gap-y-2" data-testid="timing">
           <Stat label="Simulated time" value={`${((stats?.simMs ?? session.simMs) / 1000).toFixed(3)} s`} />
           <Stat label="Speed" value={!stats || stats.speed === 0 ? "—" : Number.isFinite(stats.speed) ? `×${stats.speed.toPrecision(3)}` : "max"} />
           <Stat label="Behind the clock" value={`${(stats?.lagMs ?? 0).toFixed(1)} ms`} warn={(stats?.lagMs ?? 0) > 20} />
@@ -429,19 +372,17 @@ export function RunPage() {
           <Stat label="Spikes" value={`${(stats?.spikesPerS ?? 0).toLocaleString()}/s`} />
           <Stat label="Detail" value={stats ? (["exact", "counts", "cells"][stats.lod] ?? "?") : "—"} warn={!!stats && stats.lod !== Lod.Exact} />
           <Stat label="Dropped" value={`${stats?.droppedFrames ?? 0} frames · ${stats?.droppedEvents ?? 0} events`} warn={!!stats && stats.droppedFrames + stats.droppedEvents > 0} />
-        </Stack>
-      </Paper>
+        </div>
+      </Panel>
 
       {network && client && builtNodes.length > 0 && <ClusterPanel client={client} session={id} running={running} lockstep={lockstep} onLockstep={setLockstep} />}
 
       {network && live && (
-        <Paper variant="outlined" sx={{ p: 1.5 }}>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 1 }}>
-            <Typography variant="subtitle2" sx={{ flex: 1 }}>
-              Network
-            </Typography>
-            <FormControlLabel control={<Switch checked={show3d} onChange={(e) => setShow3d(e.target.checked)} />} label="3D view" />
-          </Stack>
+        <Panel>
+          <div className="flex items-center gap-3">
+            <Heading className="flex-1">Network</Heading>
+            <Toggle label="3D view" checked={show3d} onChange={setShow3d} />
+          </div>
           {show3d && (
             <Network3D
               network={network}
@@ -456,36 +397,38 @@ export function RunPage() {
               onRegion={setRegion}
             />
           )}
-        </Paper>
+        </Panel>
       )}
-      <Paper variant="outlined" sx={{ p: 1.5 }}>
-        <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 1 }}>
-          <Typography variant="subtitle2" sx={{ flex: 1 }}>
+
+      <Panel>
+        <Row>
+          <Heading className="flex-1 self-center">
             Spikes {selection.length < (network?.neurons.length ?? 0) ? `(${selection.length} of ${network?.neurons.length})` : ""}
-          </Typography>
+          </Heading>
           {region && (
-            <Chip
-              label={`Region: ${region.length.toLocaleString()} neurons${region.length > MAX_ROWS ? ` (first ${MAX_ROWS} shown)` : ""}`}
-              onDelete={() => setRegion(null)}
-              data-testid="region"
-            />
+            <Badge variant="secondary" className="mb-1.5 gap-1 pr-0.5" data-testid="region">
+              Region: {region.length.toLocaleString()} neurons{region.length > MAX_ROWS ? ` (first ${MAX_ROWS} shown)` : ""}
+              <button type="button" aria-label="Clear the region" className="opacity-60 hover:opacity-100" onClick={() => setRegion(null)}>
+                <X className="size-3" />
+              </button>
+            </Badge>
           )}
-          <TextField label="Show neurons starting with" value={filter} sx={{ width: 240 }} onChange={(e) => setFilter(e.target.value)} />
-          <TextField select label="Time window" value={windowMs} sx={{ width: 120 }} onChange={(e) => setWindowMs(Number(e.target.value))}>
-            {[1000, 5000, 20_000].map((ms) => (
-              <MenuItem key={ms} value={ms}>
-                {ms / 1000} s
-              </MenuItem>
-            ))}
-          </TextField>
-        </Stack>
+          <Field label="Show neurons starting with" width={240} value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <Choice
+            label="Time window"
+            width={120}
+            value={windowMs}
+            onChange={setWindowMs}
+            options={[1000, 5000, 20_000].map((ms) => ({ value: ms, label: `${ms / 1000} s` }))}
+          />
+        </Row>
         {running && stats !== null && stats.spikesPerS === 0 && (
-          <Alert severity="info" sx={{ mb: 1 }} data-testid="no-spikes">
-            No spikes in the last second. Most networks need input: stimulate their input neurons, or turn on
-            background input (e.g. neurons starting with <code>input-</code>) and build again.
-          </Alert>
+          <Notice data-testid="no-spikes">
+            No spikes in the last second. Most networks need input: stimulate their input neurons, or turn on background input (e.g. neurons
+            starting with <code>input-</code>) and build again.
+          </Notice>
         )}
-        <Box ref={rasterRef} data-testid="raster">
+        <div ref={rasterRef} data-testid="raster">
           {live && selection.length > 0 && (
             <Chart
               chartId={1}
@@ -500,18 +443,19 @@ export function RunPage() {
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
               <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
-              <OrdinalAxis axisId="y-axis-1" location={AxisLocation.Left} categories={selection.map((n) => n.name)}
+              <OrdinalAxis
+                axisId="y-axis-1"
+                location={AxisLocation.Left}
+                categories={selection.map((n) => n.name)}
                 label={showNames ? "" : `${selection.length} neurons`}
                 font={showNames ? (rowHeight < 14 ? { size: 9 } : undefined) : { color: "transparent" }}
               />
               <RasterPlot spikeMargin={rowHeight >= 10 ? 1 : 0} />
             </Chart>
           )}
-        </Box>
-        <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>
-          Population rate (Hz per neuron)
-        </Typography>
-        <Box data-testid="rate">
+        </div>
+        <Heading className="mt-2">Population rate (Hz per neuron)</Heading>
+        <div data-testid="rate">
           {live && (
             <Chart
               chartId={2}
@@ -530,8 +474,13 @@ export function RunPage() {
               <ScatterPlot />
             </Chart>
           )}
-        </Box>
-      </Paper>
+        </div>
+      </Panel>
+
+      {network && client && (
+        <WeightsPanel client={client} session={id} network={network} width={width} labelWidth={labelWidth} colors={colors} windowMs={windowMs} />
+      )}
+
       {network && client && (
         <Inspector
           client={client}
@@ -546,6 +495,6 @@ export function RunPage() {
           replay={replay}
         />
       )}
-    </Stack>
+    </div>
   );
 }

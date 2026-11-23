@@ -2,8 +2,7 @@
 // neuron, shift-drag a box to select a region (it becomes the raster's rows). Small networks are instanced spheres;
 // big ones are point sprites (one vertex per neuron), so 100k+ neurons are one cheap draw call either way.
 
-import { Box, Stack, Typography } from "@mui/material";
-import { useTheme } from "@mui/material/styles";
+import { cssColor, useThemeMode } from "../theme";
 import type { Frame, Network } from "@spikes/client";
 import { useEffect, useRef, useState } from "react";
 import type { Observable } from "rxjs";
@@ -161,7 +160,7 @@ interface Props {
 }
 
 export function Network3D({ network, frames, width, height, selected, onPick, onRegion }: Props) {
-  const theme = useTheme();
+  const mode = useThemeMode();
   const mount = useRef<HTMLDivElement>(null);
   const scene = useRef<{
     renderer: THREE.WebGLRenderer;
@@ -191,7 +190,7 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(width, height);
-    renderer.setClearColor(theme.palette.background.paper);
+    renderer.setClearColor(cssColor("--card"));
     el.appendChild(renderer.domElement);
 
     // Fit the network into view.
@@ -229,7 +228,7 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
     }
     const allGeometry = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(all, 3));
     // The theme's text colours carry their own alpha, which three.js ignores: use plain ink and set the opacity.
-    const ink = theme.palette.mode === "dark" ? 0xffffff : 0x000000;
+    const ink = mode === "dark" ? 0xffffff : 0x000000;
     const faint = new THREE.LineSegments(
       allGeometry,
       new THREE.LineBasicMaterial({ color: ink, transparent: true, opacity: n > 500 ? 0.07 : 0.18 }),
@@ -285,7 +284,7 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
       scene.current = null;
     };
     // The scene is rebuilt for a new network or theme; size changes are handled below.
-  }, [network, theme]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [network, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const s = scene.current;
@@ -393,34 +392,32 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
   };
 
   return (
-    <Stack spacing={0.5}>
-      <Box
+    <div className="flex flex-col gap-1">
+      <div
         ref={mount}
         data-testid="network-3d"
-        sx={{ position: "relative", width, height, cursor: "grab", touchAction: "none" }}
+        className="relative cursor-grab touch-none"
+        style={{ width, height }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
       >
         {box && (
-          <Box
-            sx={{
-              position: "absolute",
+          <div
+            className="pointer-events-none absolute border border-highlight bg-foreground/5"
+            style={{
               left: Math.min(box.x0, box.x1),
               top: Math.min(box.y0, box.y1),
               width: Math.abs(box.x1 - box.x0),
               height: Math.abs(box.y1 - box.y0),
-              border: 1,
-              borderColor: "secondary.main",
-              bgcolor: "action.hover",
-              pointerEvents: "none",
+              borderColor: "var(--highlight)",
             }}
           />
         )}
-      </Box>
-      <Typography variant="caption" color="text.secondary">
+      </div>
+      <p className="text-xs text-muted-foreground">
         Drag to orbit, scroll to zoom, click a neuron to inspect it, shift-drag to select a region for the raster.
-      </Typography>
-    </Stack>
+      </p>
+    </div>
   );
 }
