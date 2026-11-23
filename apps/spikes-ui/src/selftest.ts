@@ -3,12 +3,22 @@
 
 import { type Frame, spikeCount } from "@spikes/client";
 import { invoke } from "@tauri-apps/api/core";
+import { appDataDir, join } from "@tauri-apps/api/path";
 import { examples } from "./examples";
+import { readProject, writeProject } from "./files";
+import { newProject } from "./project";
 import { TauriClient } from "./tauriClient";
 
 export async function selftest(): Promise<void> {
   const report = (ok: boolean, text: string) => invoke("selftest_report", { ok, report: text });
   try {
+    // Project files through the real fs plugin and its permissions (the app's data folder is in scope).
+    const folder = await join(await appDataDir(), "selftest-project");
+    const project = { ...newProject("selftest"), background: { rateHz: 5, mv: 12 } };
+    await writeProject(folder, project, "(NRN=[(nid=a, LOC=(px1=0, px2=0, px3=0))])");
+    const back = await readProject(folder);
+    const projectOk = JSON.stringify(back.project) === JSON.stringify(project) && back.description.includes("nid=a");
+
     const client = await TauriClient.connect();
     const ring = examples.find((e) => e.name === "ring")!.text;
     const { id } = await client.createSession("selftest", ring);
@@ -28,8 +38,8 @@ export async function selftest(): Promise<void> {
       await new Promise((r) => setTimeout(r, 20));
     }
     const spikes = frames.reduce((n, f) => n + spikeCount(f), 0);
-    const ok = ended && spikes === 25 && network.neurons.length === 25;
-    await report(ok, `neurons=${network.neurons.length} frames=${frames.length} spikes=${spikes} runEnded=${ended}`);
+    const ok = projectOk && ended && spikes === 25 && network.neurons.length === 25;
+    await report(ok, `project=${projectOk} neurons=${network.neurons.length} frames=${frames.length} spikes=${spikes} runEnded=${ended}`);
   } catch (e) {
     await report(false, `error: ${e instanceof Error ? e.message : String(e)}`);
   }

@@ -1,4 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+
+/** An example network (the tests run from apps/spikes-ui). */
+const example = (name: string) => join(process.cwd(), "..", "..", "test-data", "v1", name);
 
 test("open an example, build, stimulate and run it, and watch it live", async ({ page }) => {
   const errors: string[] = [];
@@ -58,4 +63,16 @@ test("the editor suggests keys and explains them", async ({ page }) => {
   await page.keyboard.type("mpd=250 ms)])");
   await page.getByText("mpd", { exact: true }).hover();
   await expect(page.locator(".monaco-hover").filter({ hasText: "decay time constant" })).toBeVisible();
+});
+
+test("open a .boo file and download it again (browser projects)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-projects").click();
+  await page.getByTestId("file-input").setInputFiles(example("ring.boo"));
+  await expect(page.locator(".monaco-editor")).toContainText("hidden-101"); // switched to the editor
+  await page.getByTestId("nav-projects").click();
+  await expect(page.getByLabel("Project name")).toHaveValue("ring");
+  const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("download-network").click()]);
+  expect(readFileSync(await download.path(), "utf8")).toBe(readFileSync(example("ring.boo"), "utf8"));
 });

@@ -120,6 +120,34 @@ Acceptance:
   - if `stream-charts` turns out to limit the raster, the fix goes into the library (it's ours) rather than a
     second charting library.
 
+### A3 status: done (2026-11-22)
+
+`apps/spikes-ui`: React 19 + Vite + Material UI 9 + stream-charts 2.1 + Monaco + Redux Toolkit, as a web app (served
+by `spikes-server --ui`) and a Tauri desktop app (`src-tauri`, crate `spikes-desktop`) with the engine built in.
+
+- **Project page**: a project is a folder with `project.toml` (name, network file, run settings, background input)
+  and the network; desktop: New / Open folder / Save / Save as, recent projects; browser: open a `.boo` file,
+  download the network and `project.toml`. (v1 `.spikes` import dropped: v1 compatibility isn't a goal.)
+- **Network page**: Monaco with the `spikes` language generated from the parser's schema
+  (`spikes-dna::schema`, which the parser now validates keys against): colouring, completions that follow the
+  record and its kind, names defined in the document, hover help; parse errors as markers.
+- **Run page**: build, start/pause/resume/step/stop, speed ×1/64…×64 or max, run duration, stimulus, background
+  input (applied on build), timing-health panel, stream-charts raster (exact spikes of up to 300 selected neurons)
+  and population rate.
+- **Session picker**: open sessions already on the engine (from the CLI, scripts, other windows).
+- **Desktop**: `TauriClient` over IPC (several connections per app), folder dialogs and file access limited to
+  folders the user picks and the app's data folder; self-test mode (`npm run desktop:selftest`).
+- Monaco without its bundled languages: the build went from 15 MB to 5.5 MB.
+
+Acceptance:
+- Chromium (Playwright, against `spikes-server` serving the build): example → apply → build → stimulate → run live
+  → pause → stop; parse errors; suggestions and hover; open/download a `.boo` file.
+- **100k neurons at ~5 Hz, paced on 4 shards, raster (300 rows) and rate drawing live: page at 60 fps, 63 frames/s,
+  6.8 ms behind the clock, ~460k spikes/s, nothing dropped.**
+- Desktop self-test: project files through the real fs plugin, and the ring through real IPC (all 25 spikes).
+- Not automated: the desktop window itself (macOS gives no WebDriver, and screen capture needs permission); the
+  self-test covers its IPC and file paths.
+
 ## A4: views and interaction (2–3 weeks)
 
 - 3D network (instanced neurons, connections for the selection, spike flashes), shared selection, membrane traces,

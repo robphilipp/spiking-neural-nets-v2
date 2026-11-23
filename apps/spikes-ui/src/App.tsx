@@ -1,4 +1,5 @@
 import CodeIcon from "@mui/icons-material/Code";
+import FolderIcon from "@mui/icons-material/Folder";
 import PlayCircleIcon from "@mui/icons-material/PlayCircle";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { AppBar, Box, Chip, Drawer, List, ListItemButton, ListItemIcon, ListItemText, Toolbar, Typography } from "@mui/material";
@@ -6,11 +7,13 @@ import { type ReactNode, useState } from "react";
 import { useConnection } from "./connection";
 import { SessionPicker } from "./components/SessionPicker";
 import { NetworkPage } from "./pages/NetworkPage";
+import { ProjectsPage } from "./pages/ProjectsPage";
 import { RunPage } from "./pages/RunPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
-type Page = "network" | "run" | "settings";
+type Page = "projects" | "network" | "run" | "settings";
 const PAGES: Array<{ id: Page; label: string; icon: ReactNode }> = [
+  { id: "projects", label: "Project", icon: <FolderIcon /> },
   { id: "network", label: "Network", icon: <CodeIcon /> },
   { id: "run", label: "Run", icon: <PlayCircleIcon /> },
   { id: "settings", label: "Settings", icon: <SettingsIcon /> },
@@ -51,6 +54,7 @@ export function App() {
       <Box component="main" sx={{ flex: 1, p: 2, display: "flex", flexDirection: "column", minWidth: 0, overflow: "auto" }}>
         <Toolbar variant="dense" />
         <Box sx={{ flex: 1, minHeight: 0 }}>
+          {page === "projects" && <ProjectsPage onOpened={() => setPage("network")} />}
           {page === "network" && <NetworkPage />}
           {page === "run" && <RunPage />}
           {page === "settings" && <SettingsPage />}

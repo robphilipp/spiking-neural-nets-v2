@@ -23,6 +23,8 @@ serde_json = "1.0"
 spikes-api = { version = "0.1.0", path = "../../../crates/spikes-api" }
 spikes-session = { version = "0.1.0", path = "../../../crates/spikes-session" }
 tauri = { version = "2.12.7", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 
 [lints]
 workspace = true

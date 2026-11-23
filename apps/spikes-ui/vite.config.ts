@@ -6,6 +6,10 @@ const root = fileURLToPath(new URL("../..", import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    // monaco-editor's package exports don't expose its CSS; the slim entry (src/monacoSlim.ts) imports its sources.
+    alias: { "monaco-vs": fileURLToPath(new URL("../../node_modules/monaco-editor/esm/vs", import.meta.url)) },
+  },
   // Tauri serves the built files from disk; relative paths work there and under spikes-server alike.
   base: "./",
   clearScreen: false,

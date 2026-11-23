@@ -33,7 +33,7 @@ import {
 import { useConnection } from "../connection";
 import { useAppDispatch, useAppSelector } from "../hooks";
 import { LiveView, type LiveStats } from "../live";
-import { built, simTime } from "../store";
+import { backgroundChanged, built, runSettingsChanged, simTime } from "../store";
 import { chartColors } from "../theme";
 
 /** The width of an element, following resizes. A callback ref, so it starts measuring whenever the element appears. */
@@ -77,14 +77,23 @@ export function RunPage() {
   const session = useAppSelector((s) => s.session);
   const { id, network, state } = session;
 
-  const [shards, setShards] = useState(2);
-  const [seed, setSeed] = useState(1);
-  const [speedLog, setSpeedLog] = useState(0);
-  const [asFastAsPossible, setAsFastAsPossible] = useState(false);
-  const [durationS, setDurationS] = useState("");
+  // Run settings belong to the project (saved in project.toml).
+  const run = useAppSelector((s) => s.project.project.run);
+  const background = useAppSelector((s) => s.project.project.background);
+  const { shards, seed } = run;
+  const asFastAsPossible = run.speed === null;
+  const [lastSpeedLog, setLastSpeedLog] = useState(0);
+  const speedLog = run.speed ? Math.round(Math.log2(run.speed)) : lastSpeedLog;
+  const setSpeedLog = (v: number) => {
+    setLastSpeedLog(v);
+    dispatch(runSettingsChanged({ speed: speedOf(v) }));
+  };
+  const setAsFastAsPossible = (on: boolean) => dispatch(runSettingsChanged({ speed: on ? null : speedOf(speedLog) }));
+  const [durationText, setDurationText] = useState(run.durationS === null ? "" : String(run.durationS));
+  useEffect(() => setDurationText(run.durationS === null ? "" : String(run.durationS)), [run.durationS]);
   const [filter, setFilter] = useState("");
   const [stimulus, setStimulus] = useState({ prefix: "", mv: 10 });
-  const [background, setBackground] = useState({ hz: 5, mv: 12 });
+  const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12 });
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState<LiveView | null>(null);
   const [stats, setStats] = useState<LiveStats | null>(null);
@@ -148,8 +157,8 @@ export function RunPage() {
     <Stack spacing={1.5}>
       <Paper variant="outlined" sx={{ p: 1.5 }}>
         <Stack sx={{ alignItems: "center", flexWrap: "wrap" }} direction="row" spacing={1.5} useFlexGap>
-          <TextField label="Shards" type="number" value={shards} sx={{ width: 90 }} onChange={(e) => setShards(Math.max(1, Number(e.target.value)))} />
-          <TextField label="Seed" type="number" value={seed} sx={{ width: 90 }} onChange={(e) => setSeed(Number(e.target.value))} />
+          <TextField label="Shards" type="number" value={shards} sx={{ width: 90 }} onChange={(e) => dispatch(runSettingsChanged({ shards: Math.max(1, Math.round(Number(e.target.value)) || 1) }))} />
+          <TextField label="Seed" type="number" value={seed} sx={{ width: 90 }} onChange={(e) => dispatch(runSettingsChanged({ seed: Math.round(Number(e.target.value)) || 0 }))} />
           <Button
             variant="outlined"
             startIcon={<BuildIcon />}
@@ -157,7 +166,12 @@ export function RunPage() {
             data-testid="build"
             onClick={act(async () => {
               await client!.build(id, { shards, seed });
-              dispatch(built(await client!.getNetwork(id)));
+              const net = await client!.getNetwork(id);
+              if (background) {
+                const targets = net.neurons.map((n) => n.index);
+                await client!.addInput(id, { type: "poisson", targets, rateHz: background.rateHz * targets.length, mv: background.mv, durationMs: null });
+              }
+              dispatch(built(net));
             })}
           >
             Build
@@ -184,7 +198,7 @@ export function RunPage() {
               startIcon={<PlayArrowIcon />}
               disabled={!network || running}
               data-testid="start"
-              onClick={act(() => client!.start(id, { speed, durationMs: durationS ? Number(durationS) * 1000 : null }))}
+              onClick={act(() => client!.start(id, { speed, durationMs: run.durationS === null ? null : run.durationS * 1000 }))}
             >
               Start
             </Button>
@@ -198,7 +212,14 @@ export function RunPage() {
           <Button startIcon={<StopIcon />} disabled={!running} onClick={act(() => client!.stop(id))} data-testid="stop">
             Stop
           </Button>
-          <TextField label="Run for (s)" value={durationS} sx={{ width: 110 }} onChange={(e) => setDurationS(e.target.value.replace(/[^\d.]/g, ""))} placeholder="until stopped" />
+          <TextField
+            label="Run for (s)"
+            value={durationText}
+            sx={{ width: 110 }}
+            placeholder="until stopped"
+            onChange={(e) => setDurationText(e.target.value.replace(/[^\d.]/g, ""))}
+            onBlur={() => dispatch(runSettingsChanged({ durationS: Number(durationText) > 0 ? Number(durationText) : null }))}
+          />
           <Box sx={{ width: 220, px: 1 }}>
             <Typography variant="caption" color="text.secondary">
               Speed {asFastAsPossible ? "max" : speedLabel(speedLog)}
@@ -245,19 +266,39 @@ export function RunPage() {
             Stimulate
           </Button>
           <Box sx={{ flex: 1 }} />
-          <TextField label="Background input (Hz per neuron)" type="number" value={background.hz} sx={{ width: 230 }} onChange={(e) => setBackground({ ...background, hz: Number(e.target.value) })} />
-          <TextField label="mV" type="number" value={background.mv} sx={{ width: 80 }} onChange={(e) => setBackground({ ...background, mv: Number(e.target.value) })} />
-          <Button
-            disabled={!network || state !== "ready"}
-            data-testid="background"
-            title="Poisson input to every neuron, from now until the network is rebuilt (only while not running)"
-            onClick={act(async () => {
-              const targets = network!.neurons.map((n) => n.index);
-              await client!.addInput(id, { type: "poisson", targets, rateHz: background.hz * targets.length, mv: background.mv, durationMs: null });
-            })}
-          >
-            Add background input
-          </Button>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={background !== null}
+                onChange={(e) => dispatch(backgroundChanged(e.target.checked ? backgroundDraft : null))}
+                data-testid="background"
+              />
+            }
+            label="Background input"
+            title="Poisson input to every neuron, applied when the network is built"
+          />
+          <TextField
+            label="Hz per neuron"
+            type="number"
+            value={backgroundDraft.rateHz}
+            sx={{ width: 120 }}
+            onChange={(e) => {
+              const next = { ...backgroundDraft, rateHz: Math.max(0.001, Number(e.target.value)) };
+              setBackgroundDraft(next);
+              if (background) dispatch(backgroundChanged(next));
+            }}
+          />
+          <TextField
+            label="mV"
+            type="number"
+            value={backgroundDraft.mv}
+            sx={{ width: 80 }}
+            onChange={(e) => {
+              const next = { ...backgroundDraft, mv: Number(e.target.value) };
+              setBackgroundDraft(next);
+              if (background) dispatch(backgroundChanged(next));
+            }}
+          />
         </Stack>
       </Paper>
 

@@ -123,6 +123,8 @@ fn selftest_report(app: tauri::AppHandle, ok: bool, report: String) {
 /// If the window system can't be initialised.
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             let recordings = app
                 .path()

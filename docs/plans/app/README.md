@@ -1,6 +1,6 @@
 # Plan: app layer (session engine, server, Tauri UI)
 
-Status: **reviewed**, 2026-11-22 (decisions below). **A1, A2 done**; A3 (Tauri app) next. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done) and
+Status: **reviewed**, 2026-11-22 (decisions below). **A1–A3 done**; A4 (views and interaction) next. Builds on the actor framework (`docs/plans/actors/`, phases 1–3 done) and
 the neuron crates (`docs/plans/neurons/`, N1–N4 done). Background on the v1 UI and server is in
 `../../../notes/05-v1-ui.md` and `../../../notes/04-v1-runtime-architecture.md`; the web-layer recommendation this
 plan expands is in `../../../notes/06-lessons-and-v2-implications.md`.
