@@ -59,3 +59,32 @@ test("reward learning, seen end to end: dopamine turns marked synapses into lear
   await expect(page.getByTestId("synapses").locator("tbody tr")).toHaveCount(2);
   await page.getByTestId("stop").click();
 });
+
+test("background input changed after building asks for a rebuild; the dopamine button is near the controls", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click();
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "reward", exact: true }).click();
+  await page.getByTestId("apply").click();
+  await expect(page.getByText("Applied.")).toBeVisible();
+  await page.getByTestId("nav-run").click();
+  await page.getByTestId("build").click();
+  await expect(page.getByText("3 neurons")).toBeVisible();
+
+  // The release button is visible without scrolling.
+  await expect(page.getByTestId("release-dopamine")).toBeInViewport();
+
+  // Switching background input on after building: Build turns into "Rebuild to apply", with a hint.
+  await page.getByLabel("Neurons starting with", { exact: true }).fill("in-");
+  await page.getByTestId("background").check();
+  await expect(page.getByTestId("build")).toHaveText(/Rebuild to apply/);
+  await expect(page.getByTestId("rebuild-hint")).toBeVisible();
+  await page.getByTestId("build").click();
+  await expect(page.getByTestId("build")).toHaveText(/^Build$/);
+  await expect(page.getByTestId("rebuild-hint")).toHaveCount(0);
+  await page.getByTestId("start").click();
+  await expect(page.getByTestId("timing")).toContainText(/Spikes\s*[1-9][\d,]*\/s/, { timeout: 5000 });
+  await page.screenshot({ path: "test-results/run-controls.png" });
+  await page.getByTestId("stop").click();
+});

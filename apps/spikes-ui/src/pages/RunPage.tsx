@@ -106,6 +106,9 @@ export function RunPage() {
   const [error, setError] = useState<string | null>(null);
   /** Building (and applying background input): nothing else may start meanwhile. */
   const [building, setBuilding] = useState(false);
+  /** The background input the current network was built with (it's applied at Build). */
+  const [builtBackground, setBuiltBackground] = useState<string | null>(() => JSON.stringify(background));
+  const needsRebuild = network !== null && JSON.stringify(background) !== builtBackground;
   const [live, setLive] = useState<LiveView | null>(null);
   const [stats, setStats] = useState<LiveStats | null>(null);
   const [rasterRef, width] = useWidth();
@@ -178,7 +181,8 @@ export function RunPage() {
           <TextField label="Shards" type="number" value={shards} sx={{ width: 90 }} onChange={(e) => dispatch(runSettingsChanged({ shards: Math.max(1, Math.round(Number(e.target.value)) || 1) }))} />
           <TextField label="Seed" type="number" value={seed} sx={{ width: 90 }} onChange={(e) => dispatch(runSettingsChanged({ seed: Math.round(Number(e.target.value)) || 0 }))} />
           <Button
-            variant="outlined"
+            variant={needsRebuild && !running ? "contained" : "outlined"}
+            color={needsRebuild && !running ? "warning" : "primary"}
             startIcon={<BuildIcon />}
             disabled={!client || running || building}
             data-testid="build"
@@ -193,12 +197,13 @@ export function RunPage() {
                 await client!.addInput(id, { type: "poisson", targets, rateHz: background.rateHz * targets.length, mv: background.mv, durationMs: null });
               }
               dispatch(built(net));
+              setBuiltBackground(JSON.stringify(background));
               } finally {
                 setBuilding(false);
               }
             })}
           >
-            {building ? "Building…" : "Build"}
+            {building ? "Building…" : needsRebuild && network ? "Rebuild to apply" : "Build"}
           </Button>
           <Box sx={{ flex: 1 }} />
           {network && (
@@ -299,7 +304,7 @@ export function RunPage() {
               />
             }
             label="Background input"
-            title="Poisson input to every neuron, applied when the network is built"
+            title="Poisson input, applied when the network is built"
           />
           <TextField
             label="Neurons starting with"
@@ -335,7 +340,17 @@ export function RunPage() {
             }}
           />
         </Stack>
+        {needsRebuild && (
+          <Typography variant="caption" color="warning.main" sx={{ display: "block", mt: 1 }} data-testid="rebuild-hint">
+            Background input is applied when the network is built: {running ? "stop and rebuild" : "press Rebuild"} to
+            apply the change.
+          </Typography>
+        )}
       </Paper>
+
+      {network && client && (
+        <Modulators client={client} session={id} modulators={network.modulators} onError={setError} />
+      )}
 
       {error && (
         <Alert severity="error" onClose={() => setError(null)}>
@@ -453,9 +468,6 @@ export function RunPage() {
           )}
         </Box>
       </Paper>
-      {network && client && (
-        <Modulators client={client} session={id} modulators={network.modulators} onError={setError} />
-      )}
       {network && client && (
         <Inspector
           client={client}
