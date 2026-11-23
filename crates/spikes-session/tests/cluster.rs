@@ -261,7 +261,10 @@ fn a_network_generated_in_code_builds_on_nodes() {
     // Its "source" is a placeholder: the nodes get the description itself.
     let engine = Engine::new();
     let mut description = spikes_dna::parse(&data("v1", "stdp-test.boo")).unwrap();
-    description.neurons.iter_mut().for_each(|n| n.id = format!("gen-{}", n.id));
+    description
+        .neurons
+        .iter_mut()
+        .for_each(|n| n.id = format!("gen-{}", n.id));
     description.connections.iter_mut().for_each(|c| {
         c.pre = format!("gen-{}", c.pre);
         c.post = format!("gen-{}", c.post);

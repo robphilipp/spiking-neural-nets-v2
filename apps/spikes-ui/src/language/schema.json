@@ -13,12 +13,19 @@
       },
       {
         "key": "NRN",
-        "doc": "The neurons.",
+        "doc": "The neurons, one by one.",
         "value": {
           "type": "list",
           "record": "neuron"
-        },
-        "required": true
+        }
+      },
+      {
+        "key": "POP",
+        "doc": "Populations: many neurons alike, placed at random in a region (named `<nam>-0`, `<nam>-1`, …).",
+        "value": {
+          "type": "list",
+          "record": "population"
+        }
       },
       {
         "key": "CON",
@@ -26,6 +33,14 @@
         "value": {
           "type": "list",
           "record": "connection"
+        }
+      },
+      {
+        "key": "RUL",
+        "doc": "Connection rules: random connections between populations or groups, generated when built.",
+        "value": {
+          "type": "list",
+          "record": "rule"
         }
       },
       {
@@ -1071,6 +1086,535 @@
           "type": "quantity",
           "quantity": "length",
           "unit": "µm"
+        }
+      }
+    ]
+  },
+  {
+    "name": "population",
+    "doc": "Many neurons alike: every neuron key (but `nid` and `LOC`), a count, and a region they're placed in at random.",
+    "kind_key": "nty",
+    "keys": [
+      {
+        "key": "nam",
+        "doc": "The population's name; its neurons are `<nam>-0`, `<nam>-1`, … Rules and groups refer to it.",
+        "value": {
+          "type": "name"
+        },
+        "required": true
+      },
+      {
+        "key": "cnt",
+        "doc": "How many neurons.",
+        "value": {
+          "type": "number"
+        },
+        "required": true
+      },
+      {
+        "key": "REG",
+        "doc": "Where they are: placed uniformly at random.",
+        "value": {
+          "type": "record",
+          "record": "region"
+        },
+        "required": true
+      },
+      {
+        "key": "sed",
+        "doc": "Seed for the positions.",
+        "value": {
+          "type": "number"
+        },
+        "default": "1"
+      },
+      {
+        "key": "grp",
+        "doc": "Its execution group.",
+        "value": {
+          "type": "reference",
+          "to": "group"
+        },
+        "default": "default"
+      },
+      {
+        "key": "nty",
+        "doc": "Dynamics: `mi` monostable integrator, `bi` bistable integrator (fires tonically once excited), `mr` monostable resonator, `br` bistable resonator (limit cycle).",
+        "value": {
+          "type": "choice",
+          "values": [
+            "mi",
+            "bi",
+            "mr",
+            "br"
+          ]
+        },
+        "default": "mi"
+      },
+      {
+        "key": "inh",
+        "doc": "Its outgoing connections are inhibitory by default.",
+        "value": {
+          "type": "bool"
+        },
+        "default": "f"
+      },
+      {
+        "key": "mst",
+        "doc": "Firing threshold.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "10 mV",
+        "only": [
+          "mi",
+          "mr",
+          "br"
+        ]
+      },
+      {
+        "key": "lct",
+        "doc": "Bistable: the threshold that starts tonic firing.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "15 mV",
+        "only": [
+          "bi"
+        ]
+      },
+      {
+        "key": "rst",
+        "doc": "Bistable: the threshold below which tonic firing stops.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "10 mV",
+        "only": [
+          "bi"
+        ]
+      },
+      {
+        "key": "tfr",
+        "doc": "Bistable: the tonic firing rate.",
+        "value": {
+          "type": "quantity",
+          "quantity": "frequency",
+          "unit": "Hz"
+        },
+        "default": "10 Hz",
+        "only": [
+          "bi"
+        ]
+      },
+      {
+        "key": "rfp",
+        "doc": "Absolute refractory period after a spike: input is lost and the potential held at `mnp`.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "20 ms"
+      },
+      {
+        "key": "rfb",
+        "doc": "Relative refractoriness after the absolute period: a kernel of this area (mV·ms) lowering the potential, decaying with time since the spike.",
+        "value": {
+          "type": "quantity",
+          "quantity": "flux",
+          "unit": "µWb"
+        },
+        "default": "0.08 µWb"
+      },
+      {
+        "key": "mnp",
+        "doc": "Minimum (resting) membrane potential.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "0 mV"
+      },
+      {
+        "key": "mpd",
+        "doc": "Membrane potential decay time constant.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "250 ms"
+      },
+      {
+        "key": "mpr",
+        "doc": "Rise time: how long a crossing input takes to make the spike.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "2 ms"
+      },
+      {
+        "key": "mpn",
+        "doc": "Membrane noise: a Wiener process of this magnitude per √ms.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "0.1 mV"
+      },
+      {
+        "key": "wnm",
+        "doc": "Noise added to incoming weights at each signal.",
+        "value": {
+          "type": "number"
+        },
+        "default": "0"
+      },
+      {
+        "key": "spp",
+        "doc": "Spike amplitude sent along outgoing connections (scaled by each synapse's weight).",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "1 mV"
+      },
+      {
+        "key": "csp",
+        "doc": "Axon conduction speed: outgoing delays are `syd + distance / csp`.",
+        "value": {
+          "type": "quantity",
+          "quantity": "speed",
+          "unit": "m/s"
+        },
+        "default": "10 m/s"
+      },
+      {
+        "key": "syd",
+        "doc": "Synaptic delay of outgoing connections (transmitter release to postsynaptic current); fast chemical synapses take ~0.2–0.5 ms.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "0.5 ms"
+      },
+      {
+        "key": "ipb",
+        "doc": "Intrinsic plasticity: the threshold shift added at each spike.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "0 mV"
+      },
+      {
+        "key": "ipl",
+        "doc": "Intrinsic plasticity: the learning amplitude.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "0 mV"
+      },
+      {
+        "key": "ipd",
+        "doc": "Intrinsic plasticity: decay time constant between spikes.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "10 min"
+      },
+      {
+        "key": "WDF",
+        "doc": "Weight decay of incoming synapses toward their equilibrium weight.",
+        "value": {
+          "type": "record",
+          "record": "weightDecay"
+        }
+      },
+      {
+        "key": "WLF",
+        "doc": "Weight limits of incoming synapses.",
+        "value": {
+          "type": "record",
+          "record": "weightLimit"
+        }
+      },
+      {
+        "key": "SRP",
+        "doc": "Stochastic transmitter release of incoming synapses (facilitation and depletion).",
+        "value": {
+          "type": "record",
+          "record": "release"
+        }
+      },
+      {
+        "key": "SNT",
+        "doc": "Old name for `SRP`.",
+        "value": {
+          "type": "record",
+          "record": "release"
+        },
+        "hidden": true
+      },
+      {
+        "key": "RES",
+        "doc": "Resonator parameters.",
+        "value": {
+          "type": "record",
+          "record": "resonance"
+        },
+        "only": [
+          "mr",
+          "br"
+        ]
+      },
+      {
+        "key": "HIP",
+        "doc": "Homeostatic intrinsic plasticity: steer the firing rate toward a target.",
+        "value": {
+          "type": "record",
+          "record": "homeostasis"
+        }
+      },
+      {
+        "key": "RCP",
+        "doc": "Neuromodulator receptors: how modulators change this neuron.",
+        "value": {
+          "type": "list",
+          "record": "receptor"
+        }
+      },
+      {
+        "key": "REL",
+        "doc": "A modulator this neuron releases when it spikes.",
+        "value": {
+          "type": "record",
+          "record": "modulatorRelease"
+        }
+      }
+    ]
+  },
+  {
+    "name": "region",
+    "doc": "A region of space in µm: a box (`bx`, from a corner) or a ball (`sp`, around a center).",
+    "kind_key": "cst",
+    "keys": [
+      {
+        "key": "cst",
+        "doc": "`bx` a box from corner (px1, px2, px3) with sides (sx1, sx2, sx3); `sp` a ball around (px1, px2, px3) of radius `rad`.",
+        "value": {
+          "type": "choice",
+          "values": [
+            "bx",
+            "sp"
+          ]
+        },
+        "default": "bx"
+      },
+      {
+        "key": "px1",
+        "doc": "x of the corner (box) or center (ball).",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        },
+        "required": true
+      },
+      {
+        "key": "px2",
+        "doc": "y.",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        },
+        "required": true
+      },
+      {
+        "key": "px3",
+        "doc": "z.",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        },
+        "required": true
+      },
+      {
+        "key": "sx1",
+        "doc": "Size along x.",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        },
+        "required": true,
+        "only": [
+          "bx"
+        ]
+      },
+      {
+        "key": "sx2",
+        "doc": "Size along y.",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        },
+        "required": true,
+        "only": [
+          "bx"
+        ]
+      },
+      {
+        "key": "sx3",
+        "doc": "Size along z.",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        },
+        "required": true,
+        "only": [
+          "bx"
+        ]
+      },
+      {
+        "key": "rad",
+        "doc": "Radius.",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        },
+        "required": true,
+        "only": [
+          "sp"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "rule",
+    "doc": "Random connections from the `prp` neurons to each `psp` neuron: `cnt` inputs each, or each pair with probability `prb`; optionally only within `rad`. Generated when the network is built (the same for the same seed), never listed one by one.",
+    "keys": [
+      {
+        "key": "prp",
+        "doc": "Sending neurons: a population or a group.",
+        "value": {
+          "type": "name"
+        },
+        "required": true
+      },
+      {
+        "key": "psp",
+        "doc": "Receiving neurons: a population or a group.",
+        "value": {
+          "type": "name"
+        },
+        "required": true
+      },
+      {
+        "key": "cnt",
+        "doc": "Inputs per receiving neuron (from different senders).",
+        "value": {
+          "type": "number"
+        }
+      },
+      {
+        "key": "prb",
+        "doc": "Probability of each (sender, receiver) pair instead.",
+        "value": {
+          "type": "number"
+        }
+      },
+      {
+        "key": "rad",
+        "doc": "Only senders within this distance.",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        }
+      },
+      {
+        "key": "aut",
+        "doc": "Allow a neuron to connect to itself.",
+        "value": {
+          "type": "bool"
+        },
+        "default": "f"
+      },
+      {
+        "key": "cnw",
+        "doc": "Initial weight.",
+        "value": {
+          "type": "weight"
+        },
+        "required": true
+      },
+      {
+        "key": "eqw",
+        "doc": "Equilibrium weight (default: the initial weight).",
+        "value": {
+          "type": "weight"
+        }
+      },
+      {
+        "key": "lrn",
+        "doc": "Learning rule.",
+        "value": {
+          "type": "reference",
+          "to": "learning"
+        },
+        "default": "flat"
+      },
+      {
+        "key": "cst",
+        "doc": "Weight stickiness.",
+        "value": {
+          "type": "reference",
+          "to": "stickiness"
+        },
+        "default": "none"
+      },
+      {
+        "key": "typ",
+        "doc": "Sign: `exc` or `inh` (default: from each sending neuron's `inh`).",
+        "value": {
+          "type": "choice",
+          "values": [
+            "exc",
+            "inh"
+          ]
+        }
+      },
+      {
+        "key": "syd",
+        "doc": "Synaptic delay, overriding the sending neurons'.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
         }
       }
     ]

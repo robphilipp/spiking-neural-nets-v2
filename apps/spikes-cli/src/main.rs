@@ -108,10 +108,18 @@ fn check(files: &[PathBuf]) -> Result<ExitCode> {
         let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
         match spikes_dna::parse(&text) {
             Ok(d) => println!(
-                "{}: ok: {} neurons, {} connections, {} groups, {} learning rules, {} modulators",
+                "{}: ok: {} neurons{}, {} connections{}, {} groups, {} learning rules, {} modulators",
                 file.display(),
                 d.neurons.len(),
+                match d.populations.len() {
+                    0 => String::new(),
+                    n => format!(" ({n} population{})", if n == 1 { "" } else { "s" }),
+                },
                 d.connections.len(),
+                match d.rules.len() {
+                    0 => String::new(),
+                    n => format!(" + {n} rule{} (expanded when built)", if n == 1 { "" } else { "s" }),
+                },
                 d.groups.len(),
                 d.learning.len(),
                 d.modulators.len()

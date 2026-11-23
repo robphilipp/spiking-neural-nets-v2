@@ -6,6 +6,9 @@ use spikes_dna::NetworkDescription;
 use spikes_network::Network;
 use tempo_runtime::ActorId;
 
+/// Networks with more synapses than this don't list them (in summaries, over the API, in the UI).
+pub const SYNAPSE_LIST_LIMIT: u64 = 500_000;
+
 /// One neuron.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NeuronInfo {
@@ -43,8 +46,11 @@ pub struct SynapseInfo {
 pub struct NetworkInfo {
     /// Neurons by index.
     pub neurons: Vec<NeuronInfo>,
-    /// Synapses, grouped by receiving neuron.
+    /// Synapses, grouped by receiving neuron: all of them, up to [`SYNAPSE_LIST_LIMIT`]; none beyond (ask a neuron
+    /// for its own).
     pub synapses: Vec<SynapseInfo>,
+    /// How many synapses there are.
+    pub synapse_count: u64,
     /// Modulator names, by modulator index.
     pub modulators: Vec<String>,
     /// Learning rules new connections can use.
@@ -93,6 +99,7 @@ impl NetworkInfo {
             names: neurons.iter().map(|n| (n.name.clone(), n.index)).collect(),
             neurons,
             synapses,
+            synapse_count: net.synapse_count,
             modulators: description.modulators.iter().map(|m| m.name.clone()).collect(),
             learning_rules: net.learning_rules(),
             ids,
@@ -113,10 +120,16 @@ impl NetworkInfo {
             indices: ids.iter().enumerate().map(|(i, &id)| (id, i as u32)).collect(),
             ids,
             neurons,
+            synapse_count: synapses.len() as u64,
             synapses,
             modulators: Vec::new(),
             learning_rules: Vec::new(),
         }
+    }
+
+    /// Whether [`Self::synapses`] lists every synapse.
+    pub fn lists_synapses(&self) -> bool {
+        self.synapses.len() as u64 == self.synapse_count
     }
 
     /// The index of the neuron behind actor `id`.

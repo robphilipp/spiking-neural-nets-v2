@@ -221,7 +221,7 @@ export function RunPage() {
           <Box sx={{ flex: 1 }} />
           {network && (
             <Typography variant="body2" color="text.secondary">
-              {network.neurons.length.toLocaleString()} neurons · {network.synapses.length.toLocaleString()} synapses
+              {network.neurons.length.toLocaleString()} neurons · {network.synapseCount.toLocaleString()} synapses
             </Typography>
           )}
           <Chip size="small" label={state ?? "—"} color={state === "running" ? "success" : state === "paused" ? "warning" : "default"} data-testid="state" />

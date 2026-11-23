@@ -631,8 +631,12 @@ pub struct ClusterNode {
 pub struct Network {
     /// Neurons by index.
     pub neurons: Vec<Neuron>,
-    /// Synapses, grouped by receiving neuron.
+    /// Synapses, grouped by receiving neuron: all of them for networks of up to 500,000 synapses, none for bigger
+    /// ones (`getNeuron` gives a neuron's own).
     pub synapses: Vec<Synapse>,
+    /// How many synapses there are.
+    #[ts(type = "number")]
+    pub synapse_count: u64,
     /// Modulator names by index.
     pub modulators: Vec<String>,
     /// Learning rules new connections can use.

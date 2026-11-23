@@ -72,10 +72,18 @@ export function Inspector(props: {
   // Keep the picked neurons when the network changes (connect/prune), dropping any that no longer exist.
   useEffect(() => setPicked((p) => p.filter((n) => names.get(n.index) === n.name)), [names]);
 
+  // A big network doesn't list its synapses: then the first picked neuron's own (from its state) are charted.
+  const listed = network.synapses.length === network.synapseCount;
+  const ownSynapses = !listed && first && state ? state.synapses.length : 0;
   const incoming: WeightSeries[] = useMemo(() => {
     const picks = new Set(picked.map((n) => n.index));
     const seen = new Map<string, number>();
-    return network.synapses
+    const source = listed
+      ? network.synapses
+      : first && state
+        ? state.synapses.map((s, i) => ({ post: first.index, synapse: i, pre: s.pre, weight: s.weight }))
+        : [];
+    return source
       .filter((s) => picks.has(s.post))
       .map((s) => {
         const base = `${names.get(s.pre) ?? s.pre} → ${names.get(s.post) ?? s.post}`;
@@ -83,7 +91,9 @@ export function Inspector(props: {
         seen.set(base, count);
         return { post: s.post, synapse: s.synapse, weight: s.weight, name: count > 1 ? `${base} #${count}` : base };
       });
-  }, [network, picked, names]);
+    // (Only when the set of synapses changes, not at every state refresh.)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [network, picked, names, listed, first?.index, ownSynapses]);
 
   // The live view follows the picked neurons and their synapses.
   useEffect(() => {

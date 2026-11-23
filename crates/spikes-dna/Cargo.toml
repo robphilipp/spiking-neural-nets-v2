@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 spikes-model = { path = "../spikes-model" }
+rand.workspace = true
+rand_xoshiro.workspace = true
 
 [lints]
 workspace = true

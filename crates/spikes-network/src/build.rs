@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
-use spikes_dna::{NetworkDescription, WeightSpec};
+use spikes_dna::{InDegree, NetworkDescription, WeightSpec};
 use spikes_model::{NeuronParams, Receptor, Sign, Synapse, SynapseParams};
 use tempo_runtime::placement::spatial_partitions;
 use tempo_runtime::{ActorId, EdgeIdx, Jitter, RouteEdge, RouteId, SimDuration};
@@ -79,6 +79,8 @@ pub struct Network {
     /// Each neuron's outgoing route (every neuron has one, possibly empty, so connections can be added during a
     /// run).
     pub routes: Vec<RouteId>,
+    /// Connections in all (on every node, not only this one's).
+    pub synapse_count: u64,
     /// What new connections need: positions, delays, signs and synapse parameter sets.
     wiring: Wiring,
     by_name: HashMap<String, NeuronRef>,
@@ -196,6 +198,103 @@ fn draw(spec: WeightSpec, rng: &mut Xoshiro256PlusPlus) -> f64 {
     }
 }
 
+/// A seed for one rule's connections to one receiving neuron.
+fn mix(seed: u64, rule: u64, post: u64) -> u64 {
+    let mut z = seed ^ rule.rotate_left(40) ^ post.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Picks senders from `pool` (ascending neuron indices) for receiver `post`: `k` different ones at random, or each
+/// with probability `p`; `post` itself only with autapses. The result is ascending.
+fn choose(pool: &[u32], post: u32, autapses: bool, degree: InDegree, rng: &mut Xoshiro256PlusPlus, out: &mut Vec<u32>) {
+    out.clear();
+    // Skip the receiver by index arithmetic, without copying the pool.
+    let own = if autapses { None } else { pool.binary_search(&post).ok() };
+    let len = pool.len() - usize::from(own.is_some());
+    let at = |i: usize| match own {
+        Some(o) if i >= o => pool[i + 1],
+        _ => pool[i],
+    };
+    match degree {
+        InDegree::Fixed(k) if k as usize >= len => out.extend((0..len).map(at)),
+        InDegree::Fixed(k) => {
+            // Floyd's algorithm: k distinct indices in O(k).
+            let mut picked = std::collections::HashSet::with_capacity(k as usize);
+            for j in len - k as usize..len {
+                let t = rng.random_range(0..=j);
+                if !picked.insert(t) {
+                    picked.insert(j);
+                }
+            }
+            out.extend(picked.into_iter().map(at));
+            out.sort_unstable();
+        }
+        InDegree::Probability(p) if p >= 1.0 => out.extend((0..len).map(at)),
+        InDegree::Probability(p) => {
+            // Geometric skips: O(chosen), not O(pool).
+            let log_q = (1.0 - p).ln();
+            let mut i = 0usize;
+            loop {
+                let u: f64 = 1.0 - rng.random::<f64>(); // (0, 1]
+                i += (u.ln() / log_q).floor() as usize;
+                if i >= len {
+                    break;
+                }
+                out.push(at(i));
+                i += 1;
+            }
+        }
+    }
+}
+
+/// A uniform grid over some neurons' positions, for finding those within a radius.
+struct Grid {
+    cell: f64,
+    cells: HashMap<[i64; 3], Vec<u32>>,
+    radius: f64,
+}
+
+impl Grid {
+    fn new(members: &[u32], locations: &[[f64; 3]], radius: f64) -> Self {
+        let mut cells: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+        for &m in members {
+            cells
+                .entry(Self::key(locations[m as usize], radius))
+                .or_default()
+                .push(m);
+        }
+        Self {
+            cell: radius,
+            cells,
+            radius,
+        }
+    }
+
+    fn key(p: [f64; 3], cell: f64) -> [i64; 3] {
+        p.map(|v| (v / cell).floor() as i64)
+    }
+
+    /// Appends the members within the radius of `p`, ascending.
+    fn within(&self, p: [f64; 3], locations: &[[f64; 3]], out: &mut Vec<u32>) {
+        let c = Self::key(p, self.cell);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if let Some(list) = self.cells.get(&[c[0] + dx, c[1] + dy, c[2] + dz]) {
+                        out.extend(list.iter().copied().filter(|&m| {
+                            let q = locations[m as usize];
+                            (0..3).map(|d| (q[d] - p[d]).powi(2)).sum::<f64>() <= self.radius * self.radius
+                        }));
+                    }
+                }
+            }
+        }
+        out.sort_unstable();
+    }
+}
+
 /// Builds `description` into `rt`: one actor per neuron, placed by location; one route per neuron with
 /// connection delays `distance / conduction speed` (at least `min_delay`); synapses on the receiving neurons.
 ///
@@ -259,6 +358,31 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
             u16::try_from(synapse_table.insert(params)).expect("fewer than 65,536 distinct synapse parameter sets")
         })
         .collect();
+    // Each rule's parameter set for each kind of receiving neuron.
+    let rule_params: Vec<HashMap<u32, u16>> = description
+        .rules
+        .iter()
+        .map(|rule| {
+            defaults_table
+                .items
+                .iter()
+                .enumerate()
+                .map(|(kind, post)| {
+                    let params = SynapseParams {
+                        decay: post.decay,
+                        limit: post.limit,
+                        stickiness: description.stickiness[&rule.stickiness],
+                        release: post.release,
+                        learning: description.learning[&rule.learning].clone(),
+                        weight_noise: post.weight_noise,
+                    };
+                    let index = u16::try_from(synapse_table.insert(params))
+                        .expect("fewer than 65,536 distinct synapse parameter sets");
+                    (kind as u32, index)
+                })
+                .collect()
+        })
+        .collect();
     let direct: Vec<bool> = (0..description.modulators.len())
         .map(|k| {
             description
@@ -309,11 +433,40 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         })
         .collect();
 
-    // Connections: synapses on the receiver, route edges on the sender.
-    let mut rng = Xoshiro256PlusPlus::seed_from_u64(options.seed);
+    // Connections: synapses on the receiver, route edges on the sender. On a node of a cluster only this node's
+    // neurons are stored, so only their synapses and routes are kept; but every connection is numbered on its
+    // receiver (its edge index) the same way on every node.
+    let local: Vec<bool> = ids.iter().map(|&id| rt.is_local(id)).collect();
     let mut synapses: Vec<Vec<Synapse>> = vec![Vec::new(); n];
     let mut pre: Vec<Vec<ActorId>> = vec![Vec::new(); n];
     let mut edges: Vec<Vec<RouteEdge>> = vec![Vec::new(); n];
+    let mut incoming: Vec<u32> = vec![0; n];
+    let mut add = |from: usize, to: usize, synapse: Synapse, synaptic_delay_ms: Option<f64>| {
+        let edge = EdgeIdx(incoming[to]);
+        incoming[to] = incoming[to].checked_add(1).expect("fewer than 2³² synapses per neuron");
+        if local[to] {
+            synapses[to].push(synapse);
+            pre[to].push(ids[from]);
+        }
+        if local[from] {
+            let distance_um = locations[from]
+                .iter()
+                .zip(&locations[to])
+                .map(|(a, b)| (a - b).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            // Synaptic delay plus conduction along the axon.
+            let neuron = &description.neurons[from];
+            let synaptic = SimDuration::from_millis_f64(synaptic_delay_ms.unwrap_or(neuron.synaptic_delay_ms));
+            let conduction = SimDuration::from_micros_f64(distance_um / neuron.conduction_m_per_s); // µm/µs
+            edges[from].push(RouteEdge {
+                target: ids[to],
+                delay: (synaptic + conduction).max(options.min_delay),
+                edge,
+            });
+        }
+    };
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(options.seed);
     for (c, &synapse_params) in description.connections.iter().zip(&connection_params) {
         let (from, to) = (index[c.pre.as_str()], index[c.post.as_str()]);
         let weight = draw(c.weight, &mut rng);
@@ -322,27 +475,61 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         } else {
             draw(c.equilibrium, &mut rng)
         };
-        let edge = EdgeIdx(u32::try_from(synapses[to].len()).expect("edge index fits u32"));
-        synapses[to].push(Synapse::new(weight, equilibrium, c.sign, synapse_params));
-        pre[to].push(ids[from]);
-
-        let distance_um = locations[from]
-            .iter()
-            .zip(&locations[to])
-            .map(|(a, b)| (a - b).powi(2))
-            .sum::<f64>()
-            .sqrt();
-        // Synaptic delay plus conduction along the axon.
-        let neuron = &description.neurons[from];
-        let synaptic = SimDuration::from_millis_f64(c.synaptic_delay_ms.unwrap_or(neuron.synaptic_delay_ms));
-        let conduction = SimDuration::from_micros_f64(distance_um / neuron.conduction_m_per_s); // m/s = µm/µs
-        let delay = (synaptic + conduction).max(options.min_delay);
-        edges[from].push(RouteEdge {
-            target: ids[to],
-            delay,
-            edge,
-        });
+        add(
+            from,
+            to,
+            Synapse::new(weight, equilibrium, c.sign, synapse_params),
+            c.synaptic_delay_ms,
+        );
     }
+
+    // Rules, receiving neuron by receiving neuron, each with its own random stream: the same connections on every
+    // node, whichever neurons it keeps.
+    for (r, rule) in description.rules.iter().enumerate() {
+        let senders = description.members(&rule.pre).unwrap_or_default();
+        let receivers = description.members(&rule.post).unwrap_or_default();
+        let grid = rule.radius_um.map(|radius| Grid::new(&senders, &locations, radius));
+        let mut candidates: Vec<u32> = Vec::new();
+        let mut chosen: Vec<u32> = Vec::new();
+        for &post in &receivers {
+            let to = post as usize;
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(mix(options.seed, r as u64, u64::from(post)));
+            let pool: &[u32] = match &grid {
+                Some(grid) => {
+                    candidates.clear();
+                    grid.within(locations[to], &locations, &mut candidates);
+                    &candidates
+                }
+                None => &senders,
+            };
+            choose(pool, post, rule.autapses, rule.in_degree, &mut rng, &mut chosen);
+            if chosen.is_empty() {
+                continue;
+            }
+            let params = rule_params[r][&defaults[to]];
+            for &from in &chosen {
+                let from = from as usize;
+                let weight = draw(rule.weight, &mut rng);
+                let equilibrium = if rule.equilibrium == rule.weight {
+                    weight
+                } else {
+                    draw(rule.equilibrium, &mut rng)
+                };
+                let sign = rule.sign.unwrap_or(if description.neurons[from].inhibitory {
+                    Sign::Inhibitory
+                } else {
+                    Sign::Excitatory
+                });
+                add(
+                    from,
+                    to,
+                    Synapse::new(weight, equilibrium, sign, params),
+                    rule.synaptic_delay_ms,
+                );
+            }
+        }
+    }
+    let synapse_count: u64 = incoming.iter().map(|&k| u64::from(k)).sum();
     let mut routes = Vec::with_capacity(n);
     for (i, ((synapses, pre), edges)) in synapses.into_iter().zip(pre).zip(edges).enumerate() {
         let connected = !edges.is_empty();
@@ -379,6 +566,7 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
     Network {
         params,
         routes,
+        synapse_count,
         wiring,
         by_name: description
             .neurons

@@ -297,6 +297,7 @@ impl Connection {
                                 inhibitory: s.inhibitory,
                             })
                             .collect(),
+                        synapse_count: network.synapse_count,
                         modulators: network.modulators.clone(),
                         learning_rules: network.learning_rules.clone(),
                     },

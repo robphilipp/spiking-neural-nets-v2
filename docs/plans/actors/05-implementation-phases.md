@@ -257,6 +257,25 @@ node builds the whole description and keeps its share); the 10⁸-neuron synthet
 - **Accept (goal)**: 10⁶ neurons × 10³ synapses at 5 Hz on a cluster, interactive at some `time_factor`, with
   reported throughput and lateness.
 
+### Phase 6 status: in progress (2026-11-23)
+
+Milestone 1, big networks on one machine, done:
+- **Populations and connection rules** in the description language (`POP`, `RUL`; schema-driven, so the editor
+  knows them). A population is a neuron record with a count and a region (box or ball); its neurons are placed at
+  random and named `<nam>-<i>`. A rule gives each receiving neuron `cnt` distinct senders, or each sender with
+  probability `prb`, optionally only within `rad`, with weights from a distribution. Rules stay rules in the
+  description: they're expanded when the network is built, per receiving neuron with its own seeded stream, so
+  every node of a cluster builds the same network, keeping only its own neurons' synapses and routes.
+- Networks over 500,000 synapses don't list them in summaries, over the API or in the UI (counts instead; a
+  neuron's own synapses on request).
+- Fixed synapses and unused intrinsic plasticity skip work they don't need (exact).
+- Measured (`scale` example, 64 GB, 10 cores, 8 shards): **1M neurons × 100 synapses (10⁸) built in 22 s, 14.4 GB**
+  (about 140 B per synapse), running at ~5 Hz at 40 s per simulated second (12 M synaptic events/s). The same
+  network listed connection by connection took 4.6 GB per 2×10⁷ synapses just to describe.
+
+Next: compact synapse and edge storage (48 + 8 + 24 bytes per synapse now), per-event cost (230–400 ns: queue,
+membrane update, cache misses), the 10⁹-synapse network on a cluster, snapshots.
+
 ## Benchmarks to keep from day one
 
 | Name | What it measures |

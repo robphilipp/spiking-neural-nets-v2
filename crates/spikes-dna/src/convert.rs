@@ -9,8 +9,8 @@ use spikes_model::{
 };
 
 use crate::description::{
-    ConnectionDescription, GroupDescription, ModulatorDescription, NetworkDescription, NeuronDescription,
-    SynapseDefaults, WeightSpec,
+    ConnectionDescription, ConnectionRule, GroupDescription, InDegree, ModulatorDescription, NetworkDescription,
+    NeuronDescription, PopulationDescription, Region, SynapseDefaults, WeightSpec,
 };
 use crate::schema;
 use crate::syntax::{Field, Node, ParseError, Span, Value};
@@ -216,8 +216,11 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
         return Err(errors.0);
     };
     top.check_keys(&schema::keys("network", None), &mut errors);
-    if top.get("NRN").is_none() {
-        top.missing("NRN", &mut errors);
+    if top.get("NRN").is_none() && top.get("POP").is_none() {
+        errors.add(
+            top.span,
+            "a network needs neurons: 'NRN' (one by one) or 'POP' (populations)",
+        );
     }
 
     let groups: Vec<GroupDescription> = list(&top, "GRP", &mut errors)
@@ -246,10 +249,19 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
             errors.add(root.span, format!("modulator '{}' is defined twice in MOD", m.name));
         }
     }
-    let neurons: Vec<NeuronDescription> = list(&top, "NRN", &mut errors)
+    let mut neurons: Vec<NeuronDescription> = list(&top, "NRN", &mut errors)
         .iter()
         .filter_map(|node| neuron(node, &modulator_index, &mut errors))
         .collect();
+    let mut populations: Vec<PopulationDescription> = Vec::new();
+    for node in list(&top, "POP", &mut errors) {
+        if let Some(p) = population(node, &modulator_index, &mut neurons, &mut errors) {
+            if populations.iter().any(|q| q.name == p.name) {
+                errors.add(p.span, format!("population '{}' is defined twice", p.name));
+            }
+            populations.push(p);
+        }
+    }
 
     let mut learning_map: BTreeMap<String, LearningRule> = BTreeMap::from([("flat".to_string(), LearningRule::None)]);
     learning_map.extend(learning);
@@ -274,6 +286,13 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
         }
     }
     let inhibitory: HashMap<&str, bool> = neurons.iter().map(|n| (n.id.as_str(), n.inhibitory)).collect();
+    let mut sets: HashSet<&str> = populations.iter().map(|p| p.name.as_str()).collect();
+    sets.extend(neurons.iter().map(|n| n.group.as_str()));
+    sets.extend(groups.iter().map(|g| g.id.as_str()));
+    let rules: Vec<ConnectionRule> = list(&top, "RUL", &mut errors)
+        .iter()
+        .filter_map(|node| rule(node, &sets, &learning_map, &stickiness_map, &mut errors))
+        .collect();
 
     let mut connections = Vec::new();
     for node in list(&top, "CON", &mut errors) {
@@ -307,7 +326,9 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
         Ok(NetworkDescription {
             groups,
             neurons,
+            populations,
             connections,
+            rules,
             learning: learning_map,
             stickiness: stickiness_map,
             modulators,
@@ -511,12 +532,27 @@ mod default {
 }
 
 fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -> Option<NeuronDescription> {
-    let rec = Rec::of(node, "neuron", errors)?;
+    neuron_like(node, modulators, false, errors)
+}
+
+/// A neuron, or (`template`) a population's neuron: no `nid` or `LOC`, and the population's own keys allowed.
+fn neuron_like(
+    node: &Node,
+    modulators: &HashMap<String, u16>,
+    template: bool,
+    errors: &mut Errors,
+) -> Option<NeuronDescription> {
+    let what = if template { "population" } else { "neuron" };
+    let rec = Rec::of(node, what, errors)?;
     // Neurons accept every neuron key whatever their type; the schema's per-type keys only guide the editor.
-    rec.check_keys(&schema::keys("neuron", None), errors);
+    rec.check_keys(&schema::keys(what, None), errors);
     let q = |key, quantity, default, errors: &mut Errors| rec.quantity(key, quantity, Some(default), errors);
 
-    let id = rec.word("nid", None, &[], errors);
+    let id = if template {
+        String::new()
+    } else {
+        rec.word("nid", None, &[], errors)
+    };
     let group = rec.word("grp", Some("default"), &[], errors);
     let kind_name = rec.word("nty", Some("mi"), &["mi", "bi", "mr", "br"], errors);
     let inhibitory = rec.boolean("inh", false, errors);
@@ -663,6 +699,7 @@ fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -
     });
 
     let location_um = match rec.record("LOC", "location", errors) {
+        _ if template => [0.0; 3],
         Some(loc) => location(&loc, errors),
         None => {
             rec.missing("LOC", errors);
@@ -815,6 +852,188 @@ fn connection(
             });
         }
     }
+}
+
+/// A population: its neurons (appended to `neurons`, named `<nam>-<i>`, placed at random in its region).
+fn population(
+    node: &Node,
+    modulators: &HashMap<String, u16>,
+    neurons: &mut Vec<NeuronDescription>,
+    errors: &mut Errors,
+) -> Option<PopulationDescription> {
+    let template = neuron_like(node, modulators, true, errors)?;
+    let rec = Rec::of(node, "population", errors)?;
+    let name = rec.word("nam", None, &[], errors);
+    let count = rec.quantity("cnt", Quantity::Dimensionless, None, errors);
+    const MAX: f64 = 100_000_000.0;
+    if !((1.0..=MAX).contains(&count) && count.fract() == 0.0) {
+        errors.add(
+            rec.get("cnt").map_or(rec.span, |n| n.span),
+            format!("'cnt' must be a whole number from 1 to {MAX:e}"),
+        );
+        return None;
+    }
+    let seed = rec.quantity("sed", Quantity::Dimensionless, Some(1.0), errors) as u64;
+    let Some(reg) = rec.record("REG", "region", errors) else {
+        rec.missing("REG", errors);
+        return None;
+    };
+    let region = region(&reg, errors)?;
+    use rand::{RngExt, SeedableRng};
+    // Positions depend only on the population (its name and seed), not on what else is in the file.
+    let name_hash = name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x1000_0000_01b3)
+    });
+    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(seed ^ name_hash);
+    let first = neurons.len() as u32;
+    let count = count as u32;
+    neurons.reserve(count as usize);
+    for i in 0..count {
+        let location_um = match region {
+            Region::Box { corner, size } => std::array::from_fn(|d| corner[d] + size[d] * rng.random::<f64>()),
+            Region::Ball { center, radius } => loop {
+                let p: [f64; 3] = std::array::from_fn(|_| 2.0 * rng.random::<f64>() - 1.0);
+                if p.iter().map(|v| v * v).sum::<f64>() <= 1.0 {
+                    break std::array::from_fn(|d| center[d] + radius * p[d]);
+                }
+            },
+        };
+        neurons.push(NeuronDescription {
+            id: format!("{name}-{i}"),
+            location_um,
+            ..template.clone()
+        });
+    }
+    Some(PopulationDescription {
+        name,
+        first,
+        count,
+        region,
+        span: rec.span,
+    })
+}
+
+fn region(rec: &Rec<'_>, errors: &mut Errors) -> Option<Region> {
+    let kind = rec.word("cst", Some("bx"), &["bx", "sp"], errors);
+    rec.check_keys(&schema::keys("region", Some(&kind)), errors);
+    let length = |key, errors: &mut Errors| rec.quantity(key, Quantity::Length, None, errors);
+    let point = [length("px1", errors), length("px2", errors), length("px3", errors)];
+    let region = if kind == "sp" {
+        Region::Ball {
+            center: point,
+            radius: length("rad", errors),
+        }
+    } else {
+        Region::Box {
+            corner: point,
+            size: [length("sx1", errors), length("sx2", errors), length("sx3", errors)],
+        }
+    };
+    let bad = match region {
+        // (NaN fails these too.)
+        Region::Ball { radius, .. } => radius.is_nan() || radius <= 0.0,
+        Region::Box { size, .. } => size.iter().any(|s| s.is_nan() || *s < 0.0),
+    };
+    if bad {
+        errors.add(
+            rec.span,
+            "a region needs a positive radius, or sizes that aren't negative",
+        );
+        return None;
+    }
+    Some(region)
+}
+
+fn rule(
+    node: &Node,
+    sets: &HashSet<&str>,
+    learning: &BTreeMap<String, LearningRule>,
+    stickiness: &BTreeMap<String, Stickiness>,
+    errors: &mut Errors,
+) -> Option<ConnectionRule> {
+    let rec = Rec::of(node, "connection rule", errors)?;
+    rec.check_keys(&schema::keys("rule", None), errors);
+    let set = |key: &str, errors: &mut Errors| {
+        let name = rec.word(key, None, &[], errors);
+        if !name.is_empty() && !sets.contains(name.as_str()) {
+            errors.add(
+                rec.get(key).map_or(rec.span, |n| n.span),
+                format!("'{name}' is neither a population (POP) nor a group of neurons"),
+            );
+        }
+        name
+    };
+    let (pre, post) = (set("prp", errors), set("psp", errors));
+    let in_degree = match (rec.get("cnt"), rec.get("prb")) {
+        (Some(_), None) => {
+            let k = rec.quantity("cnt", Quantity::Dimensionless, None, errors);
+            if !(k >= 0.0 && k.fract() == 0.0 && k <= f64::from(u32::MAX)) {
+                errors.add(rec.span, "'cnt' must be a whole number of inputs");
+            }
+            InDegree::Fixed(k as u32)
+        }
+        (None, Some(_)) => {
+            let p = rec.quantity("prb", Quantity::Dimensionless, None, errors);
+            if !(p > 0.0 && p <= 1.0) {
+                errors.add(rec.span, "'prb' must be a probability, more than 0 and at most 1");
+            }
+            InDegree::Probability(p)
+        }
+        _ => {
+            errors.add(
+                rec.span,
+                "a rule needs exactly one of 'cnt' (inputs per neuron) and 'prb' (probability)",
+            );
+            InDegree::Fixed(0)
+        }
+    };
+    let radius_um = rec
+        .get("rad")
+        .map(|_| rec.quantity("rad", Quantity::Length, None, errors));
+    if radius_um.is_some_and(|r| r.is_nan() || r <= 0.0) {
+        errors.add(rec.span, "'rad' must be positive");
+    }
+    let weight = rec.weight("cnw", errors);
+    if weight.is_none() && rec.get("cnw").is_none() {
+        rec.missing("cnw", errors);
+    }
+    let weight = weight.unwrap_or(WeightSpec::Fixed(0.0));
+    let equilibrium = rec.weight("eqw", errors).unwrap_or(weight);
+    let learning_name = rec.word("lrn", Some("flat"), &[], errors);
+    if !learning.contains_key(&learning_name) {
+        errors.add(
+            rec.span,
+            format!("learning function '{learning_name}' isn't defined in LRN"),
+        );
+    }
+    let stickiness_name = rec.word("cst", Some("none"), &[], errors);
+    if !stickiness.contains_key(&stickiness_name) {
+        errors.add(
+            rec.span,
+            format!("stickiness function '{stickiness_name}' isn't defined in CST"),
+        );
+    }
+    let sign = rec
+        .get("typ")
+        .map(|_| match rec.word("typ", None, &["exc", "inh"], errors).as_str() {
+            "inh" => Sign::Inhibitory,
+            _ => Sign::Excitatory,
+        });
+    let synaptic_delay_ms = rec.get("syd").map(|_| synaptic_delay(&rec, None, errors));
+    Some(ConnectionRule {
+        pre,
+        post,
+        in_degree,
+        radius_um,
+        autapses: rec.boolean("aut", false, errors),
+        weight,
+        equilibrium,
+        learning: learning_name,
+        stickiness: stickiness_name,
+        sign,
+        synaptic_delay_ms,
+        span: rec.span,
+    })
 }
 
 /// A synaptic delay (`syd`) in ms, which can't be negative.

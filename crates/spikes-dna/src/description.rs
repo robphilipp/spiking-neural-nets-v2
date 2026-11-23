@@ -11,10 +11,17 @@ use crate::Span;
 pub struct NetworkDescription {
     /// Execution groups (`GRP`).
     pub groups: Vec<GroupDescription>,
-    /// Neurons in file order (`NRN`).
+    /// Neurons in file order (`NRN`), then every population's neurons (`POP`), population by population.
     pub neurons: Vec<NeuronDescription>,
+    /// Populations (`POP`): which ranges of `neurons` they are.
+    #[serde(default)]
+    pub populations: Vec<PopulationDescription>,
     /// Connections, one per (pre, post) pair after expanding id sets (`CON`).
     pub connections: Vec<ConnectionDescription>,
+    /// Connection rules (`RUL`), expanded when the network is built: after `connections`, rule by rule, and for
+    /// each rule receiving neuron by receiving neuron.
+    #[serde(default)]
+    pub rules: Vec<ConnectionRule>,
     /// Learning rules by name (`LRN`); `flat` (no learning) is always defined.
     pub learning: BTreeMap<String, LearningRule>,
     /// Weight-stickiness functions by name (`CST`); `none` is always defined.
@@ -133,4 +140,91 @@ pub struct ConnectionDescription {
     pub synaptic_delay_ms: Option<f64>,
     /// Where it is defined.
     pub span: Span,
+}
+
+/// A population: neurons alike, placed at random in a region (`POP`). Its neurons are in
+/// [`NetworkDescription::neurons`] at `first .. first + count`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PopulationDescription {
+    /// Name (`nam`); its neurons are `<name>-<i>`.
+    pub name: String,
+    /// Index of its first neuron.
+    pub first: u32,
+    /// How many (`cnt`).
+    pub count: u32,
+    /// Where they were placed (`REG`).
+    pub region: Region,
+    /// Where it is defined.
+    pub span: Span,
+}
+
+/// A region of space, in µm.
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Region {
+    /// A box from `corner` with sides `size`.
+    Box {
+        /// The lowest corner.
+        corner: [f64; 3],
+        /// Side lengths.
+        size: [f64; 3],
+    },
+    /// A ball.
+    Ball {
+        /// Center.
+        center: [f64; 3],
+        /// Radius.
+        radius: f64,
+    },
+}
+
+/// How many inputs a rule gives each receiving neuron.
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum InDegree {
+    /// Exactly this many (fewer if there aren't enough candidates), from different senders (`cnt`).
+    Fixed(u32),
+    /// Each candidate sender independently with this probability (`prb`).
+    Probability(f64),
+}
+
+/// A connection rule (`RUL`): random connections from a set of senders to each of a set of receivers.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ConnectionRule {
+    /// Senders: a population or group name (`prp`).
+    pub pre: String,
+    /// Receivers (`psp`).
+    pub post: String,
+    /// Inputs per receiver.
+    pub in_degree: InDegree,
+    /// Only senders within this distance in µm (`rad`).
+    pub radius_um: Option<f64>,
+    /// A neuron may connect to itself (`aut`).
+    pub autapses: bool,
+    /// Initial weight (`cnw`).
+    pub weight: WeightSpec,
+    /// Equilibrium weight (`eqw`).
+    pub equilibrium: WeightSpec,
+    /// Learning rule name (`lrn`).
+    pub learning: String,
+    /// Stickiness function name (`cst`).
+    pub stickiness: String,
+    /// Sign (`typ`); `None`: from each sender's `inh`.
+    pub sign: Option<Sign>,
+    /// Synaptic delay in ms, overriding the senders' (`syd`).
+    pub synaptic_delay_ms: Option<f64>,
+    /// Where it is defined.
+    pub span: Span,
+}
+
+impl NetworkDescription {
+    /// The neurons (indices into [`Self::neurons`], ascending) of a population or group, if one has that name. A
+    /// population wins over a group of the same name.
+    pub fn members(&self, name: &str) -> Option<Vec<u32>> {
+        if let Some(p) = self.populations.iter().find(|p| p.name == name) {
+            return Some((p.first..p.first + p.count).collect());
+        }
+        let members: Vec<u32> = (0..self.neurons.len() as u32)
+            .filter(|&i| self.neurons[i as usize].group == name)
+            .collect();
+        (!members.is_empty() || self.groups.iter().any(|g| g.id == name)).then_some(members)
+    }
 }

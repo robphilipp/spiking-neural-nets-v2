@@ -11,9 +11,14 @@ export type Network = {
  */
 neurons: Array<Neuron>, 
 /**
- * Synapses, grouped by receiving neuron.
+ * Synapses, grouped by receiving neuron: all of them for networks of up to 500,000 synapses, none for bigger
+ * ones (`getNeuron` gives a neuron's own).
  */
 synapses: Array<Synapse>, 
+/**
+ * How many synapses there are.
+ */
+synapseCount: number, 
 /**
  * Modulator names by index.
  */

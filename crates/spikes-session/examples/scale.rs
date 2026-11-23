@@ -9,19 +9,8 @@
 
 use std::time::Instant;
 
-use rand::{RngExt, SeedableRng};
-use rand_xoshiro::Xoshiro256PlusPlus;
-use spikes_dna::WeightSpec;
 use spikes_session::{BuildSettings, Engine, InputSpec, RunSettings, Speed};
 use tempo_runtime::SimDuration;
-
-const TEMPLATE: &str = "(
-NRN=[
-    (nid=a, mst=10 mV, mpn=0 mV, mpd=20 ms, rfp=4 ms, spp=1 mV, csp=1 m/s, LOC=(cst=ct, px1=0, px2=0, px3=0)),
-    (nid=b, mst=10 mV, mpn=0 mV, mpd=20 ms, rfp=4 ms, spp=1 mV, csp=1 m/s, LOC=(cst=ct, px1=1, px2=0, px3=0)),
-],
-CON=[(prn=a, psn=b, cnw=0.1)],
-)";
 
 /// Resident memory of this process, in GB (from `ps`).
 fn rss_gb() -> f64 {
@@ -29,11 +18,20 @@ fn rss_gb() -> f64 {
         .args(["-o", "rss=", "-p", &std::process::id().to_string()])
         .output()
         .expect("ps");
-    String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().unwrap_or(0.0) / 1024.0 / 1024.0
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<f64>()
+        .unwrap_or(0.0)
+        / 1024.0
+        / 1024.0
 }
 
 fn stage(name: &str, t: Instant) {
-    println!("{name:<28} {:>8.2} s   RSS {:>6.2} GB", t.elapsed().as_secs_f64(), rss_gb());
+    println!(
+        "{name:<28} {:>8.2} s   RSS {:>6.2} GB",
+        t.elapsed().as_secs_f64(),
+        rss_gb()
+    );
 }
 
 fn main() {
@@ -45,40 +43,21 @@ fn main() {
     println!("{n} neurons × {k} synapses = {} synapses, {shards} shards", n * k);
 
     let t = Instant::now();
-    let template = spikes_dna::parse(TEMPLATE).expect("template parses");
-    let mut d = template.clone();
-    let mut rng = Xoshiro256PlusPlus::seed_from_u64(1);
+    // Populations and a rule: nothing is listed connection by connection.
     let side = 1000.0 * (n as f64 / 100_000.0).cbrt(); // constant density
-    d.neurons = (0..n)
-        .map(|i| {
-            let mut neuron = template.neurons[0].clone();
-            neuron.id = format!("n{i}");
-            neuron.inhibitory = i % 5 == 0;
-            neuron.location_um = std::array::from_fn(|_| rng.random_range(0.0..side));
-            neuron
-        })
-        .collect();
+    let (exc, inh) = (n - n / 5, n / 5);
     let w = 20.0 / k as f64; // keeps the total input per neuron about constant
-    d.connections = (0..n * k)
-        .map(|c| {
-            let mut con = template.connections[0].clone();
-            let pre = rng.random_range(0..n);
-            con.pre = format!("n{pre}");
-            con.post = format!("n{}", c / k);
-            con.weight = WeightSpec::Fixed(w);
-            con.equilibrium = WeightSpec::Fixed(w);
-            con.sign = if pre % 5 == 0 {
-                spikes_model::Sign::Inhibitory
-            } else {
-                spikes_model::Sign::Excitatory
-            };
-            con
-        })
-        .collect();
+    let neuron = "mst=10 mV, mpn=0 mV, mpd=20 ms, rfp=4 ms, spp=1 mV, csp=1 m/s";
+    let region = format!("REG=(cst=bx, px1=0, px2=0, px3=0, sx1={side}, sx2={side}, sx3={side})");
+    let text = format!(
+        "(POP=[(nam=exc, cnt={exc}, {neuron}, {region}), (nam=inh, cnt={inh}, inh=t, {neuron}, {region}, sed=2)],\n \
+         RUL=[(prp=default, psp=default, cnt={k}, cnw={w})])"
+    );
+    let d = spikes_dna::parse(&text).expect("description parses");
     stage("description generated", t);
 
     let engine = Engine::new();
-    let session = engine.create_described("scale", "// generated", d);
+    let session = engine.create_described("scale", text, d);
     let t = Instant::now();
     let network = session
         .build(BuildSettings {
@@ -88,7 +67,11 @@ fn main() {
         })
         .expect("build");
     stage("built", t);
-    println!("  network summary lists {} synapses", network.synapses.len());
+    println!(
+        "  {} synapses; the summary lists {}",
+        network.synapse_count,
+        network.synapses.len()
+    );
     let all: Vec<u32> = (0..n as u32).collect();
     for chunk in all.chunks(n.div_ceil(16)) {
         session
@@ -111,7 +94,10 @@ fn main() {
     assert!(session.wait_for_run(std::time::Duration::from_secs(3600)));
     let wall = t.elapsed().as_secs_f64();
     stage("ran", t);
-    let spikes: u64 = (0..n as u32).step_by(n / 1000).map(|i| session.query_neuron(i).expect("query").spikes).sum::<u64>()
+    let spikes: u64 = (0..n as u32)
+        .step_by(n / 1000)
+        .map(|i| session.query_neuron(i).expect("query").spikes)
+        .sum::<u64>()
         * (n / 1000) as u64;
     println!(
         "  ~{:.1} Hz per neuron; {:.2} s wall per simulated second; ~{:.1} M synaptic events per wall second",

@@ -26,8 +26,8 @@ mod syntax;
 pub mod units;
 
 pub use description::{
-    ConnectionDescription, GroupDescription, ModulatorDescription, NetworkDescription, NeuronDescription,
-    SynapseDefaults, WeightSpec,
+    ConnectionDescription, ConnectionRule, GroupDescription, InDegree, ModulatorDescription, NetworkDescription,
+    NeuronDescription, PopulationDescription, Region, SynapseDefaults, WeightSpec,
 };
 pub use syntax::{ParseError, Span};
 

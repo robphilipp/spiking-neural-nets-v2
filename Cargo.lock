@@ -4245,6 +4245,8 @@ dependencies = [
 name = "spikes-dna"
 version = "0.1.0"
 dependencies = [
+ "rand 0.10.4",
+ "rand_xoshiro",
  "serde",
  "serde_json",
  "spikes-model",

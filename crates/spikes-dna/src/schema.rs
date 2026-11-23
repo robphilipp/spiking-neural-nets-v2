@@ -16,6 +16,9 @@ pub struct RecordSchema {
     pub kind_key: Option<&'static str>,
     /// Its keys.
     pub keys: &'static [Key],
+    /// Another record whose keys it also accepts, less these (a population takes every neuron key but `nid`).
+    #[serde(skip)]
+    pub extends: Option<(&'static str, &'static [&'static str])>,
 }
 
 /// One key of a record.
@@ -130,17 +133,28 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "network",
         doc: "A whole network description.",
         kind_key: None,
+        extends: None,
         keys: &[
             key(
                 "GRP",
                 "Execution groups: where neurons run.",
                 Value::List { record: "group" },
             ),
-            key("NRN", "The neurons.", Value::List { record: "neuron" }).required(),
+            key("NRN", "The neurons, one by one.", Value::List { record: "neuron" }),
+            key(
+                "POP",
+                "Populations: many neurons alike, placed at random in a region (named `<nam>-0`, `<nam>-1`, …).",
+                Value::List { record: "population" },
+            ),
             key(
                 "CON",
                 "Connections between neurons.",
                 Value::List { record: "connection" },
+            ),
+            key(
+                "RUL",
+                "Connection rules: random connections between populations or groups, generated when built.",
+                Value::List { record: "rule" },
             ),
             key(
                 "LRN",
@@ -163,6 +177,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "group",
         doc: "An execution group: a set of neurons that run together, here or on another machine.",
         kind_key: None,
+        extends: None,
         keys: &[
             key("gid", "The group's id.", Value::Name).required(),
             key("hst", "Host of a remote group (with `prt`).", Value::Name),
@@ -173,6 +188,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "neuron",
         doc: "A neuron: its dynamics, position, and the settings of its incoming synapses.",
         kind_key: Some("nty"),
+        extends: None,
         keys: &[
             key("nid", "The neuron's id; connections refer to it.", Value::Name).required(),
             key("grp", "Its execution group.", Value::Reference { to: "group" }).default("default"),
@@ -294,6 +310,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "resonance",
         doc: "Resonate-and-fire dynamics: the potential oscillates as it decays. Its kind is the neuron's `nty`.",
         kind_key: None,
+        extends: None,
         keys: &[
             key("frq", "Resonant frequency.", HZ).required(),
             key("dmp", "Damping time constant of the oscillation.", MS).required(),
@@ -313,6 +330,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "homeostasis",
         doc: "Homeostatic intrinsic plasticity: the threshold drifts so the firing rate approaches a target.",
         kind_key: None,
+        extends: None,
         keys: &[
             key("tgt", "Target firing rate.", HZ).required(),
             key(
@@ -330,6 +348,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "weightDecay",
         doc: "How incoming weights relax toward their equilibrium weight.",
         kind_key: Some("fnc"),
+        extends: None,
         keys: &[
             key(
                 "fnc",
@@ -346,6 +365,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "weightLimit",
         doc: "Bounds on incoming weights.",
         kind_key: Some("fnc"),
+        extends: None,
         keys: &[
             key(
                 "fnc",
@@ -365,6 +385,7 @@ pub static RECORDS: &[RecordSchema] = &[
         doc: "Stochastic transmitter release: each signal is transmitted with probability 1 − e^(−C·V), where \
               facilitation C and depletion V follow recent use.",
         kind_key: None,
+        extends: None,
         keys: &[
             key("fcb", "Facilitation base.", Value::Number).default("1"),
             key("fcm", "Facilitation added per signal.", Value::Number).default("0.1"),
@@ -378,6 +399,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "location",
         doc: "A position in µm.",
         kind_key: Some("cst"),
+        extends: None,
         keys: &[
             key(
                 "cst",
@@ -401,6 +423,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "receptor",
         doc: "A neuromodulator receptor: each effect is linear in the modulator's concentration c at the neuron.",
         kind_key: None,
+        extends: None,
         keys: &[
             key("mod", "The modulator.", Value::Reference { to: "modulator" }).required(),
             key("exg", "Excitatory gain: excitatory input × (1 + exg·c).", Value::Number).default("0"),
@@ -424,6 +447,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "modulatorRelease",
         doc: "Releasing a modulator at each spike.",
         kind_key: None,
+        extends: None,
         keys: &[
             key("mod", "The modulator.", Value::Reference { to: "modulator" }).required(),
             key("amt", "Amount per spike.", Value::Number).default("1"),
@@ -433,6 +457,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "connection",
         doc: "Connections from each `prn` neuron to each `psn` neuron.",
         kind_key: None,
+        extends: None,
         keys: &[
             key("prn", "Sending neurons.", Value::Ids).required(),
             key("psn", "Receiving neurons.", Value::Ids).required(),
@@ -458,6 +483,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "learning",
         doc: "A learning rule.",
         kind_key: Some("fnc"),
+        extends: None,
         keys: &[
             key(
                 "fnc",
@@ -496,6 +522,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "stickiness",
         doc: "Weight stickiness: how firmly learned weights resist decay.",
         kind_key: Some("fnc"),
+        extends: None,
         keys: &[
             key(
                 "fnc",
@@ -517,6 +544,7 @@ pub static RECORDS: &[RecordSchema] = &[
         name: "modulator",
         doc: "A neuromodulator: how a release spreads and clears.",
         kind_key: None,
+        extends: None,
         keys: &[
             key("nam", "Its name, for receptors' and releases' `mod`.", Value::Name).required(),
             key("clr", "Clearance time constant.", MS).required(),
@@ -531,7 +559,133 @@ pub static RECORDS: &[RecordSchema] = &[
             key("len", "Falloff length: amplitude × e^(−distance/len).", UM),
         ],
     },
+    RecordSchema {
+        name: "population",
+        doc: "Many neurons alike: every neuron key (but `nid` and `LOC`), a count, and a region they're placed in at \
+              random.",
+        kind_key: Some("nty"),
+        extends: Some(("neuron", &["nid", "LOC"])),
+        keys: &[
+            key(
+                "nam",
+                "The population's name; its neurons are `<nam>-0`, `<nam>-1`, … Rules and groups refer to it.",
+                Value::Name,
+            )
+            .required(),
+            key("cnt", "How many neurons.", Value::Number).required(),
+            key(
+                "REG",
+                "Where they are: placed uniformly at random.",
+                Value::Record { record: "region" },
+            )
+            .required(),
+            key("sed", "Seed for the positions.", Value::Number).default("1"),
+        ],
+    },
+    RecordSchema {
+        name: "region",
+        doc: "A region of space in µm: a box (`bx`, from a corner) or a ball (`sp`, around a center).",
+        kind_key: Some("cst"),
+        extends: None,
+        keys: &[
+            key(
+                "cst",
+                "`bx` a box from corner (px1, px2, px3) with sides (sx1, sx2, sx3); `sp` a ball around (px1, px2, px3) \
+                 of radius `rad`.",
+                Value::Choice { values: &["bx", "sp"] },
+            )
+            .default("bx"),
+            key("px1", "x of the corner (box) or center (ball).", UM).required(),
+            key("px2", "y.", UM).required(),
+            key("px3", "z.", UM).required(),
+            key("sx1", "Size along x.", UM).only(&["bx"]).required(),
+            key("sx2", "Size along y.", UM).only(&["bx"]).required(),
+            key("sx3", "Size along z.", UM).only(&["bx"]).required(),
+            key("rad", "Radius.", UM).only(&["sp"]).required(),
+        ],
+    },
+    RecordSchema {
+        name: "rule",
+        doc: "Random connections from the `prp` neurons to each `psp` neuron: `cnt` inputs each, or each pair with \
+              probability `prb`; optionally only within `rad`. Generated when the network is built (the same for \
+              the same seed), never listed one by one.",
+        kind_key: None,
+        extends: None,
+        keys: &[
+            key("prp", "Sending neurons: a population or a group.", Value::Name).required(),
+            key("psp", "Receiving neurons: a population or a group.", Value::Name).required(),
+            key(
+                "cnt",
+                "Inputs per receiving neuron (from different senders).",
+                Value::Number,
+            ),
+            key(
+                "prb",
+                "Probability of each (sender, receiver) pair instead.",
+                Value::Number,
+            ),
+            key("rad", "Only senders within this distance.", UM),
+            key("aut", "Allow a neuron to connect to itself.", Value::Bool).default("f"),
+            key("cnw", "Initial weight.", Value::Weight).required(),
+            key(
+                "eqw",
+                "Equilibrium weight (default: the initial weight).",
+                Value::Weight,
+            ),
+            key("lrn", "Learning rule.", Value::Reference { to: "learning" }).default("flat"),
+            key("cst", "Weight stickiness.", Value::Reference { to: "stickiness" }).default("none"),
+            key(
+                "typ",
+                "Sign: `exc` or `inh` (default: from each sending neuron's `inh`).",
+                Value::Choice {
+                    values: &["exc", "inh"],
+                },
+            ),
+            key("syd", "Synaptic delay, overriding the sending neurons'.", MS),
+        ],
+    },
 ];
+
+/// Every key a record accepts: its own, then those of the record it extends (less the excluded ones).
+pub fn all_keys(name: &str) -> Vec<&'static Key> {
+    let r = record(name);
+    let mut keys: Vec<&'static Key> = r.keys.iter().collect();
+    if let Some((base, excluded)) = r.extends {
+        keys.extend(
+            all_keys(base)
+                .into_iter()
+                .filter(|k| !excluded.contains(&k.key) && !r.keys.iter().any(|own| own.key == k.key)),
+        );
+    }
+    keys
+}
+
+/// A record with every key it accepts, for the editor's schema.
+#[derive(Debug, Serialize)]
+pub struct MergedRecord {
+    /// Its id.
+    pub name: &'static str,
+    /// What it is.
+    pub doc: &'static str,
+    /// The kind key, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind_key: Option<&'static str>,
+    /// Its keys, extended ones included.
+    pub keys: Vec<&'static Key>,
+}
+
+/// Every record with its keys merged (what `schema.json` holds).
+pub fn merged() -> Vec<MergedRecord> {
+    RECORDS
+        .iter()
+        .map(|r| MergedRecord {
+            name: r.name,
+            doc: r.doc,
+            kind_key: r.kind_key,
+            keys: all_keys(r.name),
+        })
+        .collect()
+}
 
 /// The schema of a record type.
 ///
@@ -546,9 +700,8 @@ pub fn record(name: &str) -> &'static RecordSchema {
 
 /// The keys a record accepts, for a given value of its kind key (or all of them).
 pub fn keys(name: &str, kind: Option<&str>) -> Vec<&'static str> {
-    record(name)
-        .keys
-        .iter()
+    all_keys(name)
+        .into_iter()
         .filter(|k| k.only.is_empty() || kind.is_none_or(|kind| k.only.contains(&kind)))
         .map(|k| k.key)
         .collect()

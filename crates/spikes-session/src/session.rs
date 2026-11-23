@@ -436,10 +436,14 @@ impl Session {
         };
         let mut network = network;
         if let Some((coordinator, _)) = &cluster {
-            // The other nodes' neurons have their synapses there.
-            let rows = coordinator
-                .synapses()
-                .map(|remote| [spikes_record::synapse_rows(&rt, &net), remote].concat());
+            // The other nodes' neurons have their synapses there (listed only for networks of listable size).
+            let rows = if net.synapse_count <= crate::network::SYNAPSE_LIST_LIMIT {
+                coordinator
+                    .synapses()
+                    .map(|remote| [spikes_record::synapse_rows(&rt, &net), remote].concat())
+            } else {
+                Ok(Vec::new())
+            };
             match rows {
                 Ok(rows) => {
                     network = Arc::new(NetworkInfo::new(&net, &inner.description, &rows));
@@ -489,11 +493,12 @@ impl Session {
         // Sensors belong to a built network: numbering them afresh makes a rebuilt network with the same inputs
         // reproduce (a sensor's random numbers depend on the seed and its id).
         self.shared.next_sensor.store(0, std::sync::atomic::Ordering::Relaxed);
-        let network = Arc::new(NetworkInfo::new(
-            &net,
-            &inner.description,
-            &spikes_record::synapse_rows(&rt, &net),
-        ));
+        let rows = if net.synapse_count <= crate::network::SYNAPSE_LIST_LIMIT {
+            spikes_record::synapse_rows(&rt, &net)
+        } else {
+            Vec::new()
+        };
+        let network = Arc::new(NetworkInfo::new(&net, &inner.description, &rows));
         inner.wiring = Some(Arc::new(net.clone()));
         inner.release_site =
             (!network.modulators.is_empty()).then(|| net.add_release_site(&mut rt, network.centroid()));
@@ -1132,13 +1137,17 @@ impl Session {
             }
         }
         let mut updated = (*network).clone();
-        updated.synapses.push(crate::SynapseInfo {
-            post,
-            synapse: index,
-            pre,
-            weight,
-            inhibitory: sign == spikes_model::Sign::Inhibitory,
-        });
+        let listed = updated.lists_synapses();
+        updated.synapse_count += 1;
+        if listed {
+            updated.synapses.push(crate::SynapseInfo {
+                post,
+                synapse: index,
+                pre,
+                weight,
+                inhibitory: sign == spikes_model::Sign::Inhibitory,
+            });
+        }
         self.inner().network = Arc::new(updated);
         self.notify(SessionNotice::NetworkChanged);
         Ok(())
@@ -1169,6 +1178,7 @@ impl Session {
         }
         let mut updated = (*network).clone();
         updated.synapses.retain(|s| !(s.post == post && s.synapse == index));
+        updated.synapse_count = updated.synapse_count.saturating_sub(1);
         self.inner().network = Arc::new(updated);
         self.notify(SessionNotice::NetworkChanged);
         Ok(())
