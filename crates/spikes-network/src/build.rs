@@ -240,8 +240,11 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
             .map(|(a, b)| (a - b).powi(2))
             .sum::<f64>()
             .sqrt();
-        let speed = description.neurons[from].conduction_m_per_s; // m/s = µm/µs
-        let delay = SimDuration::from_micros_f64(distance_um / speed).max(options.min_delay);
+        // Synaptic delay plus conduction along the axon.
+        let neuron = &description.neurons[from];
+        let synaptic = SimDuration::from_millis_f64(c.synaptic_delay_ms.unwrap_or(neuron.synaptic_delay_ms));
+        let conduction = SimDuration::from_micros_f64(distance_um / neuron.conduction_m_per_s); // m/s = µm/µs
+        let delay = (synaptic + conduction).max(options.min_delay);
         edges[from].push(RouteEdge {
             target: ids[to],
             delay,

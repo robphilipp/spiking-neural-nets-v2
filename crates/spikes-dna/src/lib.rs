@@ -13,6 +13,7 @@
 //! | `RES=(frq=…, dmp=…, lcr=…, sep=…)` | resonator neuron | resonant frequency, damping time constant; for `br` the limit-cycle and separatrix radii |
 //! | `HIP=(tgt=…, str=…, win=…, lwb=…, upb=…)` | neuron | homeostatic intrinsic plasticity: target rate, strength (mV per Hz·s), rate window, bounds |
 //! | `typ=exc` / `typ=inh` | connection | the connection's sign (default: from the sending neuron's `inh`) |
+//! | `syd=…` | neuron, connection | synaptic delay (default 0.5 ms; on a neuron, for its outgoing connections; on a connection, overriding it). A connection's delay is `syd + distance / csp` |
 //! | `nam=…` | learning or stickiness function | a name, so several of one type can coexist (default: its `fnc`) |
 //! | `MOD=[(nam=…, clr=…, rad=…, spd=…, lat=…, len=…)]` | top level | neuromodulators: clearance time, reach, spreading speed, latency, spatial falloff |
 //! | `RCP=[(mod=…, exg=…, ing=…, thr=…, pla=…, elg=…, rat=…, dir=…)]` | neuron | receptors: excitatory/inhibitory gain, threshold, plasticity, three-factor learning (eligibility time, rate), direct potential |

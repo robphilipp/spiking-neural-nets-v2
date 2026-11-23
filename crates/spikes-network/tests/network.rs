@@ -49,8 +49,8 @@ fn the_ring_fires_group_by_group() {
     rt.run_until(ms(200.0));
     let spikes = spikes(&rt.take_events(), &net);
 
-    // Group 1 fires after its 2 ms rise time; each later group 0.15–0.5 ms after the previous (µs conduction
-    // delays plus the rise from the fourth input crossing the 5 mV threshold).
+    // Group 1 fires after its 2 ms rise time; each later group 0.65–1.0 ms after the previous (the 0.5 ms default
+    // synaptic delay, µs conduction delays, and the rise from the fourth input crossing the 5 mV threshold).
     let first = |group: char| {
         spikes
             .iter()
@@ -61,9 +61,9 @@ fn the_ring_fires_group_by_group() {
     assert_eq!(first('1'), 2.0);
     for (a, b) in [('1', '2'), ('2', '3'), ('3', '4'), ('4', '5')] {
         let hop = first(b) - first(a);
-        assert!((0.15..0.5).contains(&hop), "group {a} → {b}: {hop} ms");
+        assert!((0.65..1.0).contains(&hop), "group {a} → {b}: {hop} ms");
     }
-    // One lap takes ~1 ms, inside group 1's 20 ms refractory period, so activity stops after 25 spikes. (v1's
+    // One lap takes ~4 ms, inside group 1's 20 ms refractory period, so activity stops after 25 spikes. (v1's
     // ring kept circulating with ~50 ms hops, an artefact of its millisecond-rounded, wall-clock delivery.)
     assert_eq!(spikes.len(), 25);
 }

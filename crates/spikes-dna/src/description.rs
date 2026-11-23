@@ -68,8 +68,11 @@ pub struct NeuronDescription {
     pub inhibitory: bool,
     /// Dynamics parameters.
     pub params: NeuronParams,
-    /// Axon conduction speed in m/s (`csp`); sets outgoing connection delays.
+    /// Axon conduction speed in m/s (`csp`); with the distance, sets outgoing connection delays.
     pub conduction_m_per_s: f64,
+    /// Synaptic delay of its outgoing connections in ms (`syd`; default 0.5 ms): the time from a spike's arrival at
+    /// a synapse to the current in the receiving neuron. A connection's delay is `syd + distance / csp`.
+    pub synaptic_delay_ms: f64,
     /// Soma position in µm, cartesian (`LOC`, converted from cylindrical or spherical if needed).
     pub location_um: [f64; 3],
     /// Settings for this neuron's *incoming* synapses (`WDF`, `WLF`, `SRP`, `wnm`).
@@ -126,6 +129,8 @@ pub struct ConnectionDescription {
     pub stickiness: String,
     /// Excitatory or inhibitory (`typ`; defaults from the pre-synaptic neuron's `inh`).
     pub sign: Sign,
+    /// Synaptic delay in ms (`syd`), overriding the pre-synaptic neuron's.
+    pub synaptic_delay_ms: Option<f64>,
     /// Where it is defined.
     pub span: Span,
 }

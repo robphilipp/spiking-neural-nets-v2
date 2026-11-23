@@ -430,7 +430,7 @@ fn stickiness_fn(rec: &Rec<'_>, errors: &mut Errors) -> Option<(String, Stickine
 
 const NEURON_KEYS: &[&str] = &[
     "nid", "grp", "nty", "inh", "mst", "lct", "rst", "tfr", "rfp", "rfb", "mnp", "mpd", "mpr", "mpn", "wnm", "spp",
-    "csp", "ipb", "ipl", "ipd", "WDF", "WLF", "SRP", "SNT", "LOC", "RES", "HIP", "RCP", "REL",
+    "csp", "syd", "ipb", "ipl", "ipd", "WDF", "WLF", "SRP", "SNT", "LOC", "RES", "HIP", "RCP", "REL",
 ];
 
 fn modulator(node: &Node, errors: &mut Errors) -> Option<ModulatorDescription> {
@@ -508,6 +508,8 @@ mod default {
     pub const NOISE_MV: f64 = 0.1;
     pub const SPIKE_MV: f64 = 1.0;
     pub const CONDUCTION_M_PER_S: f64 = 10.0;
+    /// Fast chemical synapses take ~0.2–0.5 ms at body temperature, more when cooler or slower.
+    pub const SYNAPTIC_DELAY_MS: f64 = 0.5;
     pub const IP_DECAY_MS: f64 = 600_000.0; // 10 min
     pub const WEIGHT_DECAY_MS: f64 = 1_500.0;
 }
@@ -693,6 +695,7 @@ fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -
         inhibitory,
         params,
         conduction_m_per_s: q("csp", Quantity::Speed, default::CONDUCTION_M_PER_S, errors),
+        synaptic_delay_ms: synaptic_delay(&rec, Some(default::SYNAPTIC_DELAY_MS), errors),
         location_um,
         synapses: SynapseDefaults {
             decay,
@@ -741,7 +744,8 @@ fn connection(
     let Some(rec) = Rec::of(node, "connection", errors) else {
         return;
     };
-    rec.check_keys(&["prn", "psn", "cnw", "eqw", "lrn", "cst", "typ"], errors);
+    rec.check_keys(&["prn", "psn", "cnw", "eqw", "lrn", "cst", "typ", "syd"], errors);
+    let synaptic_delay_ms = rec.get("syd").map(|_| synaptic_delay(&rec, None, errors));
     let pres = rec.ids("prn", errors);
     let posts = rec.ids("psn", errors);
     let weight = rec.weight("cnw", errors);
@@ -809,8 +813,22 @@ fn connection(
                 learning: learning_name.clone(),
                 stickiness: stickiness_name.clone(),
                 sign,
+                synaptic_delay_ms,
                 span: rec.span,
             });
         }
     }
+}
+
+/// A synaptic delay (`syd`) in ms, which can't be negative.
+fn synaptic_delay(rec: &Rec<'_>, default: Option<f64>, errors: &mut Errors) -> f64 {
+    let ms = rec.quantity("syd", Quantity::Time, default, errors);
+    if ms < 0.0 {
+        errors.add(
+            rec.get("syd").map_or(rec.span, |n| n.span),
+            "the synaptic delay 'syd' can't be negative",
+        );
+        return 0.0;
+    }
+    ms
 }

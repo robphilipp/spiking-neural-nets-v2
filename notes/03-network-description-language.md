@@ -51,5 +51,8 @@ These are JSON: `{ simulationName, timeFactor, simulationDuration, sensorFilePat
 
 Implemented in `crates/spikes-dna` and lenient with older files (v1's defaults for missing keys; `fnc=stdp`,
 `SNT`, `uwb` accepted). New keys: `nty=mr|br` with `RES=(frq, dmp, lcr, sep)`, `HIP=(tgt, str, win, lwb, upb)`,
-per-connection `typ=exc|inh`, and `nam=` for learning and stickiness functions. The v1 test networks live in
+per-connection `typ=exc|inh`, `nam=` for learning and stickiness functions, neuromodulation (`MOD`, `RCP`,
+`REL`), and the synaptic delay `syd` (neuron: for its outgoing connections; connection: overriding it; default
+0.5 ms). v1 delays were `distance / csp` only; v2 delays are `syd + distance / csp`, so every hop is 0.5 ms
+longer than in v1 unless `syd=0` is set. The v1 test networks live in
 `test-data/v1/` as a conformance suite. See `docs/plans/neurons/README.md` (N2).

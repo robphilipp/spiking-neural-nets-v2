@@ -51,6 +51,11 @@ Decisions and deviations:
   1 shard 2.3 s, 4 shards 12 s, 8 shards 47 s per simulated second). With 100 µs: 2.3 / 1.3 / 0.78 / 0.94 s on
   1 / 2 / 4 / 8 shards; with 500 µs 8 shards reach 0.49 s. Chemical synapses take ≥ ~0.3 ms, so this costs little
   realism; set it to 0 for raw delays.
+- **Synaptic delay** (decided 2026-11-22, after the above): connection delays are now `syd + distance / csp`, with
+  `syd` (default 0.5 ms) on neurons and connections. This is the biological fix the 100 µs floor only approximated:
+  every connection gets a realistic transmission time, and the shortest delay (hence the synchronization window)
+  becomes ~0.5 ms. 100k network: 2.39 / 0.80 / 0.68 s per simulated second on 1 / 4 / 8 shards. The 100 µs floor
+  stays as a safety net for networks that set `syd=0`.
 - Lifecycle states are `Loaded → Ready → Running ⇄ Paused → Ready` (no separate `Finished`).
 - Frames carry `time_unit_ns` so offsets (u32) cover frames spanning more than 4.3 s of simulated time (runs as fast
   as possible).

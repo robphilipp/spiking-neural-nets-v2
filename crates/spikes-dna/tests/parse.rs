@@ -304,3 +304,24 @@ fn unknown_modulators_are_reported() {
         "{errors:?}"
     );
 }
+
+#[test]
+fn synaptic_delays_default_and_override() {
+    let text = "(
+NRN=[
+    (nid=a, LOC=(cst=ct, px1=0, px2=0, px3=0)),
+    (nid=b, syd=0.3 ms, LOC=(cst=ct, px1=10, px2=0, px3=0)),
+],
+CON=[(prn=a, psn=b, cnw=1), (prn=b, psn=a, cnw=1), (prn=b, psn=b, cnw=1, syd=800 µs)],
+)";
+    let network = parse(text).unwrap();
+    assert_eq!(network.neuron("a").unwrap().synaptic_delay_ms, 0.5);
+    assert_eq!(network.neuron("b").unwrap().synaptic_delay_ms, 0.3);
+    let overrides: Vec<Option<f64>> = network.connections.iter().map(|c| c.synaptic_delay_ms).collect();
+    assert_eq!(overrides, [None, None, Some(0.8)]);
+    let errors = parse(&text.replace("syd=0.3 ms", "syd=-1 ms")).unwrap_err();
+    assert!(
+        errors.iter().any(|e| e.message.contains("can't be negative")),
+        "{errors:?}"
+    );
+}
