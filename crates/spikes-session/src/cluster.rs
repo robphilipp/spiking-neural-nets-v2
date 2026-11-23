@@ -19,8 +19,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use spikes_network::{Event, SimMsg};
+use tempo_cluster::Arrivals;
 use tempo_cluster::{StrictLink, TcpTransport, field_codec};
-use tempo_runtime::{EventPublisher, EventStream, Jitter, SimDuration, SimTime};
+use tempo_runtime::{ClockHandle, ClockSchedule, EventPublisher, EventStream, Jitter, SimDuration, SimTime};
 
 use crate::session::{BuildSettings, InputSpec, NeuronSnapshot};
 use crate::{SessionError, SessionId};
@@ -95,6 +96,9 @@ enum Request {
     /// Run until `end_ns`, following the coordinator's windows.
     Run {
         end_ns: u64,
+        /// Every window waits for every node (exact); otherwise follow `schedule` (best effort).
+        lockstep: bool,
+        schedule: Option<ClockSchedule>,
     },
     Observe {
         neurons: Vec<u32>,
@@ -164,9 +168,33 @@ enum AppMsg {
         at_ns: u64,
         event: tempo_runtime::SystemEvent,
     },
+    /// How timely the events from each node have been: (events, late, max ns, p99 ns), per sending node.
+    Arrivals(Vec<(u64, u64, u64, u64)>),
+}
+
+/// What the coordinator sends a node over the mesh during a best-effort run.
+#[derive(Serialize, Deserialize, Debug)]
+enum ToNode {
+    /// The coordinator's clock changed (speed, pause, resume, step): follow it.
+    Clock(ClockSchedule),
+    /// The run is stopped.
+    Stop,
 }
 
 // ----- the coordinator's side -----
+
+/// How a session's cluster is doing (see [`crate::Session::cluster_status`]).
+#[derive(Clone, Debug)]
+pub struct ClusterStatus {
+    /// The node agents' addresses (nodes 1, 2, …; the coordinator is node 0).
+    pub nodes: Vec<String>,
+    /// The coordinator's link: traffic, waiting, failure.
+    pub link: tempo_cluster::LinkStats,
+    /// How timely events are on each link: (from node, to node, arrivals).
+    pub links: Vec<(u32, u32, Arrivals)>,
+    /// The current (or last) run kept every node in lockstep.
+    pub lockstep: bool,
+}
 
 /// A connection to one node agent.
 struct NodeClient {
@@ -222,6 +250,10 @@ pub(crate) struct Coordinator {
     owners: Mutex<Vec<u32>>,
     /// Each node's last reported run end (index = node; the coordinator's own entry is unused).
     ended: Mutex<Vec<Option<SimTime>>>,
+    /// Each node's latest report of how timely the events it receives are, per sending node.
+    arrivals: Mutex<Vec<Vec<Arrivals>>>,
+    /// The current (or last) run waits for every node at every window.
+    lockstep: AtomicBool,
     ended_changed: Condvar,
     closed: AtomicBool,
 }
@@ -297,6 +329,8 @@ impl Coordinator {
             link: link.clone(),
             owners: Mutex::new(Vec::new()),
             ended: Mutex::new(vec![None; n as usize]),
+            arrivals: Mutex::new(vec![Vec::new(); n as usize]),
+            lockstep: AtomicBool::new(true),
             ended_changed: Condvar::new(),
             closed: AtomicBool::new(false),
         });
@@ -368,6 +402,19 @@ impl Coordinator {
                     }
                 }
                 Ok(AppMsg::System { at_ns, event }) => system.publish(SimTime::from_nanos(at_ns), event),
+                Ok(AppMsg::Arrivals(list)) => {
+                    if let Some(slot) = lock(&me.arrivals).get_mut(from as usize) {
+                        *slot = list
+                            .into_iter()
+                            .map(|(events, late, max, p99)| Arrivals {
+                                events,
+                                late,
+                                max_late: Duration::from_nanos(max),
+                                p99_late: Duration::from_nanos(p99),
+                            })
+                            .collect();
+                    }
+                }
                 Ok(AppMsg::RunEnded { now_ns }) => {
                     if let Some(slot) = lock(&me.ended).get_mut(from as usize) {
                         *slot = Some(SimTime::from_nanos(now_ns));
@@ -397,9 +444,64 @@ impl Coordinator {
     }
 
     /// Every node runs until `end` (they wait for the coordinator's windows).
-    pub(crate) fn run(&self, end: SimTime) -> Result<(), SessionError> {
+    /// Every node runs until `end`: in lockstep with the coordinator's windows, or (best effort) following
+    /// `schedule`, the coordinator's clock.
+    pub(crate) fn run(
+        &self,
+        end: SimTime,
+        lockstep: bool,
+        schedule: Option<ClockSchedule>,
+    ) -> Result<(), SessionError> {
         lock(&self.ended).iter_mut().for_each(|e| *e = None);
-        self.each(&Request::Run { end_ns: end.as_nanos() })
+        self.lockstep.store(lockstep, Ordering::Release);
+        self.link.set_lockstep(lockstep);
+        self.each(&Request::Run {
+            end_ns: end.as_nanos(),
+            lockstep,
+            schedule,
+        })
+    }
+
+    /// The coordinator's clock changed during a best-effort run: the nodes follow.
+    pub(crate) fn clock_changed(&self, clock: &ClockHandle) {
+        if !self.lockstep.load(Ordering::Acquire) {
+            self.to_nodes(&ToNode::Clock(clock.schedule()));
+        }
+    }
+
+    /// A best-effort run is stopped: the nodes stop too (in lockstep they stop with the coordinator's windows).
+    pub(crate) fn stop_nodes(&self) {
+        if !self.lockstep.load(Ordering::Acquire) {
+            self.to_nodes(&ToNode::Stop);
+        }
+    }
+
+    fn to_nodes(&self, msg: &ToNode) {
+        let bytes = postcard::to_stdvec(msg).expect("encodes");
+        for node in 1..self.link.nodes() {
+            self.link.send_app(node, bytes.clone());
+        }
+    }
+
+    /// How timely events are on every link: (from, to, arrivals). The coordinator's own, and each node's latest
+    /// report.
+    pub(crate) fn links(&self) -> Vec<(u32, u32, Arrivals)> {
+        let mut links = Vec::new();
+        let own = self.link.stats().arrivals;
+        let reported = lock(&self.arrivals).clone();
+        for (to, arrivals) in std::iter::once(own).chain(reported.into_iter().skip(1)).enumerate() {
+            for (from, a) in arrivals.into_iter().enumerate() {
+                if from != to {
+                    links.push((from as u32, to as u32, a));
+                }
+            }
+        }
+        links
+    }
+
+    /// Whether the current (or last) run is in lockstep.
+    pub(crate) fn lockstep(&self) -> bool {
+        self.lockstep.load(Ordering::Acquire)
     }
 
     /// Waits until every other node has reported its run's end (and so sent all its events). Returns the first
@@ -412,6 +514,9 @@ impl Coordinator {
                 return Err(SessionError::Invalid(format!("the cluster failed: {failure}")));
             }
             if ended.iter().skip(1).all(Option::is_some) {
+                if !self.lockstep() {
+                    return Ok(()); // best effort: each node stopped when its copy of the clock did
+                }
                 return match ended.iter().enumerate().skip(1).find(|(_, t)| **t != Some(at)) {
                     Some((node, t)) => Err(SessionError::Invalid(format!(
                         "node {node} ended its run at {t:?}, the coordinator at {at}"
@@ -533,6 +638,7 @@ impl Forwarder {
         std::thread::Builder::new()
             .name("spikes-forward".into())
             .spawn(move || {
+                let mut reported = Instant::now();
                 while !s.load(Ordering::Acquire) {
                     match stream.recv_timeout(Duration::from_millis(2)) {
                         Ok(Some(batch)) => send_events(&l, &batch),
@@ -540,10 +646,15 @@ impl Forwarder {
                         Err(_) => break,
                     }
                     send_system(&l, &system);
+                    if reported.elapsed() >= Duration::from_millis(500) {
+                        send_arrivals(&l);
+                        reported = Instant::now();
+                    }
                     while let Ok(now) = ends.try_recv() {
                         // Everything the run emitted is in the stream by now: send it, then the end.
                         send_events(&l, &stream.drain());
                         send_system(&l, &system);
+                        send_arrivals(&l);
                         let msg = AppMsg::RunEnded { now_ns: now.as_nanos() };
                         l.send_app(0, postcard::to_stdvec(&msg).expect("encodes"));
                     }
@@ -569,6 +680,26 @@ impl Forwarder {
     pub(crate) fn link(&self) -> &StrictLink<SimMsg> {
         &self.link
     }
+}
+
+fn send_arrivals(link: &StrictLink<SimMsg>) {
+    let ns = |d: Duration| d.as_nanos() as u64;
+    let list = link
+        .stats()
+        .arrivals
+        .iter()
+        .map(|a| (a.events, a.late, ns(a.max_late), ns(a.p99_late)))
+        .collect();
+    link.send_app(0, postcard::to_stdvec(&AppMsg::Arrivals(list)).expect("encodes"));
+}
+
+/// Has a node's clock follow the coordinator's during best-effort runs.
+pub(crate) fn follow_coordinator(link: &StrictLink<SimMsg>, clock: ClockHandle) {
+    link.on_app(Arc::new(move |_, bytes| match postcard::from_bytes::<ToNode>(bytes) {
+        Ok(ToNode::Clock(schedule)) => clock.follow(schedule),
+        Ok(ToNode::Stop) => clock.stop(),
+        Err(_) => {}
+    }));
 }
 
 fn send_system(link: &StrictLink<SimMsg>, system: &tempo_runtime::SystemEvents) {
@@ -714,8 +845,12 @@ fn handle(
             built(session)?.add_input(input)?;
             Response::Ok
         }
-        Request::Run { end_ns } => {
-            built(session)?.run_member(SimTime::from_nanos(end_ns))?;
+        Request::Run {
+            end_ns,
+            lockstep,
+            schedule,
+        } => {
+            built(session)?.run_member(SimTime::from_nanos(end_ns), lockstep, schedule)?;
             Response::Ok
         }
         Request::Observe { neurons, on } => {

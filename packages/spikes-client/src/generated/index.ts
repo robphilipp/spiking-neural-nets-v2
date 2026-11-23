@@ -2,6 +2,7 @@ export type * from "./ApiError";
 export type * from "./BuildSettings";
 export type * from "./ClientMessage";
 export type * from "./Cluster";
+export type * from "./ClusterLink";
 export type * from "./ClusterNode";
 export type * from "./Encoding";
 export type * from "./ErrorCode";

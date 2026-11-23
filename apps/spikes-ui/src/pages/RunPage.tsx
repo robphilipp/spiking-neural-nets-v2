@@ -111,6 +111,7 @@ export function RunPage() {
   const nodesSetting = useAppSelector((s) => s.settings.nodes);
   /** The node agents the network was last built on (empty: the engine alone). */
   const [builtNodes, setBuiltNodes] = useState<string[]>([]);
+  const [lockstep, setLockstep] = useState(true);
   /** Record the next run (to the engine's recordings folder; see the Recordings page). */
   const [record, setRecord] = useState(false);
   const replay = session.replayEndMs !== null;
@@ -240,7 +241,12 @@ export function RunPage() {
               disabled={!network || running || building}
               data-testid="start"
               onClick={act(() =>
-                client!.start(id, { speed, durationMs: run.durationS === null ? null : run.durationS * 1000, record: record && !replay }),
+                client!.start(id, {
+                  speed,
+                  durationMs: run.durationS === null ? null : run.durationS * 1000,
+                  record: record && !replay,
+                  ...(builtNodes.length > 0 ? { lockstep } : {}),
+                }),
               )}
             >
               Start
@@ -426,7 +432,7 @@ export function RunPage() {
         </Stack>
       </Paper>
 
-      {network && client && builtNodes.length > 0 && <ClusterPanel client={client} session={id} running={running} />}
+      {network && client && builtNodes.length > 0 && <ClusterPanel client={client} session={id} running={running} lockstep={lockstep} onLockstep={setLockstep} />}
 
       {network && live && (
         <Paper variant="outlined" sx={{ p: 1.5 }}>

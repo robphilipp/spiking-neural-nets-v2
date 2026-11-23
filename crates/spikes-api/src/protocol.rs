@@ -159,6 +159,11 @@ pub enum Request {
         /// Record the run (the engine chooses where; see `listRecordings`).
         #[serde(default)]
         record: bool,
+        /// For a session built on nodes, at a set speed: keep every node in lockstep (exact; the default), or let
+        /// each follow its copy of the clock (best effort: spikes may arrive late; see `getCluster`).
+        #[serde(default)]
+        #[ts(optional)]
+        lockstep: Option<bool>,
     },
     /// Pauses a run.
     Pause {
@@ -572,12 +577,36 @@ pub struct Cluster {
     /// Spikes and other events received from the other nodes.
     #[ts(type = "number")]
     pub received: u64,
-    /// Events that arrived too late for their time and were delivered late (always 0: the cluster runs in exact
-    /// lockstep).
+    /// Events that arrived too late for their time and were delivered late (always 0 in lockstep).
     #[ts(type = "number")]
     pub late: u64,
+    /// The current (or last) run kept every node in lockstep.
+    pub lockstep: bool,
+    /// How timely events are on each link between nodes.
+    pub links: Vec<ClusterLink>,
     /// Why the cluster failed, if it did.
     pub failure: Option<String>,
+}
+
+/// Events from one node to another.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ClusterLink {
+    /// Sending node (0 is the coordinator).
+    pub from: u32,
+    /// Receiving node.
+    pub to: u32,
+    /// Events received.
+    #[ts(type = "number")]
+    pub events: u64,
+    /// Of those, events that arrived after their time and were delivered late.
+    #[ts(type = "number")]
+    pub late: u64,
+    /// The largest lateness, in ms of simulation time.
+    pub max_late_ms: f64,
+    /// The 99th percentile of lateness over late events, in ms.
+    pub p99_late_ms: f64,
 }
 
 /// One node of a cluster.

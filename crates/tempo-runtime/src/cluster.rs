@@ -167,8 +167,9 @@ pub trait Link<M>: Send + Sync {
     /// window start there.
     fn send(&self, node: u32, events: Vec<Remote<M>>);
 
-    /// Hands `shard` (a shard of this node) every event that has arrived for it, in any order.
-    fn receive(&self, shard: u16, sink: &mut dyn FnMut(OrderKey, RemoteItem<M>));
+    /// Hands `shard` (a shard of this node) every event that has arrived for it, in any order. The sink returns how
+    /// late each one was (zero if on time), for the link's statistics.
+    fn receive(&self, shard: u16, sink: &mut dyn FnMut(OrderKey, RemoteItem<M>) -> SimDuration);
 
     /// The window barrier across the cluster: given this node's report, returns the next window. On the node that
     /// decides (the coordinator), `decide` turns the cluster's reduced report into the decision, using that node's

@@ -10,7 +10,7 @@ mod link;
 mod transport;
 mod wire;
 
-pub use link::{AppHandler, LinkStats, StrictLink};
+pub use link::{AppHandler, Arrivals, LinkStats, StrictLink};
 pub use transport::{FrameSink, MemoryNetwork, TcpTransport, Transport};
 pub use wire::{FieldCodec, field_codec};
 

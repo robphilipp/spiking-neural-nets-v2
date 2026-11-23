@@ -51,6 +51,9 @@ export interface StartOptions {
   speed?: number | null;
   durationMs?: number | null;
   record?: boolean;
+  /** On nodes, at a set speed: keep every node in lockstep (exact; the server's default) or let each follow its
+   *  copy of the clock (best effort). */
+  lockstep?: boolean;
 }
 
 type Pending = { resolve: (r: Response) => void; reject: (e: Error) => void };
@@ -171,6 +174,7 @@ export abstract class ProtocolClient {
       speed: options.speed ?? null,
       durationMs: options.durationMs ?? null,
       record: options.record ?? false,
+      ...(options.lockstep === undefined ? {} : { lockstep: options.lockstep }),
     });
   }
 

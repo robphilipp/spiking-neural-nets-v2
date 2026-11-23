@@ -7,9 +7,9 @@
 //! The clock only limits *how far* shards may run. The simulation time each actor sees always comes from its
 //! message, never from the wall clock.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use tempo_core::{SimDuration, SimTime};
 
@@ -80,9 +80,36 @@ impl ClockState {
     }
 }
 
+/// A clock's mapping from wall time to simulation time, in a form another process (another node of a cluster) can
+/// follow: wall times are system (calendar) times, which every process on synchronized machines agrees on.
+#[derive(Copy, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum ClockSchedule {
+    /// As fast as possible.
+    Unpaced,
+    /// Simulation time `anchor_sim` at wall time `anchor_wall`, then `time_factor` wall seconds per simulated second.
+    Running {
+        /// When.
+        anchor_wall: SystemTime,
+        /// Where.
+        anchor_sim: SimTime,
+        /// Wall seconds per simulated second.
+        time_factor: f64,
+    },
+    /// Stopped at `at`.
+    Paused {
+        /// Where.
+        at: SimTime,
+        /// The factor to resume with.
+        time_factor: f64,
+    },
+}
+
 #[derive(Debug)]
 struct ClockShared {
     state: Mutex<ClockState>,
+    /// The schedule was set from outside ([`ClockHandle::follow`]): a run's start keeps its anchor.
+    following: AtomicBool,
     version: AtomicU64,
     stop_epoch: AtomicU64,
     progress: AtomicU64,
@@ -115,6 +142,7 @@ impl ClockHandle {
         Self {
             shared: Arc::new(ClockShared {
                 state: Mutex::new(state),
+                following: AtomicBool::new(false),
                 version: AtomicU64::new(0),
                 stop_epoch: AtomicU64::new(0),
                 progress: AtomicU64::new(0),
@@ -228,6 +256,65 @@ impl ClockHandle {
         self.lock().horizon(Instant::now())
     }
 
+    /// The clock's schedule, for another node to follow.
+    pub fn schedule(&self) -> ClockSchedule {
+        match *self.lock() {
+            ClockState::Unpaced => ClockSchedule::Unpaced,
+            ClockState::Running {
+                anchor_wall,
+                anchor_sim,
+                time_factor,
+            } => {
+                // An Instant means nothing to another process: express the anchor as a system time.
+                let (now_i, now_s) = (Instant::now(), SystemTime::now());
+                let anchor_wall = if anchor_wall <= now_i {
+                    now_s - (now_i - anchor_wall)
+                } else {
+                    now_s + (anchor_wall - now_i)
+                };
+                ClockSchedule::Running {
+                    anchor_wall,
+                    anchor_sim,
+                    time_factor,
+                }
+            }
+            ClockState::Paused { at, time_factor } => ClockSchedule::Paused { at, time_factor },
+        }
+    }
+
+    /// Follows a schedule (another node's, see [`Self::schedule`]): from now on a run's start keeps the schedule's
+    /// anchor instead of anchoring at its own start, so every node paces from the same instant.
+    pub fn follow(&self, schedule: ClockSchedule) {
+        self.shared.following.store(true, Ordering::Release);
+        self.update(|state, now_i| {
+            *state = match schedule {
+                ClockSchedule::Unpaced => ClockState::Unpaced,
+                ClockSchedule::Running {
+                    anchor_wall,
+                    anchor_sim,
+                    time_factor,
+                } => {
+                    let now_s = SystemTime::now();
+                    let anchor_wall = match now_s.duration_since(anchor_wall) {
+                        Ok(ago) => now_i.checked_sub(ago).unwrap_or(now_i),
+                        Err(ahead) => now_i + ahead.duration(),
+                    };
+                    ClockState::Running {
+                        anchor_wall,
+                        anchor_sim,
+                        time_factor,
+                    }
+                }
+                ClockSchedule::Paused { at, time_factor } => ClockState::Paused { at, time_factor },
+            };
+        });
+    }
+
+    /// Stops following: a run's start anchors the clock again.
+    pub fn unfollow(&self) {
+        self.shared.following.store(false, Ordering::Release);
+    }
+
     pub(crate) fn snapshot(&self) -> (u64, ClockState) {
         let version = self.shared.version.load(Ordering::Acquire);
         (version, *self.lock())
@@ -249,7 +336,9 @@ impl ClockHandle {
     /// doesn't count as falling behind.
     pub(crate) fn start_run(&self, at: SimTime) {
         self.shared.progress.fetch_max(at.as_nanos(), Ordering::AcqRel);
+        let following = self.shared.following.load(Ordering::Acquire);
         self.update(|state, now| match *state {
+            ClockState::Running { .. } if following => {}
             ClockState::Running { time_factor, .. } => {
                 *state = ClockState::Running {
                     anchor_wall: now,
@@ -407,6 +496,24 @@ mod tests {
             "{waited:?}"
         );
         assert!(waited < Duration::from_millis(50), "{waited:?}");
+    }
+
+    #[test]
+    fn a_followed_schedule_paces_from_its_anchor() {
+        let leader = ClockHandle::new(Pacing::RealTime { time_factor: 1.0 });
+        leader.start_run(ms(100));
+        std::thread::sleep(Duration::from_millis(5));
+        let follower = ClockHandle::new(Pacing::AsFastAsPossible);
+        follower.follow(leader.schedule());
+        // A run starting later keeps the leader's anchor.
+        follower.start_run(ms(100));
+        let (a, b) = (leader.horizon().unwrap(), follower.horizon().unwrap());
+        let gap = if a > b { a - b } else { b - a };
+        assert!(gap < SimDuration::from_micros(500), "{a} vs {b}");
+        assert!(b >= ms(105));
+        leader.pause();
+        follower.follow(leader.schedule());
+        assert_eq!(follower.horizon(), leader.horizon());
     }
 
     #[test]

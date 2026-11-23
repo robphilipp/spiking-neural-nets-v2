@@ -71,12 +71,29 @@ test("a formula with a mistake says where", async ({ page }) => {
   await expect(page.getByTestId("inject")).toBeDisabled();
 });
 
+/** Whether this machine is processing audio at all (it may not be: idle, or no output device): an audio clock that
+ *  advances in real time. */
+async function audioRuns(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    const ctx = new AudioContext();
+    const t0 = ctx.currentTime;
+    await new Promise((r) => setTimeout(r, 300));
+    const advanced = ctx.currentTime - t0;
+    await ctx.close();
+    return advanced > 0.15;
+  });
+}
+
 test("live streaming and the microphone drive a running network", async ({ page }) => {
   test.setTimeout(60_000);
   await openLineSensor(page);
+  const sources = (await audioRuns(page)) ? ["stream", "microphone"] : ["stream"];
+  if (sources.length === 1) {
+    test.info().annotations.push({ type: "skipped", description: "the microphone: this machine isn't processing audio right now" });
+  }
   await page.getByTestId("start").click();
   await expect(page.getByTestId("state")).toHaveText("running");
-  for (const source of ["stream", "microphone"]) {
+  for (const source of sources) {
     await page.getByTestId("nav-inputs").click();
     if (source === "microphone") await page.getByLabel(/Hz at 1/).fill("400");
     await page.getByTestId(source).click();

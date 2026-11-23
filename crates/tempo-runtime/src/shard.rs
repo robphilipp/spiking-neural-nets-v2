@@ -715,15 +715,17 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
         }
     }
 
-    /// Moves messages other shards (and nodes) sent here into the local queue. Nothing goes in earlier than
-    /// `start`, the window about to be processed: a message from another node that arrives too late for its time
-    /// is delivered at `start` instead, and counted.
-    fn drain(&mut self, shared: &RunShared<'_, M, E>, n: usize, start: SimTime) {
+    /// Moves events other nodes sent here into the local queue (see [`Self::drain`]).
+    fn drain_link(&mut self, shared: &RunShared<'_, M, E>, start: SimTime) {
+        // Never before an event already delivered here (after a best-effort run, nodes may have stopped at
+        // slightly different times).
+        let start = start.max(self.last_event);
         if let Some(link) = shared.link {
             let core = &mut self.core;
             link.receive(core.shard, &mut |mut key, item| {
+                let mut late = SimDuration::ZERO;
                 if key.at < start {
-                    let late = start - key.at;
+                    late = start - key.at;
                     core.stats.late_remote += 1;
                     core.stats.max_remote_lateness = core.stats.max_remote_lateness.max(late);
                     key.at = start;
@@ -743,8 +745,16 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
                 };
                 core.stats.node_receives += 1;
                 core.queue.push(key, item);
+                late
             });
         }
+    }
+
+    /// Moves messages other shards (and nodes) sent here into the local queue. Nothing goes in earlier than
+    /// `start`, the window about to be processed: a message from another node that arrives too late for its time
+    /// is delivered at `start` instead, and counted.
+    fn drain(&mut self, shared: &RunShared<'_, M, E>, n: usize, start: SimTime) {
+        self.drain_link(shared, start);
         let me = usize::from(self.core.shard);
         for from in (0..n).filter(|&from| from != me) {
             {
@@ -939,6 +949,11 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
                     }
                 }
                 let end = SimTime::from_nanos(decision.end);
+                // Events from other nodes that arrived while waiting for the clock (best effort: that wait is
+                // their slack) go in before the window is processed.
+                if shared.link.is_some() {
+                    self.drain_link(shared, start);
+                }
                 self.core.window_end = end;
                 while let Some((key, item)) = self.core.queue.pop_before(end) {
                     self.deliver(world, key, item);

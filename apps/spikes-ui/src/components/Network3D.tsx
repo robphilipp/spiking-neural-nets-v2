@@ -228,14 +228,16 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
       for (const syn of network.synapses) all.push(...network.neurons[syn.pre]!.position, ...network.neurons[syn.post]!.position);
     }
     const allGeometry = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(all, 3));
+    // The theme's text colours carry their own alpha, which three.js ignores: use plain ink and set the opacity.
+    const ink = theme.palette.mode === "dark" ? 0xffffff : 0x000000;
     const faint = new THREE.LineSegments(
       allGeometry,
-      new THREE.LineBasicMaterial({ color: theme.palette.text.secondary, transparent: true, opacity: n > 500 ? 0.12 : 0.3 }),
+      new THREE.LineBasicMaterial({ color: ink, transparent: true, opacity: n > 500 ? 0.07 : 0.18 }),
     );
     world.add(faint);
     const lines = new THREE.LineSegments(
       new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: theme.palette.text.primary, transparent: true, opacity: 0.8 }),
+      new THREE.LineBasicMaterial({ color: ink, transparent: true, opacity: 0.7 }),
     );
     world.add(lines);
 

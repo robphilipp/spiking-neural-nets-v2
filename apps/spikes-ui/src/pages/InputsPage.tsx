@@ -225,7 +225,11 @@ export function InputsPage() {
             data-testid="microphone"
             title="The microphone's spectrum in log-spaced bands, one per target neuron"
             onClick={attempt(async () => {
-              const media = await navigator.mediaDevices.getUserMedia({ audio: true });
+              // The raw sound: echo cancellation, noise suppression and gain control would reshape it (noise
+              // suppression removes steady tones altogether).
+              const media = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+              });
               const audio = new AudioContext();
               const analyser = audio.createAnalyser();
               analyser.fftSize = 2048;

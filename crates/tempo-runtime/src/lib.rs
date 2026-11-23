@@ -54,7 +54,7 @@ mod system;
 
 pub use actor::{Actor, EdgeIdx, RouteId, Timer, TimerToken};
 pub use broadcast::{GroupId, SpatialBroadcast};
-pub use clock::{ClockHandle, Pacing, StopToken};
+pub use clock::{ClockHandle, ClockSchedule, Pacing, StopToken};
 pub use cluster::{Link, NodePlacement};
 pub use control::{Control, Injected, TopologyOp};
 pub use ctx::Ctx;

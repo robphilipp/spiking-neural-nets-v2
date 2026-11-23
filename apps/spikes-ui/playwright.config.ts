@@ -1,4 +1,31 @@
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
+
+/** A steady 440 Hz tone for the fake microphone (Chromium's own fake audio is a short beep now and then). */
+function toneWav(): string {
+  const rate = 48_000;
+  const samples = rate; // one second, looped
+  const data = Buffer.alloc(samples * 2);
+  for (let i = 0; i < samples; i++) data.writeInt16LE(Math.round(12_000 * Math.sin((2 * Math.PI * 440 * i) / rate)), i * 2);
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write("WAVEfmt ", 8);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20); // PCM
+  header.writeUInt16LE(1, 22); // mono
+  header.writeUInt32LE(rate, 24);
+  header.writeUInt32LE(rate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(data.length, 40);
+  const path = join(tmpdir(), "spikes-e2e-tone.wav");
+  writeFileSync(path, Buffer.concat([header, data]));
+  return path;
+}
 
 // The UI as a web app, served by a real spikes-server (build both first:
 // `cargo build -p spikes-server` and `npm run build`).
@@ -17,7 +44,7 @@ export default defineConfig({
     permissions: ["microphone"],
     // WebGL on the GPU (ANGLE over Metal on macOS), as in a real window; headless Chromium otherwise draws it in
     // software, which says nothing about the 3D view's real cost.
-    // A fake microphone (a tone), allowed without asking, for the microphone input.
+    // A fake microphone (a steady tone), allowed without asking, for the microphone input.
     launchOptions: {
       args: [
         "--use-angle=metal",
@@ -25,6 +52,7 @@ export default defineConfig({
         "--enable-gpu",
         "--use-fake-ui-for-media-stream",
         "--use-fake-device-for-media-stream",
+        `--use-file-for-fake-audio-capture=${toneWav()}`,
       ],
     },
   },

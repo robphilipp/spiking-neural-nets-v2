@@ -46,6 +46,19 @@ impl<M> std::fmt::Debug for StrictLink<M> {
     }
 }
 
+/// Timeliness of the events from one other node.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Arrivals {
+    /// Events received from it.
+    pub events: u64,
+    /// Of those, events that arrived after their time and were delivered late.
+    pub late: u64,
+    /// The largest lateness (simulation time).
+    pub max_late: Duration,
+    /// The 99th percentile of lateness over late events.
+    pub p99_late: Duration,
+}
+
 /// How a link is doing: traffic and waiting, for a timing panel.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LinkStats {
@@ -61,10 +74,22 @@ pub struct LinkStats {
     pub waited: Duration,
     /// Why the cluster failed, if it did.
     pub failure: Option<String>,
+    /// How timely the events from each node were (this node's entry is empty).
+    pub arrivals: Vec<Arrivals>,
+    /// Windows wait for every node (exact), rather than following the clock (best effort).
+    pub lockstep: bool,
 }
 
-/// Events waiting for one shard.
-type Inbound<M> = Mutex<Vec<(OrderKey, RemoteItem<M>)>>;
+/// Lateness of one node's events.
+#[derive(Default)]
+struct Timeliness {
+    events: u64,
+    late: u64,
+    lateness: tempo_runtime::LatencyHistogram,
+}
+
+/// Events waiting for one shard, with the node each came from.
+type Inbound<M> = Mutex<Vec<(u32, OrderKey, RemoteItem<M>)>>;
 /// A round's reports, per node: the report and that node's sent counts.
 type Reports = Vec<Option<(WindowReport, Vec<u64>)>>;
 
@@ -83,6 +108,9 @@ struct Inner<M> {
     round: AtomicU64,
     waited_ns: AtomicU64,
     closing: AtomicBool,
+    /// Best effort: windows follow this node's clock and don't wait for the others.
+    best_effort: AtomicBool,
+    timeliness: Mutex<Vec<Timeliness>>,
     state: Mutex<State>,
     changed: Condvar,
 }
@@ -131,6 +159,8 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> StrictLink<M> {
                 round: AtomicU64::new(0),
                 waited_ns: AtomicU64::new(0),
                 closing: AtomicBool::new(false),
+                best_effort: AtomicBool::new(false),
+                timeliness: Mutex::new((0..nodes).map(|_| Timeliness::default()).collect()),
                 state: Mutex::new(State::default()),
                 changed: Condvar::new(),
             }),
@@ -182,7 +212,31 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> StrictLink<M> {
             rounds: i.round.load(Ordering::Relaxed),
             waited: Duration::from_nanos(i.waited_ns.load(Ordering::Relaxed)),
             failure: i.lock().failure.clone(),
+            arrivals: i
+                .timeliness
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .iter()
+                .map(|t| Arrivals {
+                    events: t.events,
+                    late: t.late,
+                    max_late: t.lateness.max(),
+                    p99_late: if t.late > 0 {
+                        t.lateness.quantile(0.99)
+                    } else {
+                        Duration::ZERO
+                    },
+                })
+                .collect(),
+            lockstep: !i.best_effort.load(Ordering::Relaxed),
         }
+    }
+
+    /// Chooses how windows are agreed, for the runs from now on (every node must choose the same, between runs):
+    /// lockstep (exact: every window waits for every node) or best effort (each node follows its own copy of the
+    /// coordinator's clock; events that arrive too late are delivered late and counted).
+    pub fn set_lockstep(&self, lockstep: bool) {
+        self.inner.best_effort.store(!lockstep, Ordering::Release);
     }
 
     /// The cluster has failed (a connection broke): why.
@@ -259,14 +313,25 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> Link<M> for Stric
         self.send_frame(node, &Frame::Events(wire));
     }
 
-    fn receive(&self, shard: u16, sink: &mut dyn FnMut(OrderKey, RemoteItem<M>)) {
+    fn receive(&self, shard: u16, sink: &mut dyn FnMut(OrderKey, RemoteItem<M>) -> SimDuration) {
         let events = std::mem::take(
             &mut *self.inner.inbound[usize::from(shard)]
                 .lock()
                 .unwrap_or_else(|p| p.into_inner()),
         );
-        for (key, item) in events {
-            sink(key, item);
+        if events.is_empty() {
+            return;
+        }
+        let mut timeliness = self.inner.timeliness.lock().unwrap_or_else(|p| p.into_inner());
+        for (from, key, item) in events {
+            let late = sink(key, item);
+            if let Some(t) = timeliness.get_mut(from as usize) {
+                t.events += 1;
+                if !late.is_zero() {
+                    t.late += 1;
+                    t.lateness.record(Duration::from_nanos(late.as_nanos()));
+                }
+            }
         }
     }
 
@@ -277,6 +342,14 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> Link<M> for Stric
         idle: &mut dyn FnMut(),
     ) -> WindowDecision {
         let inner = &self.inner;
+        if inner.best_effort.load(Ordering::Acquire) {
+            // Each node follows its own copy of the clock; nothing to agree.
+            return if inner.lock().failure.is_some() {
+                WindowDecision::STOP
+            } else {
+                decide(report)
+            };
+        }
         let round = inner.round.fetch_add(1, Ordering::AcqRel);
         let sent: Vec<u64> = inner.sent.iter().map(|c| c.load(Ordering::Acquire)).collect();
         let nodes = inner.nodes as usize;
@@ -357,7 +430,7 @@ impl<M: Clone + Send + DeserializeOwned + 'static> FrameSink for Sink<M> {
         match frame {
             Frame::Events(events) => {
                 let count = events.len() as u64;
-                let mut per_shard: Vec<Vec<(OrderKey, RemoteItem<M>)>> =
+                let mut per_shard: Vec<Vec<(u32, OrderKey, RemoteItem<M>)>> =
                     (0..inner.shards).map(|_| Vec::new()).collect();
                 for event in &events {
                     let key = OrderKey::from(&event.key);
@@ -369,7 +442,7 @@ impl<M: Clone + Send + DeserializeOwned + 'static> FrameSink for Sink<M> {
                     };
                     for shard in shards {
                         match (decode_item(&event.item, &inner.fields), per_shard.get_mut(shard)) {
-                            (Some(item), Some(list)) => list.push((key, item)),
+                            (Some(item), Some(list)) => list.push((from, key, item)),
                             _ => return inner.fail(format!("bad event from node {from} for shard {shard}")),
                         }
                     }

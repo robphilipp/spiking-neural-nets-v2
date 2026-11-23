@@ -78,7 +78,7 @@ fn run(session: &Session, ms: u64, record: Option<PathBuf>) -> Option<spikes_rec
         "the run should end: {:?} at {} {:?}",
         session.state(),
         session.sim_time(),
-        session.cluster_stats()
+        session.cluster_status()
     );
     assert_eq!(session.failure(), None);
     notices.try_iter().find_map(|n| match n {
@@ -196,4 +196,62 @@ fn dopamine_reaches_every_node() {
     let alone = reward(&engine, Vec::new());
     let cluster = reward(&engine, agents(2));
     assert_eq!(cluster, alone);
+}
+
+#[test]
+fn best_effort_runs_follow_the_coordinators_clock_and_count_late_spikes() {
+    let engine = Engine::new();
+    let session = engine.create("line", data("v1", "line-sensor-layers-wta.boo")).unwrap();
+    session.set_nodes(agents(2)).unwrap();
+    let network = session.build(BuildSettings::default()).unwrap();
+    let inputs: Vec<u32> = (0..network.neurons.len() as u32)
+        .filter(|&i| network.neurons[i as usize].name.starts_with("input-"))
+        .collect();
+    session
+        .add_input(InputSpec::Poisson {
+            targets: inputs,
+            rate_hz: 2_000.0,
+            mv: 6.0,
+            duration: None,
+        })
+        .unwrap();
+    session.set_lockstep(false);
+    session
+        .start(RunSettings {
+            speed: Speed::Factor(1.0),
+            duration: None,
+            record: None,
+        })
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    // Pause, step and resume reach every node.
+    session.pause().unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    let paused = session.sim_time();
+    session.step(SimDuration::from_millis(20)).unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    session.resume().unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    session.stop().unwrap();
+    assert_eq!(session.failure(), None);
+    assert!(
+        session.sim_time() > paused + SimDuration::from_millis(100),
+        "it resumed"
+    );
+    let status = session.cluster_status().unwrap();
+    assert!(!status.lockstep);
+    let crossing: u64 = status.links.iter().map(|(_, _, a)| a.events).sum();
+    assert!(crossing > 100, "spikes crossed between nodes: {:?}", status.links);
+    assert!(
+        status
+            .links
+            .iter()
+            .any(|(from, to, _)| *from != 0 && *to == 0 || *to != 0),
+        "every link reported"
+    );
+
+    // An exact run afterwards still works (as fast as possible is always in lockstep).
+    run(&session, 200, None);
+    assert!(session.cluster_status().unwrap().lockstep);
+    engine.close(session.id()).unwrap();
 }

@@ -230,11 +230,25 @@ impl Connection {
             }),
             Request::GetCluster { session } => {
                 let s = self.session(session)?;
-                let (addresses, stats) = s
-                    .cluster_stats()
+                let status = s
+                    .cluster_status()
                     .ok_or_else(|| error(ErrorCode::Invalid, "the session isn't built on nodes"))?;
+                let stats = &status.link;
+                let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
+                let links: Vec<api::ClusterLink> = status
+                    .links
+                    .iter()
+                    .map(|(from, to, a)| api::ClusterLink {
+                        from: *from,
+                        to: *to,
+                        events: a.events,
+                        late: a.late,
+                        max_late_ms: ms(a.max_late),
+                        p99_late_ms: ms(a.p99_late),
+                    })
+                    .collect();
                 let nodes = std::iter::once("coordinator".to_string())
-                    .chain(addresses)
+                    .chain(status.nodes.clone())
                     .enumerate()
                     .map(|(i, address)| api::ClusterNode {
                         address,
@@ -248,8 +262,10 @@ impl Connection {
                         rounds: stats.rounds,
                         waited_ms: stats.waited.as_secs_f64() * 1e3,
                         received: stats.received,
-                        late: 0,
-                        failure: stats.failure,
+                        late: links.iter().map(|l| l.late).sum(),
+                        lockstep: status.lockstep,
+                        links,
+                        failure: stats.failure.clone(),
                     },
                 })
             }
@@ -291,8 +307,12 @@ impl Connection {
                 speed,
                 duration_ms,
                 record,
+                lockstep,
             } => {
                 let s = self.session(session)?;
+                if let Some(lockstep) = lockstep {
+                    s.set_lockstep(lockstep);
+                }
                 let record = record.then(|| self.recording_dir(&s));
                 s.start(RunSettings {
                     speed: speed_of(speed)?,
@@ -597,7 +617,7 @@ fn summary(s: &Session) -> api::SessionSummary {
         },
         neurons: s.network().neurons.len() as u32,
         replay_end_ms: s.replay_end().map(ms_of),
-        nodes: s.cluster_stats().map_or(1, |(nodes, _)| nodes.len() as u32 + 1),
+        nodes: s.cluster_status().map_or(1, |c| c.nodes.len() as u32 + 1),
     }
 }
 

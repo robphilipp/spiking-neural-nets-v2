@@ -55,6 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         speed: Some(1.0),
         duration_ms: None,
         record: false,
+        lockstep: None,
     })?;
 
     let start = Instant::now();

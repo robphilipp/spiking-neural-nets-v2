@@ -52,5 +52,17 @@ test("a network spread over two node agents runs exactly as on the server alone,
   await expect(panel.getByTestId("cluster-node").nth(2)).toContainText(/[1-9][\d,]+\s*\d/);
   // The usual views show the whole network: spikes from every node reach the raster.
   await expect(page.getByTestId("no-spikes")).toHaveCount(0);
+
+  // Best effort, at real time: each node follows its copy of the clock; the panel shows each link's timeliness.
+  await page.getByTestId("lockstep").uncheck();
+  await page.getByLabel("As fast as possible").uncheck();
+  await page.getByLabel("Run for (s)").fill("1.5");
+  await page.getByLabel("Run for (s)").blur();
+  await page.getByTestId("start").click();
+  await expect(page.getByTestId("state")).toHaveText("running");
+  await expect(page.getByTestId("state")).toHaveText("ready", { timeout: 15_000 });
+  await expect(page.getByTestId("cluster-links")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("cluster-link").first()).toContainText("→");
+  await expect(page.getByTestId("cluster-link").first()).toContainText("%");
   await page.screenshot({ path: "test-results/cluster.png", fullPage: true });
 });

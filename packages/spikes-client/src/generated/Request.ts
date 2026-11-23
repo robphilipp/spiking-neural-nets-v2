@@ -63,7 +63,12 @@ durationMs: number | null,
 /**
  * Record the run (the engine chooses where; see `listRecordings`).
  */
-record: boolean, } | { "type": "pause", 
+record: boolean, 
+/**
+ * For a session built on nodes, at a set speed: keep every node in lockstep (exact; the default), or let
+ * each follow its copy of the clock (best effort: spikes may arrive late; see `getCluster`).
+ */
+lockstep?: boolean, } | { "type": "pause", 
 /**
  * The session.
  */

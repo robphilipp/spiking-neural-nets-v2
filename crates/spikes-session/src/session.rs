@@ -234,6 +234,9 @@ struct Inner {
     cluster: Option<Arc<Coordinator>>,
     /// This session is a node of another session's cluster.
     member: Option<Arc<Forwarder>>,
+    /// A cluster's paced runs wait for every node at every window (exact), rather than each node following its copy
+    /// of the clock (best effort).
+    lockstep: bool,
 }
 
 struct Shared {
@@ -293,6 +296,7 @@ impl Session {
                     nodes: Vec::new(),
                     cluster: None,
                     member: None,
+                    lockstep: true,
                 }),
                 changed: Condvar::new(),
                 listeners: Mutex::new(Vec::new()),
@@ -508,15 +512,27 @@ impl Session {
         Ok(())
     }
 
+    /// For a session built on nodes: whether paced runs keep every node in lockstep (exact; the default) or let each
+    /// follow its copy of the clock (best effort: faster across a network, but spikes may arrive late, and are
+    /// counted). Runs as fast as possible are always in lockstep. Applies from the next start.
+    pub fn set_lockstep(&self, lockstep: bool) {
+        self.inner().lockstep = lockstep;
+    }
+
     /// The node agents this session builds on.
     pub fn nodes(&self) -> Vec<String> {
         self.inner().nodes.clone()
     }
 
-    /// The cluster's traffic, if this session coordinates one.
-    pub fn cluster_stats(&self) -> Option<(Vec<String>, tempo_cluster::LinkStats)> {
-        let inner = self.inner();
-        inner.cluster.as_ref().map(|c| (c.addresses(), c.link.stats()))
+    /// How the cluster is doing, if this session coordinates one.
+    pub fn cluster_status(&self) -> Option<crate::cluster::ClusterStatus> {
+        let cluster = self.coordinator()?;
+        Some(crate::cluster::ClusterStatus {
+            nodes: cluster.addresses(),
+            link: cluster.link.stats(),
+            links: cluster.links(),
+            lockstep: cluster.lockstep(),
+        })
     }
 
     /// Builds as node `setup.placement.node` of another session's cluster (for the node agent).
@@ -524,6 +540,7 @@ impl Session {
         let mut inner = self.inner();
         let (rt, net, _) = self.build_network(&mut inner, settings, Some(&setup))?;
         let forwarder = Forwarder::start(rt.subscribe_lossless(), rt.system_events(), setup.link.clone());
+        crate::cluster::follow_coordinator(&setup.link, rt.clock());
         (setup.connect)(&setup.link)?;
         inner.member = Some(forwarder);
         inner.phase = Stage::Ready(Box::new(Built { rt, net: Some(net) }));
@@ -531,7 +548,12 @@ impl Session {
     }
 
     /// As a node of a cluster: runs until `end`, in step with the coordinator.
-    pub(crate) fn run_member(&self, end: SimTime) -> Result<(), SessionError> {
+    pub(crate) fn run_member(
+        &self,
+        end: SimTime,
+        lockstep: bool,
+        schedule: Option<tempo_runtime::ClockSchedule>,
+    ) -> Result<(), SessionError> {
         let mut inner = self.inner();
         let built = match std::mem::replace(&mut inner.phase, Stage::Loaded) {
             Stage::Ready(built) => built,
@@ -544,8 +566,18 @@ impl Session {
         let Built { rt, net } = *built;
         let clock = rt.clock();
         let stop_token = clock.stop_token();
-        // The coordinator's clock paces the cluster; this node just follows its windows.
-        clock.set_as_fast_as_possible();
+        if let Some(forwarder) = &inner.member {
+            forwarder.link().set_lockstep(lockstep);
+        }
+        match schedule {
+            // Best effort: follow the coordinator's clock (its changes arrive over the mesh).
+            Some(schedule) if !lockstep => clock.follow(schedule),
+            // Lockstep: the coordinator's clock paces the cluster; this node just follows its windows.
+            _ => {
+                clock.unfollow();
+                clock.set_as_fast_as_possible();
+            }
+        }
         inner.phase = Stage::Running {
             control: rt.control(),
             clock,
@@ -644,8 +676,25 @@ impl Session {
         speed.apply(&clock);
         inner.speed = speed;
         let end = run.duration.map_or(SimTime::MAX, |d| rt.now().saturating_add(d));
+        // Best effort: every node paces from the same instant, a little in the future.
+        let lockstep = inner.lockstep || matches!(speed, Speed::AsFastAsPossible);
+        let schedule = match speed {
+            Speed::Factor(f) if !lockstep && inner.cluster.is_some() => {
+                let schedule = tempo_runtime::ClockSchedule::Running {
+                    anchor_wall: std::time::SystemTime::now() + Duration::from_millis(100),
+                    anchor_sim: rt.now(),
+                    time_factor: 1.0 / f,
+                };
+                clock.follow(schedule);
+                Some(schedule)
+            }
+            _ => {
+                clock.unfollow();
+                None
+            }
+        };
         if let Some(cluster) = &inner.cluster
-            && let Err(e) = cluster.run(end)
+            && let Err(e) = cluster.run(end, lockstep, schedule)
         {
             cluster.close();
             inner.cluster = None;
@@ -757,7 +806,11 @@ impl Session {
 
     /// Pauses a run.
     pub fn pause(&self) -> Result<(), SessionError> {
-        self.clock()?.pause();
+        let clock = self.clock()?;
+        clock.pause();
+        if let Some(cluster) = self.coordinator() {
+            cluster.clock_changed(&clock);
+        }
         self.notify(SessionNotice::StateChanged(State::Paused));
         Ok(())
     }
@@ -769,6 +822,9 @@ impl Session {
             Speed::AsFastAsPossible => clock.set_as_fast_as_possible(),
             Speed::Factor(_) => clock.resume(),
         }
+        if let Some(cluster) = self.coordinator() {
+            cluster.clock_changed(&clock);
+        }
         self.notify(SessionNotice::StateChanged(State::Running));
         Ok(())
     }
@@ -777,9 +833,13 @@ impl Session {
     /// long as fast as possible before returning.
     pub fn step(&self, by: SimDuration) -> Result<(), SessionError> {
         let mut inner = self.inner();
+        let cluster = inner.cluster.clone();
         match &mut inner.phase {
             Stage::Running { clock, .. } if clock.is_paused() => {
                 clock.step(by);
+                if let Some(cluster) = &cluster {
+                    cluster.clock_changed(clock);
+                }
                 Ok(())
             }
             Stage::Ready(built) => {
@@ -792,7 +852,7 @@ impl Session {
                     unreachable!()
                 };
                 if let Some(cluster) = &cluster {
-                    cluster.run(end)?;
+                    cluster.run(end, true, None)?;
                 }
                 built.rt.run_until(end);
                 if let Some(cluster) = &cluster {
@@ -819,6 +879,9 @@ impl Session {
                 Speed::AsFastAsPossible if !clock.is_paused() => clock.set_as_fast_as_possible(),
                 Speed::AsFastAsPossible => {} // applied on resume
             }
+            if let Some(cluster) = &inner.cluster {
+                cluster.clock_changed(clock);
+            }
         }
         Ok(())
     }
@@ -833,6 +896,9 @@ impl Session {
         let mut inner = self.inner();
         if let Stage::Running { clock, .. } = &inner.phase {
             clock.stop();
+            if let Some(cluster) = &inner.cluster {
+                cluster.stop_nodes();
+            }
         }
         while matches!(inner.phase, Stage::Running { .. }) {
             inner = self.shared.changed.wait(inner).unwrap_or_else(|p| p.into_inner());
