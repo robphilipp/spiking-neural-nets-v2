@@ -20,8 +20,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 pub use network::{GRID, NetworkInfo, NeuronInfo, SynapseInfo};
 pub use sensors::{Encoding, OnPause, SampleBatch, Sensor, SensorSpec, SensorStats, SpikeBatch};
-pub use session::{BuildSettings, InputSpec, NeuronSnapshot, RunSettings, Session, SessionNotice, Speed, State};
-pub use viewer::{Selection, ViewSettings, Viewer};
+pub use session::{
+    BuildSettings, DEFAULT_MIN_DELAY, InputSpec, NeuronSnapshot, RunSettings, Session, SessionNotice, Speed, State,
+};
+pub use viewer::{FrameStats, Selection, ViewSettings, Viewer};
 
 /// Identifies a session within its engine.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -95,6 +97,20 @@ impl Engine {
         let session = Session::new(id, name.into(), description.into())?;
         self.lock().insert(id, session.clone());
         Ok(session)
+    }
+
+    /// Creates a session from a description built in code (e.g. a large generated network). `text` stands in for
+    /// the source in recordings.
+    pub fn create_described(
+        &self,
+        name: impl Into<String>,
+        text: impl Into<String>,
+        description: spikes_dna::NetworkDescription,
+    ) -> Session {
+        let id = SessionId(self.next.fetch_add(1, Ordering::Relaxed));
+        let session = Session::described(id, name.into(), text.into(), description);
+        self.lock().insert(id, session.clone());
+        session
     }
 
     /// The session with this id.

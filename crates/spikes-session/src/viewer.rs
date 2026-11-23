@@ -141,6 +141,8 @@ pub(crate) struct Hub {
     slots: Mutex<Vec<Slot>>,
     source: Mutex<Option<Source>>,
     next_id: AtomicU64,
+    /// Time spent sorting events into viewers' pending frames and encoding frames.
+    stats: FrameStatsCell,
     /// The latest simulation time the session reported (ns): the clock's progress doesn't cover a run that ends
     /// as fast as possible after its last event, or steps taken while not running.
     known_ns: AtomicU64,
@@ -159,6 +161,7 @@ impl Hub {
             source: Mutex::new(None),
             next_id: AtomicU64::new(0),
             known_ns: AtomicU64::new(0),
+            stats: FrameStatsCell::default(),
         });
         let weak = Arc::downgrade(&hub);
         // If the thread can't start, viewers just get no frames.
@@ -183,6 +186,18 @@ impl Hub {
             clock: rt.clock(),
             network,
         });
+    }
+
+    /// The aggregator's timing so far.
+    pub(crate) fn frame_stats(&self) -> FrameStats {
+        let s = &self.stats;
+        FrameStats {
+            frames: s.frames.load(Ordering::Relaxed),
+            events: s.events.load(Ordering::Relaxed),
+            routing: Duration::from_nanos(s.route_ns.load(Ordering::Relaxed)),
+            encoding: Duration::from_nanos(s.encode_ns.load(Ordering::Relaxed)),
+            slowest_frame: Duration::from_nanos(s.max_encode_ns.load(Ordering::Relaxed)),
+        }
     }
 
     /// Records that simulation time has reached `t`.
@@ -294,21 +309,32 @@ fn aggregate(hub: &Weak<Hub>) {
         let Some(source) = source.as_ref() else { continue };
         let mut slots = lock(&hub.slots);
         if let Some(batch) = batch {
+            let t = Instant::now();
             for e in &batch {
                 route(e, &source.network, &mut slots);
             }
+            hub.stats.events.fetch_add(batch.len() as u64, Ordering::Relaxed);
+            hub.stats
+                .route_ns
+                .fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
         }
         let now = Instant::now();
         let dropped_events = u32::try_from(source.stream.dropped()).unwrap_or(u32::MAX);
         for slot in slots.iter_mut().filter(|s| s.deadline <= now) {
             slot.deadline = now + slot.settings.frame;
-            emit(
+            let t = Instant::now();
+            if emit(
                 hub.session,
                 slot,
                 source,
                 dropped_events,
                 hub.known_ns.load(Ordering::Relaxed),
-            );
+            ) {
+                let ns = t.elapsed().as_nanos() as u64;
+                hub.stats.frames.fetch_add(1, Ordering::Relaxed);
+                hub.stats.encode_ns.fetch_add(ns, Ordering::Relaxed);
+                hub.stats.max_encode_ns.fetch_max(ns, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -347,11 +373,12 @@ fn route(e: &Emitted<Event>, network: &NetworkInfo, slots: &mut [Slot]) {
     }
 }
 
-fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, known_ns: u64) {
+/// Encodes and sends a slot's frame; returns whether there was one.
+fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, known_ns: u64) -> bool {
     let clock = &source.clock;
     let sim = clock.sim_time().since_start().as_nanos().max(known_ns);
     if slot.pending.is_empty() && sim == slot.last_t1 {
-        return; // nothing new to show
+        return false; // nothing new to show
     }
     let p = std::mem::take(&mut slot.pending);
     let t0 = p.t_min.unwrap_or(slot.last_t1).min(sim.max(slot.last_t1));
@@ -447,6 +474,31 @@ fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, kno
         Ok(()) | Err(TrySendError::Disconnected(_)) => {}
         Err(TrySendError::Full(_)) => slot.dropped_frames = slot.dropped_frames.saturating_add(1),
     }
+    true
+}
+
+#[derive(Debug, Default)]
+struct FrameStatsCell {
+    frames: AtomicU64,
+    events: AtomicU64,
+    route_ns: AtomicU64,
+    encode_ns: AtomicU64,
+    max_encode_ns: AtomicU64,
+}
+
+/// How much work live frames cost (summed over all viewers of a session).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct FrameStats {
+    /// Frames encoded.
+    pub frames: u64,
+    /// Events taken from the runtime.
+    pub events: u64,
+    /// Time spent sorting events into viewers' pending frames.
+    pub routing: Duration,
+    /// Time spent encoding frames.
+    pub encoding: Duration,
+    /// The longest a single frame took to encode.
+    pub slowest_frame: Duration,
 }
 
 /// A column's size in a frame: `count × width`, padded to 8 bytes.

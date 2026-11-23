@@ -23,4 +23,5 @@ workspace = true
 [dev-dependencies]
 proptest.workspace = true
 spikes-api = { path = "../spikes-api" }
+spikes-dna = { path = "../spikes-dna" }
 spikes-record = { path = "../spikes-record" }

@@ -68,6 +68,11 @@ impl Speed {
     }
 }
 
+/// The default shortest connection delay: 100 µs. Chemical synapses take ~0.3 ms or more to transmit, and shorter
+/// delays (from neurons a few µm apart) would shrink the shards' synchronization windows to µs, making multi-shard
+/// runs slower than one shard. Set `BuildSettings::min_delay` to zero for the raw `distance / speed` delays.
+pub const DEFAULT_MIN_DELAY: SimDuration = SimDuration::from_micros(100);
+
 /// How to build the network.
 #[derive(Copy, Clone, Debug)]
 pub struct BuildSettings {
@@ -75,7 +80,7 @@ pub struct BuildSettings {
     pub seed: u64,
     /// Worker threads.
     pub shards: usize,
-    /// The shortest connection delay (see `BuildOptions::min_delay`).
+    /// The shortest connection delay (see [`DEFAULT_MIN_DELAY`]).
     pub min_delay: SimDuration,
     /// Timing noise on every connection.
     pub jitter: Jitter,
@@ -89,7 +94,7 @@ impl Default for BuildSettings {
         Self {
             seed: 1,
             shards: 1,
-            min_delay: options.min_delay,
+            min_delay: DEFAULT_MIN_DELAY,
             jitter: options.jitter,
             record_weights: true,
         }
@@ -253,7 +258,11 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 impl Session {
     pub(crate) fn new(id: SessionId, name: String, text: String) -> Result<Self, SessionError> {
         let description = spikes_dna::parse(&text).map_err(SessionError::Parse)?;
-        Ok(Self {
+        Ok(Self::described(id, name, text, description))
+    }
+
+    pub(crate) fn described(id: SessionId, name: String, text: String, description: NetworkDescription) -> Self {
+        Self {
             shared: Arc::new(Shared {
                 id,
                 name,
@@ -272,7 +281,7 @@ impl Session {
                 sensor_log: Mutex::new(None),
                 next_sensor: std::sync::atomic::AtomicU32::new(0),
             }),
-        })
+        }
     }
 
     /// The session's id.
@@ -328,10 +337,14 @@ impl Session {
         Arc::clone(&self.inner().network)
     }
 
-    /// The current simulation time.
+    /// The current simulation time: while running, how far the shards have got (to within one synchronization
+    /// window); while paused, the exact pause point.
     pub fn sim_time(&self) -> SimTime {
         match &self.inner().phase {
             Stage::Ready(built) => built.rt.now(),
+            // Paused: exactly where the clock stopped (the shards run up to it). Running: how far the shards have
+            // got, published once per synchronization window.
+            Stage::Running { clock, .. } if clock.is_paused() => clock.horizon().unwrap_or_else(|| clock.sim_time()),
             Stage::Running { clock, .. } => clock.sim_time(),
             Stage::Loaded | Stage::Failed(_) => SimTime::ZERO,
         }
@@ -601,6 +614,11 @@ impl Session {
         let viewer = self.shared.hub.attach(settings, self.network().neurons.len());
         let _ = self.observe(&membrane, true); // fails harmlessly before the network is built
         viewer
+    }
+
+    /// What live frames have cost so far.
+    pub fn frame_stats(&self) -> crate::FrameStats {
+        self.shared.hub.frame_stats()
     }
 
     /// Changes what a viewer gets.
@@ -896,14 +914,36 @@ impl Session {
             }
         };
         drop(inner); // don't hold the session while the shards answer
-        let reply = control.query::<NeuronActor, _>(id, move |actor| snapshot(actor, &network));
-        match reply.wait_timeout(QUERY_TIMEOUT) {
-            Some(Ok(Some(snapshot))) => Ok(snapshot),
-            Some(Ok(None)) => Err(SessionError::NotFound(format!("neuron {neuron}"))),
-            Some(Err(_)) => Err(SessionError::Invalid(
-                "the run ended before the query was answered".into(),
-            )),
-            None => Err(SessionError::Timeout),
+        let reply = control.query::<NeuronActor, _>(id, {
+            let network = Arc::clone(&network);
+            move |actor| snapshot(actor, &network)
+        });
+        let deadline = std::time::Instant::now() + QUERY_TIMEOUT;
+        loop {
+            match reply.wait_timeout(Duration::from_millis(10)) {
+                Some(Ok(Some(snapshot))) => return Ok(snapshot),
+                Some(Ok(None)) => return Err(SessionError::NotFound(format!("neuron {neuron}"))),
+                Some(Err(_)) | None => {}
+            }
+            // A query that arrives as the run ends waits for the next run; if the run is over, read the neuron
+            // directly instead. (The stale query runs harmlessly at the next start.)
+            let inner = self.inner();
+            if let Stage::Ready(built) = &inner.phase {
+                let actor = built
+                    .rt
+                    .actor::<NeuronActor>(id)
+                    .ok_or_else(|| SessionError::NotFound(format!("neuron {neuron}")))?;
+                return Ok(snapshot(actor, &network));
+            }
+            if !matches!(inner.phase, Stage::Running { .. }) {
+                return Err(SessionError::State {
+                    state: state_of(&inner),
+                    action: "query",
+                });
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(SessionError::Timeout);
+            }
         }
     }
 }

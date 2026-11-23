@@ -57,6 +57,10 @@ struct RunArgs {
     /// Worker threads.
     #[arg(long, default_value_t = 1)]
     shards: usize,
+    /// The shortest connection delay, e.g. `100us` (the default), `0.5ms`, or `0` for raw distance/speed delays.
+    /// Very short delays make multi-shard runs synchronize often.
+    #[arg(long, value_parser = parse_duration)]
+    min_delay: Option<SimDuration>,
     /// Record into this directory.
     #[arg(long)]
     record: Option<PathBuf>,
@@ -220,6 +224,7 @@ fn run(args: &RunArgs) -> Result<ExitCode> {
     let network = session.build(BuildSettings {
         seed: args.seed,
         shards: args.shards,
+        min_delay: args.min_delay.unwrap_or(spikes_session::DEFAULT_MIN_DELAY),
         ..BuildSettings::default()
     })?;
     if !args.quiet {

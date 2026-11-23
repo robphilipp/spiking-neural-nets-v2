@@ -258,3 +258,30 @@ fn a_run_stopped_while_paused_leaves_the_session_usable() {
         .recv_timeout(Duration::from_secs(30))
         .expect("hung after stopping a paused run");
 }
+
+#[test]
+fn a_query_racing_the_end_of_a_run_is_still_answered_promptly() {
+    // A query that reached the control plane as the run ended used to wait for the next run, timing out after 5 s.
+    let engine = Engine::new();
+    let session = engine.create("ring", v1("ring.boo")).unwrap();
+    session
+        .build(BuildSettings {
+            shards: 2,
+            ..BuildSettings::default()
+        })
+        .unwrap();
+    for _ in 0..40 {
+        session
+            .start(RunSettings {
+                speed: Speed::AsFastAsPossible,
+                duration: Some(ms(89)),
+                record: None,
+            })
+            .unwrap();
+        let t = std::time::Instant::now();
+        session.query_neuron(12).unwrap();
+        session.query_neuron(17).unwrap();
+        assert!(t.elapsed() < Duration::from_secs(1), "{:?}", t.elapsed());
+        session.stop().unwrap();
+    }
+}

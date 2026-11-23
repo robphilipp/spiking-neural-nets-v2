@@ -11,7 +11,7 @@ This is a monorepo. Projects are added as they're needed.
 |------|----------|--------|
 | `crates/tempo-*` | Timed actor framework (library). Knows nothing about neurons. | phases 1–3 done: `tempo-core`, `tempo-queue`, `tempo-runtime` (parallel shards, live clock, control plane, subscriptions, fields), `tempo-testkit` |
 | `crates/spikes-*` | Neuron model, `.boo` parser, network actors, recording, API types (libraries) | `spikes-model`, `spikes-dna`, `spikes-network` (with neuromodulation), `spikes-record` done; see `docs/plans/neurons/` |
-| `apps/` | `spikes-node` (cluster worker), `spikes-server` (coordinator, web API, data-queue adapter), `spikes-ui` (Tauri + TypeScript) | planned |
+| `apps/` | `spikes-cli` (`spikes check/run/parquet`); planned: `spikes-server` (web API, serves the UI), `spikes-ui` (Tauri + TypeScript) | `spikes-cli` done; see `docs/plans/app/` |
 | `packages/` | Shared TypeScript packages (types generated from the Rust API) | planned |
 | `test-data/v1/` | v1 network descriptions, a parser conformance suite | |
 | `docs/plans/` | Design plans: `actors/` (framework), `neurons/` (model crates), `app/` (engine, server, Tauri UI) | |
@@ -35,4 +35,6 @@ cargo run --release -p tempo-testkit --example lif_scaling -- 100000 100 50 1,2,
 cargo run --release -p tempo-testkit --example realtime -- 10000 20 2000 1.0 2        # real-time pacing
 cargo run --release -p tempo-testkit --example live                                   # scripted live session
 cargo run --release -p spikes-record --example record -- test-data/v1/stdp-test.boo runs/stdp 10   # record a run to Arrow + Parquet
+cargo run --release -p spikes-cli -- run test-data/v1/stdp-test.boo --for 10s --poisson input:40:3 --record runs/x --parquet
+cargo run --release -p spikes-session --example stream_100k -- 100000 10 4   # 100k neurons, paced, live frames
 ```

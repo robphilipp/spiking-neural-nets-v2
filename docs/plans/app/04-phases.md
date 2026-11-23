@@ -20,6 +20,47 @@ Each phase ends with something runnable and its acceptance checks automated wher
   - a synthetic sensor sending jittered batches (±5 ms) produces inputs whose spacing matches the sample spacing
     exactly; replaying the recorded sensor data reproduces the run's spikes.
 
+### A1 status: done (2026-11-22)
+
+Crates: `spikes-session` (engine), `spikes-api` (frame format so far), `apps/spikes-cli` (`spikes check | run |
+parquet`).
+
+Acceptance results:
+- All 26 v1 test networks build and run from the CLI (2 shards, Poisson input, membrane observed, recorded, Parquet);
+  every table of every run loads in pyarrow, Parquet spikes sorted by time.
+- **100k neurons, 1M synapses, ~5 Hz (≈ 490k spikes/s), paced at real time on 4 shards** (`examples/stream_100k`):
+  10 s simulated in 10.01 s, max lag 9 ms; two viewers (whole network at the default 4 MB/s budget, a 300-neuron
+  selection) at 62.5 frames/s, p99 gap 18 ms, no dropped frames or events; whole-network frames exact in 624 of 625
+  (one fell back to counts) at 3.9 MB/s; encoding 13 µs per frame on average, 0.84 ms at worst (target ≤ 2 ms);
+  routing ~100 ns per event.
+- A slow viewer loses frames, not time (test); jittered sensor batches keep exact sample spacing; replaying recorded
+  sensor inputs reproduces a run's spikes exactly.
+- Random command sequences (property test, 2 × 2000 under a watchdog) neither panic nor hang.
+
+Bugs the tests found and fixed:
+- A `stop()` racing the run thread's start was lost, leaving a paused run that never ended
+  (`StopToken` / `Runtime::run_until_unless_stopped`).
+- Stopping a paused run left the clock paused: a later `step()` waited for ever holding the session; a later paced
+  start began paused.
+- A query reaching the control plane as a run ended waited for the next run (5 s timeout); it now falls back to
+  reading the idle runtime.
+
+Decisions and deviations:
+- **Default minimum connection delay 100 µs** (`DEFAULT_MIN_DELAY`, CLI `--min-delay`). With raw `distance/speed`
+  delays, neurons a few µm apart gave µs synchronization windows and *negative* shard scaling (100k network:
+  1 shard 2.3 s, 4 shards 12 s, 8 shards 47 s per simulated second). With 100 µs: 2.3 / 1.3 / 0.78 / 0.94 s on
+  1 / 2 / 4 / 8 shards; with 500 µs 8 shards reach 0.49 s. Chemical synapses take ≥ ~0.3 ms, so this costs little
+  realism; set it to 0 for raw delays.
+- Lifecycle states are `Loaded → Ready → Running ⇄ Paused → Ready` (no separate `Finished`).
+- Frames carry `time_unit_ns` so offsets (u32) cover frames spanning more than 4.3 s of simulated time (runs as fast
+  as possible).
+- Sensor encoding runs on the caller's thread (the connection delivering a batch), not a sensor thread per session;
+  clock drift is handled by re-anchoring when a batch would be late.
+- Not in A1: connect/prune from the session (neuron actors can't grow synapses yet; moved to A4), membrane
+  decimation per viewer, project files (`project.toml`).
+- Next performance target: one shard spends ~430 ns per event on the full neuron model (release probability,
+  facilitation/depletion, STDP traces, noise); profiling it is worth doing before scaling work.
+
 ## A2: protocol, server, TS client (1–2 weeks)
 
 - `spikes-api` types with `ts-rs` generation (checked in CI); frame encoder/decoder in Rust and TS with a shared
