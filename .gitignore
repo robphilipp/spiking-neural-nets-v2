@@ -14,3 +14,7 @@
 __pycache__/
 *.pyc
 *.egg-info/
+# local Python environments
+Pipfile
+Pipfile.lock
+.venv/

@@ -2,6 +2,7 @@ import { type ProtocolClient, type Status, WebSocketClient } from "@spikes/clien
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 import { useAppDispatch, useAppSelector } from "./hooks";
 import { stateChanged } from "./store";
+import { inTauri, TauriClient } from "./tauriClient";
 
 interface Connection {
   client: ProtocolClient | null;
@@ -29,6 +30,15 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     let client: WebSocketClient | null = null;
     let cancelled = false;
     setConnection({ client: null, status: "connecting", error: null });
+    if (inTauri() && !server) {
+      // The desktop app's built-in engine.
+      TauriClient.connect()
+        .then((c) => !cancelled && setConnection({ client: c, status: "connected", error: null }))
+        .catch((e: Error) => !cancelled && setConnection({ client: null, status: "disconnected", error: String(e) }));
+      return () => {
+        cancelled = true;
+      };
+    }
     WebSocketClient.connect(server || defaultServer(), { token: token || undefined })
       .then((c) => {
         if (cancelled) {

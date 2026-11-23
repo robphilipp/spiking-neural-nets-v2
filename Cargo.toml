@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/spikes-cli", "apps/spikes-server"]
+members = ["crates/*", "apps/spikes-cli", "apps/spikes-server", "apps/spikes-ui/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

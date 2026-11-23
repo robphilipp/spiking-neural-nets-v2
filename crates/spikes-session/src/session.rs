@@ -504,11 +504,13 @@ impl Session {
                 ]
             }
         };
-        drop(inner);
-        self.shared.changed.notify_all();
+        // Notices go out before anyone can see the session as no longer running, so a caller woken by
+        // `wait_for_run` (or reading the state) always finds the run's notices already sent.
         for notice in notices {
             self.notify(notice);
         }
+        drop(inner);
+        self.shared.changed.notify_all();
     }
 
     fn clock(&self) -> Result<ClockHandle, SessionError> {

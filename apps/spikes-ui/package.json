@@ -9,7 +9,10 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "e2e": "playwright test",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "desktop": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:selftest": "tauri build --debug --no-bundle && SPIKES_SELFTEST=1 ../../target/debug/spikes-desktop"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

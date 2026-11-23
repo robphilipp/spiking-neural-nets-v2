@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useConnection } from "../connection";
 import { useAppDispatch, useAppSelector } from "../hooks";
 import { updateSettings } from "../store";
+import { inTauri } from "../tauriClient";
 import type { ThemeChoice } from "../theme";
 
 export function SettingsPage() {
@@ -23,8 +24,12 @@ export function SettingsPage() {
         <Stack spacing={1.5}>
           <TextField
             label="Server"
-            placeholder="this page's server"
-            helperText="e.g. http://127.0.0.1:7070, or empty for the server this page came from"
+            placeholder={inTauri() ? "this computer (built-in engine)" : "this page's server"}
+            helperText={
+              inTauri()
+                ? "Empty runs simulations on this computer; or a server, e.g. http://10.0.0.5:7070"
+                : "e.g. http://127.0.0.1:7070, or empty for the server this page came from"
+            }
             value={server}
             onChange={(e) => setServer(e.target.value)}
           />

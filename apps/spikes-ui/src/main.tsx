@@ -8,6 +8,15 @@ import { ConnectionProvider } from "./connection";
 import { store } from "./store";
 import { createAppTheme } from "./theme";
 import "./monaco";
+import { invoke } from "@tauri-apps/api/core";
+import { selftest } from "./selftest";
+import { inTauri } from "./tauriClient";
+
+if (inTauri()) {
+  invoke<boolean>("selftest_enabled")
+    .then((on) => (on ? selftest() : undefined))
+    .catch(() => {});
+}
 
 const theme = {
   ...createAppTheme("light"),
