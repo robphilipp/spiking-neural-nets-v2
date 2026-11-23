@@ -348,7 +348,11 @@ impl Model<'_> {
                         ..Outcome::quiet(st.u)
                     };
                 }
-                syn.record_signal();
+                // Only a learning synapse needs its signals counted (for STDP at the next spike); a fixed one is
+                // then left alone when the neuron fires.
+                if !matches!(params.learning, crate::LearningRule::None) {
+                    syn.record_signal();
+                }
                 // Modulators scale synaptic input by the gain for its sign.
                 (fx.gate(syn.efficacy() * mv), Some(synapse))
             }

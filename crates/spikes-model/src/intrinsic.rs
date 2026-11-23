@@ -55,7 +55,10 @@ impl IntrinsicParams {
         if dt_ms <= 0.0 {
             return;
         }
-        *b *= decay(dt_ms, self.decay_ms);
+        // (Zero stays zero: skip the exp when intrinsic plasticity hasn't moved `b`.)
+        if *b != 0.0 {
+            *b *= decay(dt_ms, self.decay_ms);
+        }
         if let Some(h) = &self.homeostasis {
             let window_s = h.window_ms / 1e3;
             let integral = h.target_hz * dt_ms / 1e3 - *rate_hz * window_s * (1.0 - decay(dt_ms, h.window_ms));
@@ -66,7 +69,9 @@ impl IntrinsicParams {
 
     /// Updates `b` and the rate estimate for a spike.
     pub fn on_spike(&self, b: &mut f64, rate_hz: &mut f64) {
-        *b += self.learning_mv * (-(*b + self.base_mv)).exp();
+        if self.learning_mv != 0.0 {
+            *b += self.learning_mv * (-(*b + self.base_mv)).exp();
+        }
         if let Some(h) = &self.homeostasis {
             *rate_hz += 1e3 / h.window_ms;
             *b = b.clamp(h.min_mv, h.max_mv);

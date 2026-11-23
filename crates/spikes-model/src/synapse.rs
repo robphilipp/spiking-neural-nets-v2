@@ -226,11 +226,16 @@ impl Synapse {
             return;
         }
         // Weight: w ← w_eq + (w + noise − w_eq)·d, then bounded (paper eq. for w(t), without the learning term).
-        let factor = p.stickiness.adjust(p.decay.factor(dt), dt);
-        let noise = wiener(p.weight_noise, dt, rng);
-        let eq = f64::from(self.equilibrium);
-        let w = eq + (f64::from(self.weight) + noise - eq) * factor;
-        self.weight = p.limit.apply(w) as f32;
+        // Without decay or noise that is just w, bounded: skip the arithmetic (and stickiness's exp).
+        if matches!(p.decay, WeightDecay::None) && p.weight_noise == 0.0 {
+            self.weight = p.limit.apply(f64::from(self.weight)) as f32;
+        } else {
+            let factor = p.stickiness.adjust(p.decay.factor(dt), dt);
+            let noise = wiener(p.weight_noise, dt, rng);
+            let eq = f64::from(self.equilibrium);
+            let w = eq + (f64::from(self.weight) + noise - eq) * factor;
+            self.weight = p.limit.apply(w) as f32;
+        }
         // Release sums decay with their own time constants.
         if let Some(r) = &p.release {
             self.facilitation *= decay(dt, r.facilitation_tau_ms) as f32;
