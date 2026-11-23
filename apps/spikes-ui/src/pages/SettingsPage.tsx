@@ -14,6 +14,7 @@ export function SettingsPage() {
   const { status, error } = useConnection();
   const [server, setServer] = useState(settings.server);
   const [token, setToken] = useState(settings.token);
+  const [nodes, setNodes] = useState(settings.nodes);
 
   return (
     <Stack spacing={2} sx={{ maxWidth: 560 }}>
@@ -43,6 +44,22 @@ export function SettingsPage() {
             </Typography>
           </Stack>
           {error && <Alert severity="error">{error}</Alert>}
+        </Stack>
+      </Paper>
+      <Paper variant="outlined" sx={{ p: 2 }}>
+        <Typography variant="subtitle1" gutterBottom>
+          Cluster
+        </Typography>
+        <Stack spacing={1.5}>
+          <TextField
+            label="Nodes"
+            placeholder="none: the engine alone"
+            value={nodes}
+            onChange={(e) => setNodes(e.target.value)}
+            onBlur={() => dispatch(updateSettings({ nodes: nodes.trim() }))}
+            slotProps={{ htmlInput: { "data-testid": "cluster-nodes" } }}
+            helperText="Spread networks over other machines: their node agents (spikes-server --node --listen host:port), comma-separated. Each runs the Run page's shards. Applies at the next build."
+          />
         </Stack>
       </Paper>
       <Paper variant="outlined" sx={{ p: 2 }}>

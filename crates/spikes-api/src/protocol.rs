@@ -137,6 +137,11 @@ pub enum Request {
         /// The session.
         session: u32,
     },
+    /// How the session's cluster is doing (only for a session built on nodes).
+    GetCluster {
+        /// The session.
+        session: u32,
+    },
     /// The built network: neurons, synapses, modulators.
     GetNetwork {
         /// The session.
@@ -326,6 +331,10 @@ pub struct BuildSettings {
     /// Report learning weight changes (default true).
     #[ts(optional)]
     pub record_weights: Option<bool>,
+    /// Node agents (`host:port`, each a `spikes-server --node`) to spread the network over, as one cluster this
+    /// server coordinates; omitted or empty for this server alone. Each node runs `shards` threads.
+    #[ts(optional)]
+    pub nodes: Option<Vec<String>>,
 }
 
 /// A synthetic input running inside the simulation.
@@ -481,6 +490,11 @@ pub enum Response {
         /// The `.boo` text.
         text: String,
     },
+    /// A cluster's state.
+    Cluster {
+        /// The state.
+        cluster: Cluster,
+    },
     /// A neuron's state.
     Neuron {
         /// The state.
@@ -539,6 +553,46 @@ pub struct SessionSummary {
     pub neurons: u32,
     /// A replay of a recording: the recording's last event time; `null` for a live session.
     pub replay_end_ms: Option<f64>,
+    /// Nodes the session runs on: 1 for this server alone.
+    pub nodes: u32,
+}
+
+/// A session's cluster: this server (the coordinator, node 0) and its node agents.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Cluster {
+    /// Every node, the coordinator first.
+    pub nodes: Vec<ClusterNode>,
+    /// Windows agreed with every node so far.
+    #[ts(type = "number")]
+    pub rounds: u64,
+    /// Wall time the coordinator spent waiting for the other nodes (their reports and spikes in flight), in ms.
+    pub waited_ms: f64,
+    /// Spikes and other events received from the other nodes.
+    #[ts(type = "number")]
+    pub received: u64,
+    /// Events that arrived too late for their time and were delivered late (always 0: the cluster runs in exact
+    /// lockstep).
+    #[ts(type = "number")]
+    pub late: u64,
+    /// Why the cluster failed, if it did.
+    pub failure: Option<String>,
+}
+
+/// One node of a cluster.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ClusterNode {
+    /// `host:port` of its agent; "coordinator" for this server.
+    pub address: String,
+    /// Events the coordinator sent it.
+    #[ts(type = "number")]
+    pub events_sent: u64,
+    /// Bytes the coordinator sent it.
+    #[ts(type = "number")]
+    pub bytes_sent: u64,
 }
 
 /// A built network.

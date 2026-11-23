@@ -31,6 +31,7 @@ import {
   ScatterPlot,
   type SeriesLineStyle,
 } from "stream-charts";
+import { ClusterPanel } from "../components/ClusterPanel";
 import { Inspector } from "../components/Inspector";
 import { Network3D } from "../components/Network3D";
 import { Modulators } from "../components/Modulators";
@@ -107,6 +108,9 @@ export function RunPage() {
   const [error, setError] = useState<string | null>(null);
   /** Building (and applying background input): nothing else may start meanwhile. */
   const [building, setBuilding] = useState(false);
+  const nodesSetting = useAppSelector((s) => s.settings.nodes);
+  /** The node agents the network was last built on (empty: the engine alone). */
+  const [builtNodes, setBuiltNodes] = useState<string[]>([]);
   /** Record the next run (to the engine's recordings folder; see the Recordings page). */
   const [record, setRecord] = useState(false);
   const replay = session.replayEndMs !== null;
@@ -195,7 +199,9 @@ export function RunPage() {
             onClick={act(async () => {
               setBuilding(true);
               try {
-              await client!.build(id, { shards, seed });
+              const nodes = replay ? [] : nodesSetting.split(",").map((n) => n.trim()).filter(Boolean);
+              await client!.build(id, { shards, seed, nodes });
+              setBuiltNodes(nodes);
               const net = await client!.getNetwork(id);
               if (background && !replay) {
                 const targets = net.neurons.filter((n) => n.name.startsWith(background.prefix)).map((n) => n.index);
@@ -419,6 +425,8 @@ export function RunPage() {
           <Stat label="Dropped" value={`${stats?.droppedFrames ?? 0} frames · ${stats?.droppedEvents ?? 0} events`} warn={!!stats && stats.droppedFrames + stats.droppedEvents > 0} />
         </Stack>
       </Paper>
+
+      {network && client && builtNodes.length > 0 && <ClusterPanel client={client} session={id} running={running} />}
 
       {network && live && (
         <Paper variant="outlined" sx={{ p: 1.5 }}>

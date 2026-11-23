@@ -28,7 +28,7 @@ mod recorder;
 mod tables;
 
 pub use parquet::{read_table, to_parquet};
-pub use recorder::{RecordOptions, Recorder, RunInfo, Summary};
+pub use recorder::{RecordOptions, Recorder, RunInfo, Summary, SynapseRow, synapse_rows};
 pub use tables::{Counts, SensorLog};
 
 /// A recording failure.

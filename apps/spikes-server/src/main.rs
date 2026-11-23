@@ -52,6 +52,10 @@ struct Args {
     /// A file holding the access token; without it, no token is needed.
     #[arg(long)]
     token_file: Option<PathBuf>,
+    /// Serve as a node agent on `--listen` instead: other spikes-servers spread their networks over this machine's
+    /// cores (build with `nodes`). Only for a trusted network: agents take no token.
+    #[arg(long)]
+    node: bool,
 }
 
 struct AppState {
@@ -66,6 +70,12 @@ const FRAME_QUEUE: usize = 16;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    if args.node {
+        let listener = std::net::TcpListener::bind(args.listen)?;
+        println!("spikes node agent on {}", listener.local_addr()?);
+        tokio::task::spawn_blocking(move || spikes_session::cluster::serve_node(listener)).await??;
+        return Ok(());
+    }
     let token = match &args.token_file {
         Some(path) => Some(std::fs::read_to_string(path)?.trim().to_string()),
         None => None,

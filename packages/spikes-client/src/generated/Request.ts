@@ -39,6 +39,10 @@ settings: BuildSettings, } | { "type": "getDescription",
 /**
  * The session.
  */
+session: number, } | { "type": "getCluster", 
+/**
+ * The session.
+ */
 session: number, } | { "type": "getNetwork", 
 /**
  * The session.

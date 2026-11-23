@@ -3,6 +3,8 @@ import { defineConfig } from "@playwright/test";
 // The UI as a web app, served by a real spikes-server (build both first:
 // `cargo build -p spikes-server` and `npm run build`).
 const PORT = 17090;
+/** Node agents for the cluster test. */
+export const NODE_PORTS = [17091, 17092];
 /** The server binary (default: the workspace's debug build). */
 const SERVER = process.env.SPIKES_SERVER ?? "../../target/debug/spikes-server";
 
@@ -26,9 +28,13 @@ export default defineConfig({
       ],
     },
   },
-  webServer: {
-    command: `${SERVER} --listen 127.0.0.1:${PORT} --ui dist --recordings ../../target/e2e-recordings`,
-    url: `http://127.0.0.1:${PORT}/api/health`,
-    reuseExistingServer: false,
-  },
+  webServer: [
+    {
+      command: `${SERVER} --listen 127.0.0.1:${PORT} --ui dist --recordings ../../target/e2e-recordings`,
+      url: `http://127.0.0.1:${PORT}/api/health`,
+      reuseExistingServer: false,
+    },
+    // Two node agents, for the cluster test (separate processes, as on separate machines).
+    ...NODE_PORTS.map((port) => ({ command: `${SERVER} --node --listen 127.0.0.1:${port}`, port, reuseExistingServer: false })),
+  ],
 });

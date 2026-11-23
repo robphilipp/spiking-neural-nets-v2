@@ -64,7 +64,7 @@ pub use metrics::{LatencyHistogram, PacingStats, Stats};
 pub use placement::Partition;
 pub use reply::{Cancelled, Reply};
 pub use route::{Jitter, RouteEdge};
-pub use runtime::{EventPublisher, QueueKind, Runtime, RuntimeConfig};
+pub use runtime::{EventPublisher, QueueKind, Runtime, RuntimeConfig, SystemPublisher};
 pub use shard::{DeliveryKind, TraceEntry};
 pub use subscribe::{Closed, EventFilter, EventStream};
 pub use system::{Severity, SystemEvent, SystemEvents, SystemNotice};

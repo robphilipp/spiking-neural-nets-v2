@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde.workspace = true
 tempo-core = { path = "../tempo-core" }
 rand_core.workspace = true
 

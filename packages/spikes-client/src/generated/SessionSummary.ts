@@ -32,4 +32,8 @@ neurons: number,
 /**
  * A replay of a recording: the recording's last event time; `null` for a live session.
  */
-replayEndMs: number | null, };
+replayEndMs: number | null, 
+/**
+ * Nodes the session runs on: 1 for this server alone.
+ */
+nodes: number, };

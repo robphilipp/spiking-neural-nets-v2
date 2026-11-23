@@ -12,6 +12,12 @@ tempo-core = { path = "../tempo-core" }
 tempo-queue = { path = "../tempo-queue" }
 rand_core.workspace = true
 rand_xoshiro.workspace = true
+serde = { workspace = true, optional = true }
+
+[features]
+# Serialize/Deserialize for the runtime's small value types (timer tokens, edge and route ids), so messages that
+# contain them can cross processes.
+serde = ["dep:serde", "tempo-core/serde"]
 
 [dev-dependencies]
 rand.workspace = true

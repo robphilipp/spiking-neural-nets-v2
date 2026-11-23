@@ -348,7 +348,10 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         let connected = !edges.is_empty();
         let route = rt.add_route(ids[i], edges, options.jitter);
         routes.push(route);
-        let actor = rt.actor_mut::<NeuronActor>(ids[i]).expect("just spawned");
+        // On a node of a cluster, only this node's neurons are stored here.
+        let Some(actor) = rt.actor_mut::<NeuronActor>(ids[i]) else {
+            continue;
+        };
         actor.synapses = synapses;
         actor.pre = pre;
         // A neuron without outgoing connections doesn't look its (empty) route up at every spike; it's switched on

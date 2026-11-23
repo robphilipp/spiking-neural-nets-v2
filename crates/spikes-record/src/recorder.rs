@@ -76,11 +76,26 @@ impl Recorder {
         run: RunInfo<'_>,
         options: RecordOptions,
     ) -> Result<Self> {
+        let synapses = synapse_rows(rt, network);
+        Self::start_with(dir, rt, network, description, run, options, &synapses)
+    }
+
+    /// Like [`Self::start`], with the synapses as given (on a cluster's coordinator: every node's, see
+    /// [`synapse_rows`]).
+    pub fn start_with(
+        dir: impl AsRef<Path>,
+        rt: &Runtime,
+        network: &Network,
+        description: &NetworkDescription,
+        run: RunInfo<'_>,
+        options: RecordOptions,
+        synapses: &[SynapseRow],
+    ) -> Result<Self> {
         let dir = dir.as_ref().to_path_buf();
         std::fs::create_dir_all(&dir)?;
         write_run(&dir, rt, run)?;
         let neurons = write_neurons(&dir, network, description)?;
-        let synapses = write_synapses(&dir, rt, network)?;
+        let synapses = write_synapses(&dir, synapses)?;
 
         let mut streams = Streams::create(&dir, options.batch_rows)?;
         let events = rt.subscribe_lossless();
@@ -217,21 +232,54 @@ fn write_neurons(dir: &Path, network: &Network, description: &NetworkDescription
     Ok(n as u64)
 }
 
-fn write_synapses(dir: &Path, rt: &Runtime, network: &Network) -> Result<u64> {
-    let (mut post, mut index, mut pre, mut weight, mut equilibrium, mut inhibitory) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+/// One synapse as it is now (a row of the `synapses` table).
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SynapseRow {
+    /// The receiving neuron's actor ID.
+    pub post: u64,
+    /// The synapse's index on it.
+    pub synapse: u32,
+    /// The sending neuron's actor ID.
+    pub pre: u64,
+    /// Weight.
+    pub weight: f32,
+    /// Equilibrium weight.
+    pub equilibrium: f32,
+    /// Inhibitory.
+    pub inhibitory: bool,
+}
+
+/// The synapses of the neurons stored in `rt` (on a node of a cluster, only its own).
+pub fn synapse_rows(rt: &Runtime, network: &Network) -> Vec<SynapseRow> {
+    let mut rows = Vec::new();
     for neuron in &network.neurons {
         let Some(actor) = rt.actor::<NeuronActor>(neuron.id()) else {
             continue;
         };
         for (i, (syn, from)) in actor.synapses.iter().zip(&actor.pre).enumerate() {
-            post.push(neuron.id().raw());
-            index.push(i as u32);
-            pre.push(from.raw());
-            weight.push(syn.weight);
-            equilibrium.push(syn.equilibrium);
-            inhibitory.push(Some(syn.sign == Sign::Inhibitory));
+            rows.push(SynapseRow {
+                post: neuron.id().raw(),
+                synapse: i as u32,
+                pre: from.raw(),
+                weight: syn.weight,
+                equilibrium: syn.equilibrium,
+                inhibitory: syn.sign == Sign::Inhibitory,
+            });
         }
+    }
+    rows
+}
+
+fn write_synapses(dir: &Path, rows: &[SynapseRow]) -> Result<u64> {
+    let (mut post, mut index, mut pre, mut weight, mut equilibrium, mut inhibitory) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for r in rows {
+        post.push(r.post);
+        index.push(r.synapse);
+        pre.push(r.pre);
+        weight.push(r.weight);
+        equilibrium.push(r.equilibrium);
+        inhibitory.push(Some(r.inhibitory));
     }
     let rows = post.len() as u64;
     write_table(

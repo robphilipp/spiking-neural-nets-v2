@@ -304,6 +304,13 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
         }
     }
 
+    /// A handle for publishing system events from elsewhere (another node of a cluster) as this runtime's own.
+    pub fn system_publisher(&self) -> SystemPublisher {
+        SystemPublisher {
+            bus: Arc::clone(&self.system),
+        }
+    }
+
     // ----- cluster -----
 
     /// Connects this node to the rest of its cluster (see [`crate::cluster`]). Needed before running whenever
@@ -854,6 +861,19 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             self.now.max(last_event)
         };
         self.stats().delivered - delivered_before
+    }
+}
+
+/// Publishes system events on a runtime's bus from outside it (see [`Runtime::system_publisher`]).
+#[derive(Clone, Debug)]
+pub struct SystemPublisher {
+    bus: Arc<SystemBus>,
+}
+
+impl SystemPublisher {
+    /// Publishes `event`, at simulation time `at`.
+    pub fn publish(&self, at: SimTime, event: crate::SystemEvent) {
+        self.bus.publish(at, event);
     }
 }
 

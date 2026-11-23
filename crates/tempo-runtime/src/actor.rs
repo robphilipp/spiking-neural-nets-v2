@@ -28,10 +28,12 @@ pub trait Actor<M, E>: Send + 'static {
 }
 
 /// Index of a connection on the receiving actor, e.g. into a neuron's incoming-synapse table.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EdgeIdx(pub u32);
 
 /// Identifies a fan-out route.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RouteId(pub u32);
 
@@ -57,6 +59,7 @@ pub struct Timer {
 }
 
 /// Identifies one arming of a [`Timer`]. Put it in the timer message.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TimerToken(u32);
 

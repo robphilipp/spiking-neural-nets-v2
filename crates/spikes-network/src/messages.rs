@@ -12,7 +12,7 @@ use spikes_model::Transition;
 use tempo_runtime::{ActorId, Ctx, SimDuration, SimTime, TimerToken};
 
 /// Every data-plane message.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum SimMsg {
     /// For a neuron.
     Neuron(NeuronMsg),
@@ -25,7 +25,7 @@ pub enum SimMsg {
 }
 
 /// Messages of a replayed run (see `spikes-session`'s replay).
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ReplayMsg {
     /// Emit recorded event number `.0` (an index into the replay's event table, so messages stay small).
     Emit(u32),
@@ -34,7 +34,7 @@ pub enum ReplayMsg {
 }
 
 /// Messages a modulator release site accepts.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ModulatorMsg {
     /// Release this much of modulator `kind` (its index in the description's `MOD` list).
     Release {
@@ -52,7 +52,7 @@ impl From<ModulatorMsg> for SimMsg {
 }
 
 /// Messages a neuron accepts.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NeuronMsg {
     /// A spike arriving through a synapse (sent along routes), with the sender's amplitude.
     Spike {
@@ -71,7 +71,7 @@ pub enum NeuronMsg {
 }
 
 /// Messages an input actor accepts.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum InputMsg {
     /// Its own timer.
     Tick,
@@ -90,7 +90,7 @@ impl From<InputMsg> for SimMsg {
 }
 
 /// What the network reports.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Event {
     /// The neuron fired; `at` includes its rise time (the emitted event's own time is when it was decided).
     Spike {

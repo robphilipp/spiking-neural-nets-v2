@@ -9,6 +9,7 @@
 //! Outside the engine, neurons are numbered densely in description order ([`NetworkInfo`]); actor ids stay
 //! inside.
 
+pub mod cluster;
 mod connection;
 mod network;
 mod replay;
@@ -144,7 +145,9 @@ impl Engine {
             .lock()
             .remove(&id)
             .ok_or_else(|| SessionError::NotFound(format!("session {id}")))?;
-        session.stop()
+        session.stop()?;
+        session.leave_cluster();
+        Ok(())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<SessionId, Session>> {

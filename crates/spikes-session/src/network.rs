@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 use spikes_dna::NetworkDescription;
-use spikes_model::Sign;
-use spikes_network::{Network, NeuronActor, Runtime};
+use spikes_network::Network;
 use tempo_runtime::ActorId;
 
 /// One neuron.
@@ -59,7 +58,8 @@ pub struct NetworkInfo {
 }
 
 impl NetworkInfo {
-    pub(crate) fn new(rt: &Runtime, net: &Network, description: &NetworkDescription) -> Self {
+    /// The network's neurons, and its synapses as given (every node's, on a cluster; see `synapse_rows`).
+    pub(crate) fn new(net: &Network, description: &NetworkDescription, rows: &[spikes_record::SynapseRow]) -> Self {
         let ids: Vec<ActorId> = net.neurons.iter().map(|r| r.id()).collect();
         let indices: HashMap<ActorId, u32> = ids.iter().enumerate().map(|(i, &id)| (id, i as u32)).collect();
         let neurons: Vec<NeuronInfo> = description
@@ -75,21 +75,19 @@ impl NetworkInfo {
                 inhibitory: d.inhibitory,
             })
             .collect();
-        let mut synapses = Vec::new();
-        for (post, &id) in ids.iter().enumerate() {
-            let Some(actor) = rt.actor::<NeuronActor>(id) else {
-                continue;
-            };
-            for (i, (syn, pre)) in actor.synapses.iter().zip(&actor.pre).enumerate() {
-                synapses.push(SynapseInfo {
-                    post: post as u32,
-                    synapse: i as u32,
-                    pre: indices.get(pre).copied().unwrap_or(u32::MAX),
-                    weight: syn.weight,
-                    inhibitory: syn.sign == Sign::Inhibitory,
-                });
-            }
-        }
+        let index_of = |raw: u64| indices.get(&ActorId::from_raw(raw)).copied().unwrap_or(u32::MAX);
+        let mut synapses: Vec<SynapseInfo> = rows
+            .iter()
+            .map(|r| SynapseInfo {
+                post: index_of(r.post),
+                synapse: r.synapse,
+                pre: index_of(r.pre),
+                weight: r.weight,
+                inhibitory: r.inhibitory,
+            })
+            .collect();
+        // Grouped by receiving neuron, in synapse order, whichever node each came from.
+        synapses.sort_by_key(|s| (s.post, s.synapse));
         Self {
             cells: cells(&neurons),
             names: neurons.iter().map(|n| (n.name.clone(), n.index)).collect(),

@@ -217,7 +217,7 @@ pub enum Wakeup {
 }
 
 /// A change of phase (bistable neurons).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Transition {
     /// Started firing tonically.
     StartedTonic,

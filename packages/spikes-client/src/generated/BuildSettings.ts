@@ -19,4 +19,9 @@ minDelayMs?: number,
 /**
  * Report learning weight changes (default true).
  */
-recordWeights?: boolean, };
+recordWeights?: boolean, 
+/**
+ * Node agents (`host:port`, each a `spikes-server --node`) to spread the network over, as one cluster this
+ * server coordinates; omitted or empty for this server alone. Each node runs `shards` threads.
+ */
+nodes?: Array<string>, };

@@ -213,6 +213,8 @@ impl Connection {
                     Some(ms) => SimDuration::from_millis_f64(ms),
                     None => defaults.min_delay,
                 };
+                s.set_nodes(settings.nodes.clone().unwrap_or_default())
+                    .map_err(api_error)?;
                 s.build(BuildSettings {
                     seed: settings.seed.map_or(defaults.seed, u64::from),
                     shards: settings.shards.map_or(defaults.shards, |n| n as usize),
@@ -226,6 +228,31 @@ impl Connection {
             Request::GetDescription { session } => Ok(Response::Description {
                 text: self.session(session)?.description_text(),
             }),
+            Request::GetCluster { session } => {
+                let s = self.session(session)?;
+                let (addresses, stats) = s
+                    .cluster_stats()
+                    .ok_or_else(|| error(ErrorCode::Invalid, "the session isn't built on nodes"))?;
+                let nodes = std::iter::once("coordinator".to_string())
+                    .chain(addresses)
+                    .enumerate()
+                    .map(|(i, address)| api::ClusterNode {
+                        address,
+                        events_sent: stats.sent.get(i).copied().unwrap_or(0),
+                        bytes_sent: stats.bytes_sent.get(i).copied().unwrap_or(0),
+                    })
+                    .collect();
+                Ok(Response::Cluster {
+                    cluster: api::Cluster {
+                        nodes,
+                        rounds: stats.rounds,
+                        waited_ms: stats.waited.as_secs_f64() * 1e3,
+                        received: stats.received,
+                        late: 0,
+                        failure: stats.failure,
+                    },
+                })
+            }
             Request::GetNetwork { session } => {
                 let network = self.session(session)?.network();
                 Ok(Response::Network {
@@ -570,6 +597,7 @@ fn summary(s: &Session) -> api::SessionSummary {
         },
         neurons: s.network().neurons.len() as u32,
         replay_end_ms: s.replay_end().map(ms_of),
+        nodes: s.cluster_stats().map_or(1, |(nodes, _)| nodes.len() as u32 + 1),
     }
 }
 

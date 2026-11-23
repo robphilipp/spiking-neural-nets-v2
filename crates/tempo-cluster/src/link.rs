@@ -190,9 +190,15 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> StrictLink<M> {
         self.inner.lock().failure.clone()
     }
 
-    /// The node is shutting down: connections closing from now on aren't failures.
+    /// The node is leaving the cluster: a run waiting for the others ends, and connections closing from now on
+    /// aren't reported as failures.
     pub fn close(&self) {
         self.inner.closing.store(true, Ordering::Release);
+        self.inner
+            .lock()
+            .failure
+            .get_or_insert_with(|| "this node left the cluster".into());
+        self.inner.changed.notify_all();
     }
 
     fn send_frame(&self, to: u32, frame: &Frame<M>) {
@@ -376,7 +382,10 @@ impl<M: Clone + Send + DeserializeOwned + 'static> FrameSink for Sink<M> {
                             .extend(list);
                     }
                 }
+                // Under the lock, so a waiter can't miss the change between checking the count and waiting.
+                let state = inner.lock();
                 inner.received.fetch_add(count, Ordering::AcqRel);
+                drop(state);
                 inner.changed.notify_all();
             }
             Frame::Report {

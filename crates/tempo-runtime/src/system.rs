@@ -20,6 +20,7 @@ pub enum Severity {
 }
 
 /// What happened.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq)]
 pub enum SystemEvent {
     /// The simulation has fallen behind the clock by more than the warning threshold. The clock is *not* slowed;
@@ -115,6 +116,7 @@ impl SystemBus {
     }
 
     pub(crate) fn subscribe(&self) -> SystemEvents {
+        // (A subscriber that falls more than SUBSCRIBER_CAPACITY behind misses notices.)
         let (tx, rx) = sync_channel(SUBSCRIBER_CAPACITY);
         lock(&self.subscribers).push(tx);
         SystemEvents { rx }

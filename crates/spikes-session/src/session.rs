@@ -14,6 +14,7 @@ use spikes_network::{
 use spikes_record::{RecordOptions, Recorder, RunInfo, SensorLog, Summary};
 use tempo_runtime::{ClockHandle, Control, Jitter, RuntimeConfig, SimDuration, SimTime};
 
+use crate::cluster::{Coordinator, Forwarder, NewSynapse, NodeSetup, RouteChange};
 use crate::network::NetworkInfo;
 use crate::sensors::{Moment, Sensor, SensorSpec};
 use crate::viewer::{Hub, ViewSettings, Viewer};
@@ -124,7 +125,7 @@ impl Default for RunSettings {
 }
 
 /// A synthetic input running inside the simulation, from the current time on.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum InputSpec {
     /// Each event goes to one target chosen at random, at Poisson-distributed times.
     Poisson {
@@ -179,7 +180,7 @@ pub enum SessionNotice {
 }
 
 /// A neuron's state, as of its last update.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NeuronSnapshot {
     /// Membrane potential in mV at `last_event`.
     pub membrane_mv: f64,
@@ -227,6 +228,12 @@ struct Inner {
     /// The built network's wiring (routes, delays, synapse parameter sets), for connections made later.
     wiring: Option<Arc<Network>>,
     release_site: Option<ModulatorRef>,
+    /// Node agents to build on (see [`crate::cluster`]); empty for this process alone.
+    nodes: Vec<String>,
+    /// The cluster this session coordinates, once built on nodes.
+    cluster: Option<Arc<Coordinator>>,
+    /// This session is a node of another session's cluster.
+    member: Option<Arc<Forwarder>>,
 }
 
 struct Shared {
@@ -283,6 +290,9 @@ impl Session {
                     wiring: None,
                     replay: None,
                     release_site: None,
+                    nodes: Vec::new(),
+                    cluster: None,
+                    member: None,
                 }),
                 changed: Condvar::new(),
                 listeners: Mutex::new(Vec::new()),
@@ -384,10 +394,80 @@ impl Session {
         if let Some(data) = inner.replay.clone() {
             return Ok(self.build_replay(&mut inner, &data, settings, SimTime::ZERO));
         }
+        if let Some(old) = inner.cluster.take() {
+            old.close();
+        }
+        let cluster = if inner.nodes.is_empty() {
+            None
+        } else {
+            Some(Coordinator::start(&inner.nodes, &inner.text, &settings)?)
+        };
+        let (rt, net, network) = match self.build_network(&mut inner, settings, cluster.as_ref().map(|(_, s)| s)) {
+            Ok(built) => built,
+            Err(e) => {
+                if let Some((coordinator, _)) = cluster {
+                    coordinator.close();
+                }
+                inner.phase = Stage::Loaded;
+                return Err(e);
+            }
+        };
+        let cluster = match cluster {
+            Some((coordinator, setup)) => {
+                // Events from the other nodes may arrive as soon as the mesh is up.
+                coordinator.listen(rt.event_publisher(), rt.system_publisher());
+                if let Err(e) = (setup.connect)(&setup.link) {
+                    coordinator.close();
+                    inner.phase = Stage::Loaded;
+                    return Err(e);
+                }
+                Some((coordinator, ()))
+            }
+            None => None,
+        };
+        let mut network = network;
+        if let Some((coordinator, _)) = &cluster {
+            // The other nodes' neurons have their synapses there.
+            let rows = coordinator
+                .synapses()
+                .map(|remote| [spikes_record::synapse_rows(&rt, &net), remote].concat());
+            match rows {
+                Ok(rows) => {
+                    network = Arc::new(NetworkInfo::new(&net, &inner.description, &rows));
+                    inner.network = Arc::clone(&network);
+                }
+                Err(e) => {
+                    coordinator.close();
+                    inner.phase = Stage::Loaded;
+                    return Err(e);
+                }
+            }
+            let owners = (0..network.neurons.len() as u32)
+                .map(|i| network.id(i).and_then(|id| rt.node_of(id)).unwrap_or(0))
+                .collect();
+            coordinator.set_owners(owners);
+        }
+        inner.cluster = cluster.map(|(c, _)| c);
+        self.shared.hub.connect(&rt, Arc::clone(&network));
+        inner.phase = Stage::Ready(Box::new(Built { rt, net: Some(net) }));
+        drop(inner);
+        let _ = self.observe(&self.shared.hub.membrane_neurons(), true);
+        self.notify(SessionNotice::StateChanged(State::Ready));
+        Ok(network)
+    }
+
+    /// Builds the runtime and network (as one node of a cluster with `node`).
+    fn build_network(
+        &self,
+        inner: &mut MutexGuard<'_, Inner>,
+        settings: BuildSettings,
+        node: Option<&NodeSetup>,
+    ) -> Result<(Runtime, Network, Arc<NetworkInfo>), SessionError> {
         let mut rt = Runtime::new(RuntimeConfig {
             seed: settings.seed,
             shards: settings.shards,
             min_remote_delay: Some(settings.min_delay),
+            cluster: node.map(|n| n.placement.clone()),
             ..RuntimeConfig::default()
         });
         let options = BuildOptions {
@@ -400,22 +480,105 @@ impl Session {
         // Sensors belong to a built network: numbering them afresh makes a rebuilt network with the same inputs
         // reproduce (a sensor's random numbers depend on the seed and its id).
         self.shared.next_sensor.store(0, std::sync::atomic::Ordering::Relaxed);
-        let network = Arc::new(NetworkInfo::new(&rt, &net, &inner.description));
+        let network = Arc::new(NetworkInfo::new(
+            &net,
+            &inner.description,
+            &spikes_record::synapse_rows(&rt, &net),
+        ));
         inner.wiring = Some(Arc::new(net.clone()));
         inner.release_site =
             (!network.modulators.is_empty()).then(|| net.add_release_site(&mut rt, network.centroid()));
-        self.shared.hub.connect(&rt, Arc::clone(&network));
-        for i in self.shared.hub.membrane_neurons() {
-            if let Some(id) = network.id(i) {
-                rt.observe(id, true);
-            }
+        if let Some(node) = node {
+            rt.set_link(Arc::new(node.link.clone()));
         }
         inner.network = Arc::clone(&network);
         inner.settings = settings;
+        Ok((rt, net, network))
+    }
+
+    /// Builds node agents on these addresses (`host:port`) from the next build on, as one cluster that this session
+    /// coordinates; empty for this process alone. See [`crate::cluster`].
+    pub fn set_nodes(&self, nodes: Vec<String>) -> Result<(), SessionError> {
+        let mut inner = self.inner();
+        expect_not_running(&inner)?;
+        if !nodes.is_empty() && inner.replay.is_some() {
+            return Err(SessionError::Invalid("a replay runs in this process".into()));
+        }
+        inner.nodes = nodes;
+        Ok(())
+    }
+
+    /// The node agents this session builds on.
+    pub fn nodes(&self) -> Vec<String> {
+        self.inner().nodes.clone()
+    }
+
+    /// The cluster's traffic, if this session coordinates one.
+    pub fn cluster_stats(&self) -> Option<(Vec<String>, tempo_cluster::LinkStats)> {
+        let inner = self.inner();
+        inner.cluster.as_ref().map(|c| (c.addresses(), c.link.stats()))
+    }
+
+    /// Builds as node `setup.placement.node` of another session's cluster (for the node agent).
+    pub(crate) fn build_member(&self, settings: BuildSettings, setup: NodeSetup) -> Result<(), SessionError> {
+        let mut inner = self.inner();
+        let (rt, net, _) = self.build_network(&mut inner, settings, Some(&setup))?;
+        let forwarder = Forwarder::start(rt.subscribe_lossless(), rt.system_events(), setup.link.clone());
+        (setup.connect)(&setup.link)?;
+        inner.member = Some(forwarder);
         inner.phase = Stage::Ready(Box::new(Built { rt, net: Some(net) }));
+        Ok(())
+    }
+
+    /// As a node of a cluster: runs until `end`, in step with the coordinator.
+    pub(crate) fn run_member(&self, end: SimTime) -> Result<(), SessionError> {
+        let mut inner = self.inner();
+        let built = match std::mem::replace(&mut inner.phase, Stage::Loaded) {
+            Stage::Ready(built) => built,
+            other => {
+                let state = state_of_phase(&other);
+                inner.phase = other;
+                return Err(SessionError::State { state, action: "start" });
+            }
+        };
+        let Built { rt, net } = *built;
+        let clock = rt.clock();
+        let stop_token = clock.stop_token();
+        // The coordinator's clock paces the cluster; this node just follows its windows.
+        clock.set_as_fast_as_possible();
+        inner.phase = Stage::Running {
+            control: rt.control(),
+            clock,
+        };
         drop(inner);
-        self.notify(SessionNotice::StateChanged(State::Ready));
-        Ok(network)
+        let session = self.clone();
+        std::thread::Builder::new()
+            .name(format!("node-run-{}", self.shared.id.0))
+            .spawn(move || session.run_thread(rt, net, None, end, stop_token))
+            .map_err(|e| SessionError::Invalid(format!("couldn't start the run thread: {e}")))?;
+        Ok(())
+    }
+
+    /// Leaves the cluster: a node drops its network; a coordinator releases its nodes.
+    pub fn leave_cluster(&self) {
+        let (member, cluster) = {
+            let mut inner = self.inner();
+            (inner.member.take(), inner.cluster.take())
+        };
+        if let Some(cluster) = cluster {
+            cluster.close();
+        }
+        if let Some(forwarder) = member {
+            // Closing the link releases a run waiting for the coordinator; then stop it.
+            forwarder.link().close();
+            forwarder.stop();
+            let _ = self.stop();
+            self.inner().phase = Stage::Loaded;
+        }
+    }
+
+    fn coordinator(&self) -> Option<Arc<Coordinator>> {
+        self.inner().cluster.clone()
     }
 
     /// Starts (or continues) a run on a thread of its own.
@@ -441,7 +604,26 @@ impl Session {
                     seed: inner.settings.seed,
                     description: &inner.text,
                 };
-                let started = Recorder::start(dir, &rt, network, &inner.description, info, RecordOptions::default())
+                let synapses: Result<Vec<spikes_record::SynapseRow>, _> = match &inner.cluster {
+                    // Every node's synapses, as learning has left them.
+                    Some(cluster) => cluster
+                        .synapses()
+                        .map(|remote| [spikes_record::synapse_rows(&rt, network), remote].concat()),
+                    None => Ok(spikes_record::synapse_rows(&rt, network)),
+                };
+                let started = synapses
+                    .map_err(|e| spikes_record::RecordError::Io(std::io::Error::other(e.to_string())))
+                    .and_then(|synapses| {
+                        Recorder::start_with(
+                            dir,
+                            &rt,
+                            network,
+                            &inner.description,
+                            info,
+                            RecordOptions::default(),
+                            &synapses,
+                        )
+                    })
                     .and_then(|recorder| Ok((recorder, SensorLog::create(dir, RecordOptions::default().batch_rows)?)));
                 match started {
                     Ok((recorder, sensor_log)) => {
@@ -462,6 +644,16 @@ impl Session {
         speed.apply(&clock);
         inner.speed = speed;
         let end = run.duration.map_or(SimTime::MAX, |d| rt.now().saturating_add(d));
+        if let Some(cluster) = &inner.cluster
+            && let Err(e) = cluster.run(end)
+        {
+            cluster.close();
+            inner.cluster = None;
+            inner.phase = Stage::Failed(e.to_string());
+            drop(inner);
+            self.notify(SessionNotice::StateChanged(State::Failed));
+            return Err(e);
+        }
         inner.phase = Stage::Running {
             control: rt.control(),
             clock,
@@ -485,9 +677,25 @@ impl Session {
         end: SimTime,
         stop_token: tempo_runtime::StopToken,
     ) {
-        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             rt.run_until_unless_stopped(end, stop_token)
         }));
+        // A cluster's run ends everywhere at once. The coordinator waits until every node has sent the events it
+        // emitted (they precede its end report), so views and recordings are complete; a node sends them.
+        let (member, cluster) = {
+            let inner = self.inner();
+            (inner.member.clone(), inner.cluster.clone())
+        };
+        if outcome.is_ok() {
+            if let Some(forwarder) = member {
+                forwarder.run_ended(rt.now());
+            }
+            if let Some(cluster) = cluster
+                && let Err(e) = cluster.wait_for_run_end(rt.now())
+            {
+                outcome = Err(Box::new(e.to_string()));
+            }
+        }
         let recording = recorder.map(Recorder::finish);
         let sensor_log = lock(&self.shared.sensor_log).take().map(SensorLog::finish);
         let mut inner = self.inner();
@@ -579,7 +787,17 @@ impl Session {
                 // get there). The next start sets the speed again.
                 built.rt.clock().set_as_fast_as_possible();
                 let end = built.rt.now().saturating_add(by);
+                let cluster = inner.cluster.clone();
+                let Stage::Ready(built) = &mut inner.phase else {
+                    unreachable!()
+                };
+                if let Some(cluster) = &cluster {
+                    cluster.run(end)?;
+                }
                 built.rt.run_until(end);
+                if let Some(cluster) = &cluster {
+                    cluster.wait_for_run_end(built.rt.now())?;
+                }
                 self.shared.hub.advance(built.rt.now());
                 Ok(())
             }
@@ -670,6 +888,7 @@ impl Session {
                     .ok_or_else(|| SessionError::NotFound(format!("neuron {i}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let input_copy = input.clone();
         let mut inner = self.inner();
         let state = state_of(&inner);
         let Stage::Ready(built) = &mut inner.phase else {
@@ -711,6 +930,11 @@ impl Session {
                     until: duration.map_or(SimTime::MAX, |d| start.saturating_add(d)),
                 });
             }
+        }
+        // Every node spawns it too, so the directories stay identical (it lives on one of them).
+        if let Some(cluster) = inner.cluster.clone() {
+            drop(inner);
+            cluster.add_input(&input_copy)?;
         }
         Ok(())
     }
@@ -797,27 +1021,45 @@ impl Session {
     ) -> Result<(), SessionError> {
         self.not_replay("change its connections")?;
         let (network, wiring) = self.wiring()?;
-        let (pre_id, post_id) = (self.neuron_id(&network, pre)?, self.neuron_id(&network, post)?);
+        self.neuron_id(&network, pre)?;
+        self.neuron_id(&network, post)?;
         let new = wiring
             .connection(pre as usize, post as usize, learning)
             .ok_or_else(|| SessionError::NotFound(format!("learning rule '{}'", learning.unwrap_or("flat"))))?;
-        let sign = match inhibitory {
-            Some(true) => spikes_model::Sign::Inhibitory,
-            Some(false) => spikes_model::Sign::Excitatory,
-            None => new.sign,
+        let sign = sign_of(inhibitory, new.sign);
+        let last = self.sim_time();
+        // The synapse lives with the receiving neuron, the route with the sending one: each on its own node.
+        let cluster = self.coordinator();
+        let index = match cluster.as_ref().and_then(|c| c.owner(post)) {
+            Some(node) => cluster.as_ref().expect("owner implies cluster").add_synapse(
+                node,
+                NewSynapse {
+                    pre,
+                    post,
+                    weight,
+                    inhibitory,
+                    learning,
+                    last,
+                },
+            )?,
+            None => self.add_synapse_here(pre, post, weight, inhibitory, learning, last)?,
         };
-        let route = wiring.routes[pre as usize];
-        let mut synapse = spikes_model::Synapse::new(f64::from(weight), f64::from(weight), sign, new.params);
-        synapse.last = self.sim_time();
-        let edge = |index: u32| tempo_runtime::RouteEdge {
-            target: post_id,
-            delay: new.delay,
-            edge: tempo_runtime::EdgeIdx(index),
+        let change = RouteChange::Connect {
+            post,
+            delay_ns: new.delay.as_nanos(),
+            edge: index,
         };
-        let index = self.on_neuron(post_id, move |actor| actor.add_synapse(pre_id, synapse))?;
-        self.change_route(route, tempo_runtime::TopologyOp::Connect(edge(index)))?;
-        // The sender may have had no outgoing connections, and so not have been using its route.
-        self.on_neuron(pre_id, move |actor| actor.out = Some(route))?;
+        match cluster.as_ref().and_then(|c| c.owner(pre)) {
+            Some(node) => {
+                let cluster = cluster.as_ref().expect("owner implies cluster");
+                cluster.change_route(node, pre, change)?;
+                cluster.set_out(node, pre)?;
+            }
+            None => {
+                self.change_route_here(pre, change)?;
+                self.set_out_here(pre)?;
+            }
+        }
         let mut updated = (*network).clone();
         updated.synapses.push(crate::SynapseInfo {
             post,
@@ -834,24 +1076,107 @@ impl Session {
     /// Removes the connection from `pre` to `post` (indices). Works while running; spikes already on their way
     /// arrive at a synapse of weight zero.
     pub fn prune(&self, pre: u32, post: u32) -> Result<(), SessionError> {
-        let (network, wiring) = self.wiring()?;
-        let (pre_id, post_id) = (self.neuron_id(&network, pre)?, self.neuron_id(&network, post)?);
-        let index = self
-            .on_neuron(post_id, move |actor| actor.prune_synapse(pre_id))?
-            .ok_or_else(|| SessionError::NotFound(format!("a connection from neuron {pre} to neuron {post}")))?;
-        let route = wiring.routes[pre as usize];
-        self.change_route(
-            route,
-            tempo_runtime::TopologyOp::Prune {
-                target: post_id,
-                edge: tempo_runtime::EdgeIdx(index),
-            },
-        )?;
+        let (network, _) = self.wiring()?;
+        self.neuron_id(&network, pre)?;
+        self.neuron_id(&network, post)?;
+        let cluster = self.coordinator();
+        let index = match cluster.as_ref().and_then(|c| c.owner(post)) {
+            Some(node) => cluster
+                .as_ref()
+                .expect("owner implies cluster")
+                .prune_synapse(node, pre, post)?,
+            None => self.prune_synapse_here(pre, post)?,
+        }
+        .ok_or_else(|| SessionError::NotFound(format!("a connection from neuron {pre} to neuron {post}")))?;
+        let change = RouteChange::Prune { post, edge: index };
+        match cluster.as_ref().and_then(|c| c.owner(pre)) {
+            Some(node) => cluster
+                .as_ref()
+                .expect("owner implies cluster")
+                .change_route(node, pre, change)?,
+            None => self.change_route_here(pre, change)?,
+        }
         let mut updated = (*network).clone();
         updated.synapses.retain(|s| !(s.post == post && s.synapse == index));
         self.inner().network = Arc::new(updated);
         self.notify(SessionNotice::NetworkChanged);
         Ok(())
+    }
+
+    /// Adds a synapse from `pre` on neuron `post`, which lives here; returns its index there.
+    pub(crate) fn add_synapse_here(
+        &self,
+        pre: u32,
+        post: u32,
+        weight: f32,
+        inhibitory: Option<bool>,
+        learning: Option<&str>,
+        last: SimTime,
+    ) -> Result<u32, SessionError> {
+        let (network, wiring) = self.wiring()?;
+        let (pre_id, post_id) = (self.neuron_id(&network, pre)?, self.neuron_id(&network, post)?);
+        let new = wiring
+            .connection(pre as usize, post as usize, learning)
+            .ok_or_else(|| SessionError::NotFound(format!("learning rule '{}'", learning.unwrap_or("flat"))))?;
+        let sign = sign_of(inhibitory, new.sign);
+        let mut synapse = spikes_model::Synapse::new(f64::from(weight), f64::from(weight), sign, new.params);
+        synapse.last = last;
+        self.on_neuron(post_id, move |actor| actor.add_synapse(pre_id, synapse))
+    }
+
+    /// Prunes the synapse from `pre` on neuron `post`, which lives here; returns its index there.
+    pub(crate) fn prune_synapse_here(&self, pre: u32, post: u32) -> Result<Option<u32>, SessionError> {
+        let (network, _) = self.wiring()?;
+        let (pre_id, post_id) = (self.neuron_id(&network, pre)?, self.neuron_id(&network, post)?);
+        self.on_neuron(post_id, move |actor| actor.prune_synapse(pre_id))
+    }
+
+    /// Changes the route of neuron `pre`, which lives here.
+    pub(crate) fn change_route_here(&self, pre: u32, change: RouteChange) -> Result<(), SessionError> {
+        let (network, wiring) = self.wiring()?;
+        let route = *wiring
+            .routes
+            .get(pre as usize)
+            .ok_or_else(|| SessionError::NotFound(format!("neuron {pre}")))?;
+        let op = match change {
+            RouteChange::Connect { post, delay_ns, edge } => {
+                tempo_runtime::TopologyOp::Connect(tempo_runtime::RouteEdge {
+                    target: self.neuron_id(&network, post)?,
+                    delay: SimDuration::from_nanos(delay_ns),
+                    edge: tempo_runtime::EdgeIdx(edge),
+                })
+            }
+            RouteChange::Prune { post, edge } => tempo_runtime::TopologyOp::Prune {
+                target: self.neuron_id(&network, post)?,
+                edge: tempo_runtime::EdgeIdx(edge),
+            },
+        };
+        self.change_route(route, op)
+    }
+
+    /// The synapses of the neurons stored here (on a node of a cluster: its own).
+    pub(crate) fn synapses_here(&self) -> Result<Vec<spikes_record::SynapseRow>, SessionError> {
+        let inner = self.inner();
+        match &inner.phase {
+            Stage::Ready(built) => Ok(built
+                .net
+                .as_ref()
+                .map(|net| spikes_record::synapse_rows(&built.rt, net))
+                .unwrap_or_default()),
+            other => Err(SessionError::State {
+                state: state_of_phase(other),
+                action: "list the synapses of",
+            }),
+        }
+    }
+
+    /// Neuron `pre` (here) sends along its route: it may have had no outgoing connections, and so not have been
+    /// using it.
+    pub(crate) fn set_out_here(&self, pre: u32) -> Result<(), SessionError> {
+        let (network, wiring) = self.wiring()?;
+        let route = wiring.routes[pre as usize];
+        let id = self.neuron_id(&network, pre)?;
+        self.on_neuron(id, move |actor| actor.out = Some(route))
     }
 
     /// Waits for a control-plane reply. If the run ends meanwhile, the command is still waiting in the runtime's
@@ -1143,8 +1468,22 @@ impl Session {
     /// Turns membrane recording (every update) on or off for these neurons.
     pub fn observe(&self, neurons: &[u32], on: bool) -> Result<(), SessionError> {
         let network = self.network();
+        let mut neurons = neurons.to_vec();
+        if let Some(cluster) = self.coordinator() {
+            let mut remote: std::collections::BTreeMap<usize, Vec<u32>> = Default::default();
+            neurons.retain(|&i| match cluster.owner(i) {
+                Some(node) => {
+                    remote.entry(node).or_default().push(i);
+                    false
+                }
+                None => true,
+            });
+            for (node, list) in remote {
+                cluster.observe(node, list, on)?;
+            }
+        }
         let mut inner = self.inner();
-        for &i in neurons {
+        for &i in &neurons {
             let id = network
                 .id(i)
                 .ok_or_else(|| SessionError::NotFound(format!("neuron {i}")))?;
@@ -1167,6 +1506,11 @@ impl Session {
     /// A neuron's current state.
     pub fn query_neuron(&self, neuron: u32) -> Result<NeuronSnapshot, SessionError> {
         self.not_replay("be queried (its neurons were recorded, not simulated)")?;
+        if let Some(cluster) = self.coordinator()
+            && let Some(node) = cluster.owner(neuron)
+        {
+            return cluster.query(node, neuron);
+        }
         let network = self.network();
         let id = network
             .id(neuron)
@@ -1220,6 +1564,14 @@ impl Session {
                 return Err(SessionError::Timeout);
             }
         }
+    }
+}
+
+fn sign_of(inhibitory: Option<bool>, default: spikes_model::Sign) -> spikes_model::Sign {
+    match inhibitory {
+        Some(true) => spikes_model::Sign::Inhibitory,
+        Some(false) => spikes_model::Sign::Excitatory,
+        None => default,
     }
 }
 

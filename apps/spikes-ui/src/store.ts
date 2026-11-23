@@ -10,12 +10,14 @@ export interface Settings {
   server: string;
   token: string;
   theme: ThemeChoice;
+  /** Node agents (`host:port`, comma-separated) to spread networks over; empty: the engine alone. */
+  nodes: string;
 }
 
 const SETTINGS_KEY = "spikes.settings";
 
 function loadSettings(): Settings {
-  const defaults: Settings = { server: "", token: "", theme: "system" };
+  const defaults: Settings = { server: "", token: "", theme: "system", nodes: "" };
   try {
     const saved = localStorage.getItem(SETTINGS_KEY);
     return saved ? { ...defaults, ...(JSON.parse(saved) as Partial<Settings>) } : defaults;

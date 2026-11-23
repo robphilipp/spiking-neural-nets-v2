@@ -4257,6 +4257,7 @@ dependencies = [
  "rand 0.10.4",
  "rand_core 0.10.1",
  "rand_xoshiro",
+ "serde",
  "tempo-core",
 ]
 
@@ -4266,8 +4267,10 @@ version = "0.1.0"
 dependencies = [
  "rand 0.10.4",
  "rand_xoshiro",
+ "serde",
  "spikes-dna",
  "spikes-model",
+ "tempo-core",
  "tempo-runtime",
  "tempo-testkit",
 ]
@@ -4278,6 +4281,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "parquet",
+ "serde",
  "spikes-dna",
  "spikes-model",
  "spikes-network",
@@ -4313,15 +4317,18 @@ name = "spikes-session"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "postcard",
  "proptest",
  "rand 0.10.4",
  "rand_xoshiro",
+ "serde",
  "serde_json",
  "spikes-api",
  "spikes-dna",
  "spikes-model",
  "spikes-network",
  "spikes-record",
+ "tempo-cluster",
  "tempo-runtime",
 ]
 
@@ -4853,6 +4860,7 @@ dependencies = [
  "rand 0.10.4",
  "rand_core 0.10.1",
  "rand_xoshiro",
+ "serde",
  "tempo-core",
  "tempo-queue",
 ]

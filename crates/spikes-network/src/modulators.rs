@@ -79,7 +79,7 @@ fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
 }
 
 /// One release.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ReleaseEvent {
     /// Which modulator.
     pub kind: u16,
