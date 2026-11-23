@@ -201,6 +201,16 @@ export abstract class ProtocolClient {
     await this.request({ type: "addInput", session, input });
   }
 
+  /** Adds a connection now (also while running); `inhibitory` and `learning` default to the sender's sign and none. */
+  async connect(session: number, pre: number, post: number, weight: number, options: { inhibitory?: boolean; learning?: string } = {}): Promise<void> {
+    await this.request({ type: "connect", session, pre, post, weight, inhibitory: options.inhibitory ?? null, learning: options.learning ?? null });
+  }
+
+  /** Removes a connection (also while running). */
+  async prune(session: number, pre: number, post: number): Promise<void> {
+    await this.request({ type: "prune", session, pre, post });
+  }
+
   async queryNeuron(session: number, neuron: number): Promise<NeuronState> {
     return (await this.expect({ type: "queryNeuron", session, neuron }, "neuron")).neuron;
   }

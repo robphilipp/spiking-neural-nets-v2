@@ -26,6 +26,8 @@ enum Op {
     Sensor,
     Attach,
     Edit { valid: bool },
+    Connect { pre: u32, post: u32 },
+    Prune { pre: u32, post: u32 },
     Wait,
 }
 
@@ -46,6 +48,8 @@ fn op() -> impl Strategy<Value = Op> {
         Just(Op::Sensor),
         Just(Op::Attach),
         any::<bool>().prop_map(|valid| Op::Edit { valid }),
+        (0u32..30, 0u32..30).prop_map(|(pre, post)| Op::Connect { pre, post }),
+        (0u32..30, 0u32..30).prop_map(|(pre, post)| Op::Prune { pre, post }),
         Just(Op::Wait),
     ]
 }
@@ -133,6 +137,8 @@ fn apply(ops: Vec<Op>) {
                     Err(e) => acceptable(Err(e)),
                 }
             }
+            Op::Connect { pre, post } => acceptable(session.connect(pre, post, 2.0, None, None)),
+            Op::Prune { pre, post } => acceptable(session.prune(pre, post)),
             Op::Wait => {
                 session.wait_for_run(Duration::from_millis(20));
             }

@@ -50,6 +50,25 @@ pub struct NeuronActor {
 }
 
 impl NeuronActor {
+    /// Adds an incoming synapse from `pre`; returns its index (the route edge's `EdgeIdx`).
+    pub fn add_synapse(&mut self, pre: ActorId, synapse: Synapse) -> u32 {
+        self.synapses.push(synapse);
+        self.pre.push(pre);
+        u32::try_from(self.synapses.len() - 1).expect("fewer than 2³² synapses")
+    }
+
+    /// Prunes the (first live) synapse from `pre`: it keeps its slot, so other synapses keep their indices, but
+    /// has no sender and no weight. Returns its index.
+    pub fn prune_synapse(&mut self, pre: ActorId) -> Option<u32> {
+        let i = self.pre.iter().position(|&p| p == pre)?;
+        self.pre[i] = ActorId::WORLD;
+        let s = &mut self.synapses[i];
+        s.weight = 0.0;
+        s.equilibrium = 0.0;
+        s.eligibility = 0.0;
+        Some(i as u32)
+    }
+
     /// A neuron at rest, without synapses or outgoing connections yet.
     pub fn new(params: Arc<NetworkParams>, population: u32, position: [f64; 3]) -> Self {
         let state = NeuronState::at_rest(&params.neurons[population as usize]);

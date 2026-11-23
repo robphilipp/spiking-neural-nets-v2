@@ -163,6 +163,8 @@ impl InputSpec {
 pub enum SessionNotice {
     /// The state changed.
     StateChanged(State),
+    /// Connections were added or pruned: fetch the network again.
+    NetworkChanged,
     /// A run ended (reached its duration, was stopped, or ran out of events).
     RunEnded {
         /// Simulation time at the end.
@@ -219,6 +221,8 @@ struct Inner {
     speed: Speed,
     phase: Stage,
     network: Arc<NetworkInfo>,
+    /// The built network's wiring (routes, delays, synapse parameter sets), for connections made later.
+    wiring: Option<Arc<Network>>,
     release_site: Option<ModulatorRef>,
 }
 
@@ -273,6 +277,7 @@ impl Session {
                     speed: Speed::Factor(1.0),
                     phase: Stage::Loaded,
                     network: Arc::default(),
+                    wiring: None,
                     release_site: None,
                 }),
                 changed: Condvar::new(),
@@ -358,6 +363,7 @@ impl Session {
         inner.text = text;
         inner.phase = Stage::Loaded;
         inner.network = Arc::default();
+        inner.wiring = None;
         inner.release_site = None;
         drop(inner);
         self.notify(SessionNotice::StateChanged(State::Loaded));
@@ -385,6 +391,7 @@ impl Session {
         };
         let net = spikes_network::build(&mut rt, &inner.description, &options);
         let network = Arc::new(NetworkInfo::new(&rt, &net, &inner.description));
+        inner.wiring = Some(Arc::new(net.clone()));
         inner.release_site =
             (!network.modulators.is_empty()).then(|| net.add_release_site(&mut rt, network.centroid()));
         self.shared.hub.connect(&rt, Arc::clone(&network));
@@ -472,6 +479,8 @@ impl Session {
         let mut inner = self.inner();
         let notices = match outcome {
             Ok(_) => {
+                // Commands that arrived as the run ended are answered now, not at the next run.
+                rt.apply_control();
                 let at = rt.now();
                 self.shared.hub.advance(at);
                 inner.phase = Stage::Ready(Box::new(Built { rt, net }));
@@ -689,6 +698,179 @@ impl Session {
             }
         }
         Ok(())
+    }
+
+    /// Adds a connection from neuron `pre` to neuron `post` (indices), now. Its delay is the sending neuron's
+    /// synaptic delay plus conduction time; its sign defaults to the sending neuron's; `learning` names one of the
+    /// description's learning rules (`None`: no learning). Works while running.
+    pub fn connect(
+        &self,
+        pre: u32,
+        post: u32,
+        weight: f32,
+        inhibitory: Option<bool>,
+        learning: Option<&str>,
+    ) -> Result<(), SessionError> {
+        let (network, wiring) = self.wiring()?;
+        let (pre_id, post_id) = (self.neuron_id(&network, pre)?, self.neuron_id(&network, post)?);
+        let new = wiring
+            .connection(pre as usize, post as usize, learning)
+            .ok_or_else(|| SessionError::NotFound(format!("learning rule '{}'", learning.unwrap_or("flat"))))?;
+        let sign = match inhibitory {
+            Some(true) => spikes_model::Sign::Inhibitory,
+            Some(false) => spikes_model::Sign::Excitatory,
+            None => new.sign,
+        };
+        let route = wiring.routes[pre as usize];
+        let mut synapse = spikes_model::Synapse::new(f64::from(weight), f64::from(weight), sign, new.params);
+        synapse.last = self.sim_time();
+        let edge = |index: u32| tempo_runtime::RouteEdge {
+            target: post_id,
+            delay: new.delay,
+            edge: tempo_runtime::EdgeIdx(index),
+        };
+        let index = self.on_neuron(post_id, move |actor| actor.add_synapse(pre_id, synapse))?;
+        self.change_route(route, tempo_runtime::TopologyOp::Connect(edge(index)))?;
+        let mut updated = (*network).clone();
+        updated.synapses.push(crate::SynapseInfo {
+            post,
+            synapse: index,
+            pre,
+            weight,
+            inhibitory: sign == spikes_model::Sign::Inhibitory,
+        });
+        self.inner().network = Arc::new(updated);
+        self.notify(SessionNotice::NetworkChanged);
+        Ok(())
+    }
+
+    /// Removes the connection from `pre` to `post` (indices). Works while running; spikes already on their way
+    /// arrive at a synapse of weight zero.
+    pub fn prune(&self, pre: u32, post: u32) -> Result<(), SessionError> {
+        let (network, wiring) = self.wiring()?;
+        let (pre_id, post_id) = (self.neuron_id(&network, pre)?, self.neuron_id(&network, post)?);
+        let index = self
+            .on_neuron(post_id, move |actor| actor.prune_synapse(pre_id))?
+            .ok_or_else(|| SessionError::NotFound(format!("a connection from neuron {pre} to neuron {post}")))?;
+        let route = wiring.routes[pre as usize];
+        self.change_route(
+            route,
+            tempo_runtime::TopologyOp::Prune {
+                target: post_id,
+                edge: tempo_runtime::EdgeIdx(index),
+            },
+        )?;
+        let mut updated = (*network).clone();
+        updated.synapses.retain(|s| !(s.post == post && s.synapse == index));
+        self.inner().network = Arc::new(updated);
+        self.notify(SessionNotice::NetworkChanged);
+        Ok(())
+    }
+
+    /// Waits for a control-plane reply. If the run ends meanwhile, the command is still waiting in the runtime's
+    /// inbox: apply it on the idle runtime, so it's answered now (and exactly once).
+    fn await_reply<T>(&self, reply: tempo_runtime::Reply<T>) -> Result<T, SessionError> {
+        let deadline = std::time::Instant::now() + QUERY_TIMEOUT;
+        loop {
+            match reply.wait_timeout(Duration::from_millis(10)) {
+                Some(Ok(value)) => return Ok(value),
+                Some(Err(_)) => {
+                    return Err(SessionError::Invalid(
+                        "the run ended before the request was handled".into(),
+                    ));
+                }
+                None => {}
+            }
+            {
+                let mut inner = self.inner();
+                match &mut inner.phase {
+                    Stage::Ready(built) => {
+                        built.rt.apply_control();
+                    }
+                    Stage::Running { .. } => {}
+                    other => {
+                        return Err(SessionError::State {
+                            state: state_of_phase(other),
+                            action: "send requests to",
+                        });
+                    }
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(SessionError::Timeout);
+            }
+        }
+    }
+
+    fn wiring(&self) -> Result<(Arc<NetworkInfo>, Arc<Network>), SessionError> {
+        let inner = self.inner();
+        match &inner.wiring {
+            Some(wiring) => Ok((Arc::clone(&inner.network), Arc::clone(wiring))),
+            None => Err(SessionError::State {
+                state: state_of(&inner),
+                action: "change the connections of",
+            }),
+        }
+    }
+
+    fn neuron_id(&self, network: &NetworkInfo, index: u32) -> Result<tempo_runtime::ActorId, SessionError> {
+        network
+            .id(index)
+            .ok_or_else(|| SessionError::NotFound(format!("neuron {index}")))
+    }
+
+    /// Runs `f` on a neuron: directly when ready, through the control plane while running.
+    fn on_neuron<R: Send + 'static>(
+        &self,
+        id: tempo_runtime::ActorId,
+        f: impl FnOnce(&mut NeuronActor) -> R + Send + 'static,
+    ) -> Result<R, SessionError> {
+        let mut inner = self.inner();
+        let control = match &mut inner.phase {
+            Stage::Ready(built) => {
+                let actor = built
+                    .rt
+                    .actor_mut::<NeuronActor>(id)
+                    .ok_or_else(|| SessionError::NotFound(format!("actor {id}")))?;
+                return Ok(f(actor));
+            }
+            Stage::Running { control, .. } => control.clone(),
+            other => {
+                return Err(SessionError::State {
+                    state: state_of_phase(other),
+                    action: "change the connections of",
+                });
+            }
+        };
+        drop(inner); // the shards apply it at their next window
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reply = control.update::<NeuronActor>(id, move |actor| {
+            let _ = tx.send(f(actor));
+        });
+        if self.await_reply(reply)? {
+            rx.recv().map_err(|_| SessionError::Timeout)
+        } else {
+            Err(SessionError::NotFound(format!("actor {id}")))
+        }
+    }
+
+    fn change_route(&self, route: tempo_runtime::RouteId, op: tempo_runtime::TopologyOp) -> Result<(), SessionError> {
+        let mut inner = self.inner();
+        let control = match &mut inner.phase {
+            Stage::Ready(built) => {
+                built.rt.change_route(route, op);
+                return Ok(());
+            }
+            Stage::Running { control, .. } => control.clone(),
+            other => {
+                return Err(SessionError::State {
+                    state: state_of_phase(other),
+                    action: "change the connections of",
+                });
+            }
+        };
+        drop(inner);
+        self.await_reply(control.change_route(route, op)).map(|_| ())
     }
 
     /// Connects an external sensor. The network must be built.

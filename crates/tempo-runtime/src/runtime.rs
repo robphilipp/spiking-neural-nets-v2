@@ -624,6 +624,21 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
         self.run_to(end, token)
     }
 
+    /// Applies the control commands waiting for a run (queries, updates, injections, route changes sent through a
+    /// [`Control`] while no run was going, or as one ended), now, at the current time. Returns how many shards had
+    /// any. Without this they wait for the next run.
+    pub fn apply_control(&mut self) -> usize {
+        let now = self.now;
+        let mut applied = 0;
+        for shard in &mut self.shards {
+            if self.control.has_pending(shard.core.shard) {
+                shard.apply_commands(&self.control, &self.world, now);
+                applied += 1;
+            }
+        }
+        applied
+    }
+
     /// Runs until no events are pending, or the clock is stopped. In real-time mode the simulation keeps following
     /// the clock even when idle (live input may arrive), so it runs until stopped. Returns the number of events
     /// delivered.

@@ -23,7 +23,7 @@ pub mod messages;
 pub mod modulators;
 pub mod neuron;
 
-pub use build::{BuildOptions, Network, build};
+pub use build::{BuildOptions, Network, NewConnection, build};
 pub use inputs::{PeriodicInput, PoissonInput};
 pub use messages::{Event, InputMsg, InputRef, ModulatorMsg, ModulatorRef, NeuronMsg, NeuronRef, Ref, SimMsg, Tell};
 pub use modulators::{ModulatorField, ModulatorKind, ModulatorRelease, ReleaseEvent};

@@ -209,6 +209,32 @@ pub enum Request {
         /// The input.
         input: Input,
     },
+    /// Adds a connection, now (also while running).
+    Connect {
+        /// The session.
+        session: u32,
+        /// Sending neuron.
+        pre: u32,
+        /// Receiving neuron.
+        post: u32,
+        /// Initial (and equilibrium) weight.
+        weight: f32,
+        /// Inhibitory; `null` for the sending neuron's default.
+        #[serde(default)]
+        inhibitory: Option<bool>,
+        /// A learning rule from the description; `null` for none.
+        #[serde(default)]
+        learning: Option<String>,
+    },
+    /// Removes a connection (also while running).
+    Prune {
+        /// The session.
+        session: u32,
+        /// Sending neuron.
+        pre: u32,
+        /// Receiving neuron.
+        post: u32,
+    },
     /// A neuron's current state.
     QueryNeuron {
         /// The session.
@@ -507,6 +533,8 @@ pub struct Network {
     pub synapses: Vec<Synapse>,
     /// Modulator names by index.
     pub modulators: Vec<String>,
+    /// Learning rules new connections can use.
+    pub learning_rules: Vec<String>,
 }
 
 /// One neuron.
@@ -629,6 +657,8 @@ pub enum Notice {
         /// Why.
         message: String,
     },
+    /// Connections were added or pruned: fetch the network again.
+    NetworkChanged,
     /// The run thread failed.
     Failed {
         /// Why.

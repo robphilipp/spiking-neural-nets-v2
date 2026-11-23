@@ -255,6 +255,7 @@ impl Connection {
                             })
                             .collect(),
                         modulators: network.modulators.clone(),
+                        learning_rules: network.learning_rules.clone(),
                     },
                 })
             }
@@ -323,6 +324,21 @@ impl Connection {
                     },
                 };
                 self.session(session)?.add_input(input).map(done).map_err(api_error)
+            }
+            Request::Connect {
+                session,
+                pre,
+                post,
+                weight,
+                inhibitory,
+                learning,
+            } => self
+                .session(session)?
+                .connect(pre, post, weight, inhibitory, learning.as_deref())
+                .map(done)
+                .map_err(api_error),
+            Request::Prune { session, pre, post } => {
+                self.session(session)?.prune(pre, post).map(done).map_err(api_error)
             }
             Request::QueryNeuron { session, neuron } => {
                 let n = self.session(session)?.query_neuron(neuron).map_err(api_error)?;
@@ -538,6 +554,7 @@ fn notice_dto(notice: SessionNotice) -> Notice {
         },
         SessionNotice::RecordingFailed(message) => Notice::RecordingFailed { message },
         SessionNotice::Failed(message) => Notice::Failed { message },
+        SessionNotice::NetworkChanged => Notice::NetworkChanged,
     }
 }
 

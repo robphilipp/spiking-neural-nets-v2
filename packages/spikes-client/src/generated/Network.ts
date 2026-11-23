@@ -17,4 +17,8 @@ synapses: Array<Synapse>,
 /**
  * Modulator names by index.
  */
-modulators: Array<string>, };
+modulators: Array<string>, 
+/**
+ * Learning rules new connections can use.
+ */
+learningRules: Array<string>, };

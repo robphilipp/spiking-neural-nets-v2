@@ -119,7 +119,43 @@ session: number,
 /**
  * The input.
  */
-input: Input, } | { "type": "queryNeuron", 
+input: Input, } | { "type": "connect", 
+/**
+ * The session.
+ */
+session: number, 
+/**
+ * Sending neuron.
+ */
+pre: number, 
+/**
+ * Receiving neuron.
+ */
+post: number, 
+/**
+ * Initial (and equilibrium) weight.
+ */
+weight: number, 
+/**
+ * Inhibitory; `null` for the sending neuron's default.
+ */
+inhibitory: boolean | null, 
+/**
+ * A learning rule from the description; `null` for none.
+ */
+learning: string | null, } | { "type": "prune", 
+/**
+ * The session.
+ */
+session: number, 
+/**
+ * Sending neuron.
+ */
+pre: number, 
+/**
+ * Receiving neuron.
+ */
+post: number, } | { "type": "queryNeuron", 
 /**
  * The session.
  */
