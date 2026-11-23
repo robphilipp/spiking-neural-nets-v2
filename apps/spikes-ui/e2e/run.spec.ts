@@ -41,3 +41,21 @@ test("parse errors are shown in the editor", async ({ page }) => {
   await expect(page.getByText(/error\(s\) in the description/)).toBeVisible();
   await expect(page.locator(".monaco-editor .squiggly-error").first()).toBeAttached();
 });
+
+test("the editor suggests keys and explains them", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.locator(".monaco-editor").click();
+  await page.keyboard.type("(NRN=[(nid=a, nty=bi, ");
+  await page.keyboard.press("Control+Space");
+  const widget = page.locator(".suggest-widget");
+  await expect(widget).toBeVisible();
+  await expect(widget).toContainText("lct"); // the bistable threshold, offered because nty=bi
+  await expect(widget).not.toContainText("mst ");
+  await page.screenshot({ path: "test-results/editor.png" });
+  await page.keyboard.press("Escape");
+  // Hover help on a key.
+  await page.keyboard.type("mpd=250 ms)])");
+  await page.getByText("mpd", { exact: true }).hover();
+  await expect(page.locator(".monaco-hover").filter({ hasText: "decay time constant" })).toBeVisible();
+});

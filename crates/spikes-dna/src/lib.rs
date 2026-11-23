@@ -21,6 +21,7 @@
 
 mod convert;
 pub mod description;
+pub mod schema;
 mod syntax;
 pub mod units;
 

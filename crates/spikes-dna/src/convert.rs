@@ -12,6 +12,7 @@ use crate::description::{
     ConnectionDescription, GroupDescription, ModulatorDescription, NetworkDescription, NeuronDescription,
     SynapseDefaults, WeightSpec,
 };
+use crate::schema;
 use crate::syntax::{Field, Node, ParseError, Span, Value};
 use crate::units::Quantity;
 
@@ -214,7 +215,7 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
     let Some(top) = Rec::of(root, "network description", &mut errors) else {
         return Err(errors.0);
     };
-    top.check_keys(&["GRP", "NRN", "CON", "LRN", "CST", "MOD"], &mut errors);
+    top.check_keys(&schema::keys("network", None), &mut errors);
     if top.get("NRN").is_none() {
         top.missing("NRN", &mut errors);
     }
@@ -345,7 +346,7 @@ fn named<T>(
 
 fn group(node: &Node, errors: &mut Errors) -> Option<GroupDescription> {
     let rec = Rec::of(node, "group", errors)?;
-    rec.check_keys(&["gid", "hst", "prt"], errors);
+    rec.check_keys(&schema::keys("group", None), errors);
     let id = rec.word("gid", None, &[], errors);
     let remote = match (rec.get("hst"), rec.get("prt")) {
         (None, None) => None,
@@ -384,15 +385,15 @@ fn learning_rule(rec: &Rec<'_>, errors: &mut Errors) -> Option<(String, Learning
     let rule = match function.as_str() {
         // "stdp" is the 2017 name for what later became stdp_hard.
         "stdp_hard" | "stdp" => {
-            rec.check_keys(&["fnc", "nam", "ina", "inp", "exa", "exp"], errors);
+            rec.check_keys(&schema::keys("learning", Some(&function)), errors);
             LearningRule::HardLimit(exponential(errors))
         }
         "stdp_soft" => {
-            rec.check_keys(&["fnc", "nam", "ina", "inp", "exa", "exp"], errors);
+            rec.check_keys(&schema::keys("learning", Some(&function)), errors);
             LearningRule::SoftLimit(exponential(errors))
         }
         "stdp_alpha" => {
-            rec.check_keys(&["fnc", "nam", "bln", "atc", "alr"], errors);
+            rec.check_keys(&schema::keys("learning", Some(&function)), errors);
             LearningRule::Alpha(AlphaStdp::new(
                 rec.quantity("bln", Quantity::Dimensionless, None, errors),
                 rec.quantity("atc", Quantity::Time, None, errors),
@@ -400,7 +401,7 @@ fn learning_rule(rec: &Rec<'_>, errors: &mut Errors) -> Option<(String, Learning
             ))
         }
         "flat" => {
-            rec.check_keys(&["fnc", "nam"], errors);
+            rec.check_keys(&schema::keys("learning", Some("flat")), errors);
             LearningRule::None
         }
         _ => return None,
@@ -413,13 +414,13 @@ fn stickiness_fn(rec: &Rec<'_>, errors: &mut Errors) -> Option<(String, Stickine
     let function = rec.word("fnc", None, &["sig", "none"], errors);
     let value = match function.as_str() {
         "sig" => {
-            rec.check_keys(&["fnc", "nam", "dhl"], errors);
+            rec.check_keys(&schema::keys("stickiness", Some(&function)), errors);
             Stickiness::Sigmoid {
                 tau_ms: rec.quantity("dhl", Quantity::Time, None, errors),
             }
         }
         "none" => {
-            rec.check_keys(&["fnc", "nam"], errors);
+            rec.check_keys(&schema::keys("stickiness", Some("none")), errors);
             Stickiness::None
         }
         _ => return None,
@@ -428,14 +429,9 @@ fn stickiness_fn(rec: &Rec<'_>, errors: &mut Errors) -> Option<(String, Stickine
     Some((name, value))
 }
 
-const NEURON_KEYS: &[&str] = &[
-    "nid", "grp", "nty", "inh", "mst", "lct", "rst", "tfr", "rfp", "rfb", "mnp", "mpd", "mpr", "mpn", "wnm", "spp",
-    "csp", "syd", "ipb", "ipl", "ipd", "WDF", "WLF", "SRP", "SNT", "LOC", "RES", "HIP", "RCP", "REL",
-];
-
 fn modulator(node: &Node, errors: &mut Errors) -> Option<ModulatorDescription> {
     let rec = Rec::of(node, "modulator", errors)?;
-    rec.check_keys(&["nam", "clr", "rad", "spd", "lat", "len"], errors);
+    rec.check_keys(&schema::keys("modulator", None), errors);
     let description = ModulatorDescription {
         name: rec.word("nam", None, &[], errors),
         clearance_ms: rec.quantity("clr", Quantity::Time, None, errors),
@@ -469,7 +465,7 @@ fn modulator_ref(rec: &Rec<'_>, key: &str, modulators: &HashMap<String, u16>, er
 
 fn receptor(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -> Option<Receptor> {
     let rec = Rec::of(node, "receptor", errors)?;
-    rec.check_keys(&["mod", "exg", "ing", "thr", "pla", "elg", "rat", "dir"], errors);
+    rec.check_keys(&schema::keys("receptor", None), errors);
     let three_factor = match (rec.get("elg"), rec.get("rat")) {
         (None, None) => None,
         (Some(_), Some(_)) => Some(ThreeFactor {
@@ -516,7 +512,8 @@ mod default {
 
 fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -> Option<NeuronDescription> {
     let rec = Rec::of(node, "neuron", errors)?;
-    rec.check_keys(NEURON_KEYS, errors);
+    // Neurons accept every neuron key whatever their type; the schema's per-type keys only guide the editor.
+    rec.check_keys(&schema::keys("neuron", None), errors);
     let q = |key, quantity, default, errors: &mut Errors| rec.quantity(key, quantity, Some(default), errors);
 
     let id = rec.word("nid", None, &[], errors);
@@ -549,12 +546,12 @@ fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -
         }
         "mr" => {
             let (r, res) = resonance(errors)?;
-            res.check_keys(&["frq", "dmp"], errors);
+            res.check_keys(&schema::keys("resonance", Some("mr")), errors);
             NeuronKind::MonostableResonator(r)
         }
         "br" => {
             let (r, res) = resonance(errors)?;
-            res.check_keys(&["frq", "dmp", "lcr", "sep"], errors);
+            res.check_keys(&schema::keys("resonance", Some("br")), errors);
             let cycle_mv = res.quantity("lcr", Quantity::Potential, None, errors);
             let separatrix_mv = res.quantity("sep", Quantity::Potential, None, errors);
             if separatrix_mv >= cycle_mv {
@@ -573,7 +570,7 @@ fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -
     };
 
     let homeostasis = rec.record("HIP", "homeostasis", errors).map(|h| {
-        h.check_keys(&["tgt", "str", "win", "lwb", "upb"], errors);
+        h.check_keys(&schema::keys("homeostasis", None), errors);
         Homeostasis {
             target_hz: h.quantity("tgt", Quantity::Frequency, None, errors),
             strength: h.quantity("str", Quantity::Dimensionless, None, errors),
@@ -607,13 +604,13 @@ fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -
         },
         Some(w) => match w.word("fnc", None, &["exp", "zer"], errors).as_str() {
             "exp" => {
-                w.check_keys(&["fnc", "dhl"], errors);
+                w.check_keys(&schema::keys("weightDecay", Some("exp")), errors);
                 WeightDecay::Exponential {
                     tau_ms: w.quantity("dhl", Quantity::Time, None, errors),
                 }
             }
             _ => {
-                w.check_keys(&["fnc"], errors);
+                w.check_keys(&schema::keys("weightDecay", Some("zer")), errors);
                 WeightDecay::None
             }
         },
@@ -622,7 +619,7 @@ fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -
         None => WeightLimit::Unbounded,
         Some(w) => match w.word("fnc", None, &["bnd", "unb"], errors).as_str() {
             "bnd" => {
-                w.check_keys(&["fnc", "lwb", "upb", "uwb"], errors);
+                w.check_keys(&schema::keys("weightLimit", Some("bnd")), errors);
                 let upper_key = if w.get("uwb").is_some() { "uwb" } else { "upb" };
                 let lower = w.quantity("lwb", Quantity::Dimensionless, None, errors);
                 let upper = w.quantity(upper_key, Quantity::Dimensionless, None, errors);
@@ -635,7 +632,7 @@ fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -
                 WeightLimit::Bounded { lower, upper }
             }
             _ => {
-                w.check_keys(&["fnc"], errors);
+                w.check_keys(&schema::keys("weightLimit", Some("unb")), errors);
                 WeightLimit::Unbounded
             }
         },
@@ -647,7 +644,7 @@ fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -
     let release = Some(match release_rec {
         None => Release::V1_DEFAULT,
         Some(r) => {
-            r.check_keys(&["fcb", "fcm", "fct", "dpb", "dpm", "dpt"], errors);
+            r.check_keys(&schema::keys("release", None), errors);
             let d = Release::V1_DEFAULT;
             Release {
                 facilitation_base: r.quantity("fcb", Quantity::Dimensionless, Some(d.facilitation_base), errors),
@@ -682,7 +679,7 @@ fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -
         }
     };
     let modulator_release = rec.record("REL", "release", errors).map(|r| {
-        r.check_keys(&["mod", "amt"], errors);
+        r.check_keys(&schema::keys("modulatorRelease", None), errors);
         (
             modulator_ref(&r, "mod", modulators, errors),
             r.quantity("amt", Quantity::Dimensionless, Some(1.0), errors),
@@ -712,7 +709,7 @@ fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -
 /// A location, converted to cartesian µm. Cylindrical is (r, φ, z); spherical is (r, φ, θ) with azimuth φ and
 /// polar angle θ, as in v1.
 fn location(loc: &Rec<'_>, errors: &mut Errors) -> [f64; 3] {
-    loc.check_keys(&["cst", "px1", "px2", "px3"], errors);
+    loc.check_keys(&schema::keys("location", None), errors);
     let system = loc.word("cst", Some("ct"), &["ct", "cl", "sp"], errors);
     let length = |key, errors: &mut Errors| loc.quantity(key, Quantity::Length, None, errors);
     let angle = |key, errors: &mut Errors| loc.quantity(key, Quantity::Angle, None, errors);
@@ -744,7 +741,7 @@ fn connection(
     let Some(rec) = Rec::of(node, "connection", errors) else {
         return;
     };
-    rec.check_keys(&["prn", "psn", "cnw", "eqw", "lrn", "cst", "typ", "syd"], errors);
+    rec.check_keys(&schema::keys("connection", None), errors);
     let synaptic_delay_ms = rec.get("syd").map(|_| synaptic_delay(&rec, None, errors));
     let pres = rec.ids("prn", errors);
     let posts = rec.ids("psn", errors);

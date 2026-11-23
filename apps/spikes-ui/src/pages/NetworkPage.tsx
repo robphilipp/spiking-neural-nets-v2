@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { useConnection } from "../connection";
 import { examples } from "../examples";
 import { useAppDispatch, useAppSelector } from "../hooks";
+import { LANGUAGE_ID } from "../language/register";
 import { monaco } from "../monaco";
 import { applied, parseFailed, setDescription } from "../store";
 
@@ -97,7 +98,7 @@ export function NetworkPage() {
       {running && <Alert severity="info">Stop the run to change the network.</Alert>}
       <Box sx={{ flex: 1, minHeight: 300, border: 1, borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
         <Editor
-          language="plaintext"
+          language={LANGUAGE_ID}
           theme={dark ? "vs-dark" : "vs"}
           value={description}
           onChange={(text) => dispatch(setDescription({ description: text ?? "" }))}

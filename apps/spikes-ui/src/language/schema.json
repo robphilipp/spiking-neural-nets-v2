@@ -1,0 +1,1078 @@
+[
+  {
+    "name": "network",
+    "doc": "A whole network description.",
+    "keys": [
+      {
+        "key": "GRP",
+        "doc": "Execution groups: where neurons run.",
+        "value": {
+          "type": "list",
+          "record": "group"
+        }
+      },
+      {
+        "key": "NRN",
+        "doc": "The neurons.",
+        "value": {
+          "type": "list",
+          "record": "neuron"
+        },
+        "required": true
+      },
+      {
+        "key": "CON",
+        "doc": "Connections between neurons.",
+        "value": {
+          "type": "list",
+          "record": "connection"
+        }
+      },
+      {
+        "key": "LRN",
+        "doc": "Learning rules, referred to by connections' `lrn`.",
+        "value": {
+          "type": "list",
+          "record": "learning"
+        }
+      },
+      {
+        "key": "CST",
+        "doc": "Weight-stickiness functions, referred to by connections' `cst`.",
+        "value": {
+          "type": "list",
+          "record": "stickiness"
+        }
+      },
+      {
+        "key": "MOD",
+        "doc": "Neuromodulators (dopamine, acetylcholine, …), referred to by receptors and releases.",
+        "value": {
+          "type": "list",
+          "record": "modulator"
+        }
+      }
+    ]
+  },
+  {
+    "name": "group",
+    "doc": "An execution group: a set of neurons that run together, here or on another machine.",
+    "keys": [
+      {
+        "key": "gid",
+        "doc": "The group's id.",
+        "value": {
+          "type": "name"
+        },
+        "required": true
+      },
+      {
+        "key": "hst",
+        "doc": "Host of a remote group (with `prt`).",
+        "value": {
+          "type": "name"
+        }
+      },
+      {
+        "key": "prt",
+        "doc": "Port of a remote group (with `hst`).",
+        "value": {
+          "type": "number"
+        }
+      }
+    ]
+  },
+  {
+    "name": "neuron",
+    "doc": "A neuron: its dynamics, position, and the settings of its incoming synapses.",
+    "kind_key": "nty",
+    "keys": [
+      {
+        "key": "nid",
+        "doc": "The neuron's id; connections refer to it.",
+        "value": {
+          "type": "name"
+        },
+        "required": true
+      },
+      {
+        "key": "grp",
+        "doc": "Its execution group.",
+        "value": {
+          "type": "reference",
+          "to": "group"
+        },
+        "default": "default"
+      },
+      {
+        "key": "nty",
+        "doc": "Dynamics: `mi` monostable integrator, `bi` bistable integrator (fires tonically once excited), `mr` monostable resonator, `br` bistable resonator (limit cycle).",
+        "value": {
+          "type": "choice",
+          "values": [
+            "mi",
+            "bi",
+            "mr",
+            "br"
+          ]
+        },
+        "default": "mi"
+      },
+      {
+        "key": "inh",
+        "doc": "Its outgoing connections are inhibitory by default.",
+        "value": {
+          "type": "bool"
+        },
+        "default": "f"
+      },
+      {
+        "key": "mst",
+        "doc": "Firing threshold.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "10 mV",
+        "only": [
+          "mi",
+          "mr",
+          "br"
+        ]
+      },
+      {
+        "key": "lct",
+        "doc": "Bistable: the threshold that starts tonic firing.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "15 mV",
+        "only": [
+          "bi"
+        ]
+      },
+      {
+        "key": "rst",
+        "doc": "Bistable: the threshold below which tonic firing stops.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "10 mV",
+        "only": [
+          "bi"
+        ]
+      },
+      {
+        "key": "tfr",
+        "doc": "Bistable: the tonic firing rate.",
+        "value": {
+          "type": "quantity",
+          "quantity": "frequency",
+          "unit": "Hz"
+        },
+        "default": "10 Hz",
+        "only": [
+          "bi"
+        ]
+      },
+      {
+        "key": "rfp",
+        "doc": "Absolute refractory period after a spike: input is lost and the potential held at `mnp`.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "20 ms"
+      },
+      {
+        "key": "rfb",
+        "doc": "Relative refractoriness after the absolute period: a kernel of this area (mV·ms) lowering the potential, decaying with time since the spike.",
+        "value": {
+          "type": "quantity",
+          "quantity": "flux",
+          "unit": "µWb"
+        },
+        "default": "0.08 µWb"
+      },
+      {
+        "key": "mnp",
+        "doc": "Minimum (resting) membrane potential.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "0 mV"
+      },
+      {
+        "key": "mpd",
+        "doc": "Membrane potential decay time constant.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "250 ms"
+      },
+      {
+        "key": "mpr",
+        "doc": "Rise time: how long a crossing input takes to make the spike.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "2 ms"
+      },
+      {
+        "key": "mpn",
+        "doc": "Membrane noise: a Wiener process of this magnitude per √ms.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "0.1 mV"
+      },
+      {
+        "key": "wnm",
+        "doc": "Noise added to incoming weights at each signal.",
+        "value": {
+          "type": "number"
+        },
+        "default": "0"
+      },
+      {
+        "key": "spp",
+        "doc": "Spike amplitude sent along outgoing connections (scaled by each synapse's weight).",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "1 mV"
+      },
+      {
+        "key": "csp",
+        "doc": "Axon conduction speed: outgoing delays are `syd + distance / csp`.",
+        "value": {
+          "type": "quantity",
+          "quantity": "speed",
+          "unit": "m/s"
+        },
+        "default": "10 m/s"
+      },
+      {
+        "key": "syd",
+        "doc": "Synaptic delay of outgoing connections (transmitter release to postsynaptic current); fast chemical synapses take ~0.2–0.5 ms.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "0.5 ms"
+      },
+      {
+        "key": "ipb",
+        "doc": "Intrinsic plasticity: the threshold shift added at each spike.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "0 mV"
+      },
+      {
+        "key": "ipl",
+        "doc": "Intrinsic plasticity: the learning amplitude.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "0 mV"
+      },
+      {
+        "key": "ipd",
+        "doc": "Intrinsic plasticity: decay time constant between spikes.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "10 min"
+      },
+      {
+        "key": "WDF",
+        "doc": "Weight decay of incoming synapses toward their equilibrium weight.",
+        "value": {
+          "type": "record",
+          "record": "weightDecay"
+        }
+      },
+      {
+        "key": "WLF",
+        "doc": "Weight limits of incoming synapses.",
+        "value": {
+          "type": "record",
+          "record": "weightLimit"
+        }
+      },
+      {
+        "key": "SRP",
+        "doc": "Stochastic transmitter release of incoming synapses (facilitation and depletion).",
+        "value": {
+          "type": "record",
+          "record": "release"
+        }
+      },
+      {
+        "key": "SNT",
+        "doc": "Old name for `SRP`.",
+        "value": {
+          "type": "record",
+          "record": "release"
+        },
+        "hidden": true
+      },
+      {
+        "key": "LOC",
+        "doc": "Soma position.",
+        "value": {
+          "type": "record",
+          "record": "location"
+        },
+        "required": true
+      },
+      {
+        "key": "RES",
+        "doc": "Resonator parameters.",
+        "value": {
+          "type": "record",
+          "record": "resonance"
+        },
+        "only": [
+          "mr",
+          "br"
+        ]
+      },
+      {
+        "key": "HIP",
+        "doc": "Homeostatic intrinsic plasticity: steer the firing rate toward a target.",
+        "value": {
+          "type": "record",
+          "record": "homeostasis"
+        }
+      },
+      {
+        "key": "RCP",
+        "doc": "Neuromodulator receptors: how modulators change this neuron.",
+        "value": {
+          "type": "list",
+          "record": "receptor"
+        }
+      },
+      {
+        "key": "REL",
+        "doc": "A modulator this neuron releases when it spikes.",
+        "value": {
+          "type": "record",
+          "record": "modulatorRelease"
+        }
+      }
+    ]
+  },
+  {
+    "name": "resonance",
+    "doc": "Resonate-and-fire dynamics: the potential oscillates as it decays. Its kind is the neuron's `nty`.",
+    "keys": [
+      {
+        "key": "frq",
+        "doc": "Resonant frequency.",
+        "value": {
+          "type": "quantity",
+          "quantity": "frequency",
+          "unit": "Hz"
+        },
+        "required": true
+      },
+      {
+        "key": "dmp",
+        "doc": "Damping time constant of the oscillation.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "required": true
+      },
+      {
+        "key": "lcr",
+        "doc": "Bistable resonator: radius of the tonic limit cycle.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "required": true,
+        "only": [
+          "br"
+        ]
+      },
+      {
+        "key": "sep",
+        "doc": "Bistable resonator: separatrix radius; pulses that leave the state inside it stop tonic firing.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "required": true,
+        "only": [
+          "br"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "homeostasis",
+    "doc": "Homeostatic intrinsic plasticity: the threshold drifts so the firing rate approaches a target.",
+    "keys": [
+      {
+        "key": "tgt",
+        "doc": "Target firing rate.",
+        "value": {
+          "type": "quantity",
+          "quantity": "frequency",
+          "unit": "Hz"
+        },
+        "required": true
+      },
+      {
+        "key": "str",
+        "doc": "Strength: mV of threshold shift per Hz of error per second.",
+        "value": {
+          "type": "number"
+        },
+        "required": true
+      },
+      {
+        "key": "win",
+        "doc": "Window over which the rate is estimated.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "1 s"
+      },
+      {
+        "key": "lwb",
+        "doc": "Lowest threshold shift.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        }
+      },
+      {
+        "key": "upb",
+        "doc": "Highest threshold shift.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        }
+      }
+    ]
+  },
+  {
+    "name": "weightDecay",
+    "doc": "How incoming weights relax toward their equilibrium weight.",
+    "kind_key": "fnc",
+    "keys": [
+      {
+        "key": "fnc",
+        "doc": "`exp`: exponential decay; `zer`: no decay.",
+        "value": {
+          "type": "choice",
+          "values": [
+            "exp",
+            "zer"
+          ]
+        },
+        "required": true
+      },
+      {
+        "key": "dhl",
+        "doc": "Decay time constant.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "required": true,
+        "only": [
+          "exp"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "weightLimit",
+    "doc": "Bounds on incoming weights.",
+    "kind_key": "fnc",
+    "keys": [
+      {
+        "key": "fnc",
+        "doc": "`bnd`: bounded; `unb`: unbounded.",
+        "value": {
+          "type": "choice",
+          "values": [
+            "bnd",
+            "unb"
+          ]
+        },
+        "required": true
+      },
+      {
+        "key": "lwb",
+        "doc": "Lowest weight.",
+        "value": {
+          "type": "number"
+        },
+        "required": true,
+        "only": [
+          "bnd"
+        ]
+      },
+      {
+        "key": "upb",
+        "doc": "Highest weight.",
+        "value": {
+          "type": "number"
+        },
+        "required": true,
+        "only": [
+          "bnd"
+        ]
+      },
+      {
+        "key": "uwb",
+        "doc": "Old name for `upb`.",
+        "value": {
+          "type": "number"
+        },
+        "only": [
+          "bnd"
+        ],
+        "hidden": true
+      }
+    ]
+  },
+  {
+    "name": "release",
+    "doc": "Stochastic transmitter release: each signal is transmitted with probability 1 − e^(−C·V), where facilitation C and depletion V follow recent use.",
+    "keys": [
+      {
+        "key": "fcb",
+        "doc": "Facilitation base.",
+        "value": {
+          "type": "number"
+        },
+        "default": "1"
+      },
+      {
+        "key": "fcm",
+        "doc": "Facilitation added per signal.",
+        "value": {
+          "type": "number"
+        },
+        "default": "0.1"
+      },
+      {
+        "key": "fct",
+        "doc": "Facilitation decay time constant.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "100 ms"
+      },
+      {
+        "key": "dpb",
+        "doc": "Depletion (available vesicles) base.",
+        "value": {
+          "type": "number"
+        },
+        "default": "1"
+      },
+      {
+        "key": "dpm",
+        "doc": "Depletion per signal.",
+        "value": {
+          "type": "number"
+        },
+        "default": "0.1"
+      },
+      {
+        "key": "dpt",
+        "doc": "Depletion recovery time constant.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "100 ms"
+      }
+    ]
+  },
+  {
+    "name": "location",
+    "doc": "A position in µm.",
+    "kind_key": "cst",
+    "keys": [
+      {
+        "key": "cst",
+        "doc": "Coordinates: `ct` cartesian (x, y, z), `cl` cylindrical (r, φ, z), `sp` spherical (r, θ, φ).",
+        "value": {
+          "type": "choice",
+          "values": [
+            "ct",
+            "cl",
+            "sp"
+          ]
+        },
+        "default": "ct"
+      },
+      {
+        "key": "px1",
+        "doc": "x, or r.",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        },
+        "required": true
+      },
+      {
+        "key": "px2",
+        "doc": "y, or φ (cylindrical) / θ (spherical); angles in radians or with `rad`/`deg`.",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        },
+        "required": true
+      },
+      {
+        "key": "px3",
+        "doc": "z, or φ (spherical).",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        },
+        "required": true
+      }
+    ]
+  },
+  {
+    "name": "receptor",
+    "doc": "A neuromodulator receptor: each effect is linear in the modulator's concentration c at the neuron.",
+    "keys": [
+      {
+        "key": "mod",
+        "doc": "The modulator.",
+        "value": {
+          "type": "reference",
+          "to": "modulator"
+        },
+        "required": true
+      },
+      {
+        "key": "exg",
+        "doc": "Excitatory gain: excitatory input × (1 + exg·c).",
+        "value": {
+          "type": "number"
+        },
+        "default": "0"
+      },
+      {
+        "key": "ing",
+        "doc": "Inhibitory gain: inhibitory input × (1 + ing·c).",
+        "value": {
+          "type": "number"
+        },
+        "default": "0"
+      },
+      {
+        "key": "thr",
+        "doc": "Threshold change: threshold × (1 + thr·c).",
+        "value": {
+          "type": "number"
+        },
+        "default": "0"
+      },
+      {
+        "key": "pla",
+        "doc": "Plasticity: STDP changes × (1 + pla·c).",
+        "value": {
+          "type": "number"
+        },
+        "default": "0"
+      },
+      {
+        "key": "elg",
+        "doc": "Three-factor learning: eligibility trace time constant (with `rat`).",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        }
+      },
+      {
+        "key": "rat",
+        "doc": "Three-factor learning: rate (weight change per unit eligibility × concentration × second).",
+        "value": {
+          "type": "number"
+        }
+      },
+      {
+        "key": "dir",
+        "doc": "Direct potential: c × dir added to the membrane potential.",
+        "value": {
+          "type": "quantity",
+          "quantity": "potential",
+          "unit": "mV"
+        },
+        "default": "0 mV"
+      }
+    ]
+  },
+  {
+    "name": "modulatorRelease",
+    "doc": "Releasing a modulator at each spike.",
+    "keys": [
+      {
+        "key": "mod",
+        "doc": "The modulator.",
+        "value": {
+          "type": "reference",
+          "to": "modulator"
+        },
+        "required": true
+      },
+      {
+        "key": "amt",
+        "doc": "Amount per spike.",
+        "value": {
+          "type": "number"
+        },
+        "default": "1"
+      }
+    ]
+  },
+  {
+    "name": "connection",
+    "doc": "Connections from each `prn` neuron to each `psn` neuron.",
+    "keys": [
+      {
+        "key": "prn",
+        "doc": "Sending neurons.",
+        "value": {
+          "type": "ids"
+        },
+        "required": true
+      },
+      {
+        "key": "psn",
+        "doc": "Receiving neurons.",
+        "value": {
+          "type": "ids"
+        },
+        "required": true
+      },
+      {
+        "key": "cnw",
+        "doc": "Initial weight.",
+        "value": {
+          "type": "weight"
+        },
+        "required": true
+      },
+      {
+        "key": "eqw",
+        "doc": "Equilibrium weight that decay relaxes toward (default: the initial weight).",
+        "value": {
+          "type": "weight"
+        }
+      },
+      {
+        "key": "lrn",
+        "doc": "Learning rule.",
+        "value": {
+          "type": "reference",
+          "to": "learning"
+        },
+        "default": "flat"
+      },
+      {
+        "key": "cst",
+        "doc": "Weight stickiness.",
+        "value": {
+          "type": "reference",
+          "to": "stickiness"
+        },
+        "default": "none"
+      },
+      {
+        "key": "typ",
+        "doc": "Sign: `exc` or `inh` (default: from the sending neuron's `inh`).",
+        "value": {
+          "type": "choice",
+          "values": [
+            "exc",
+            "inh"
+          ]
+        }
+      },
+      {
+        "key": "syd",
+        "doc": "Synaptic delay, overriding the sending neuron's.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        }
+      }
+    ]
+  },
+  {
+    "name": "learning",
+    "doc": "A learning rule.",
+    "kind_key": "fnc",
+    "keys": [
+      {
+        "key": "fnc",
+        "doc": "`stdp_hard`: STDP with hard weight bounds; `stdp_soft`: STDP scaled by the distance to the bounds; `stdp_alpha`: alpha-function STDP; `flat`: no learning.",
+        "value": {
+          "type": "choice",
+          "values": [
+            "stdp_hard",
+            "stdp_soft",
+            "stdp_alpha",
+            "flat",
+            "stdp"
+          ]
+        },
+        "required": true
+      },
+      {
+        "key": "nam",
+        "doc": "A name for connections' `lrn` (default: the function's name).",
+        "value": {
+          "type": "name"
+        }
+      },
+      {
+        "key": "ina",
+        "doc": "Depression amplitude (post before pre).",
+        "value": {
+          "type": "number"
+        },
+        "required": true,
+        "only": [
+          "stdp_hard",
+          "stdp_soft",
+          "stdp"
+        ]
+      },
+      {
+        "key": "inp",
+        "doc": "Depression time constant.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "required": true,
+        "only": [
+          "stdp_hard",
+          "stdp_soft",
+          "stdp"
+        ]
+      },
+      {
+        "key": "exa",
+        "doc": "Potentiation amplitude (pre before post).",
+        "value": {
+          "type": "number"
+        },
+        "required": true,
+        "only": [
+          "stdp_hard",
+          "stdp_soft",
+          "stdp"
+        ]
+      },
+      {
+        "key": "exp",
+        "doc": "Potentiation time constant.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "required": true,
+        "only": [
+          "stdp_hard",
+          "stdp_soft",
+          "stdp"
+        ]
+      },
+      {
+        "key": "bln",
+        "doc": "Baseline.",
+        "value": {
+          "type": "number"
+        },
+        "required": true,
+        "only": [
+          "stdp_alpha"
+        ]
+      },
+      {
+        "key": "atc",
+        "doc": "Alpha time constant.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "required": true,
+        "only": [
+          "stdp_alpha"
+        ]
+      },
+      {
+        "key": "alr",
+        "doc": "Learning rate.",
+        "value": {
+          "type": "number"
+        },
+        "required": true,
+        "only": [
+          "stdp_alpha"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "stickiness",
+    "doc": "Weight stickiness: how firmly learned weights resist decay.",
+    "kind_key": "fnc",
+    "keys": [
+      {
+        "key": "fnc",
+        "doc": "`sig`: sigmoid stickiness; `none`.",
+        "value": {
+          "type": "choice",
+          "values": [
+            "sig",
+            "none"
+          ]
+        },
+        "required": true
+      },
+      {
+        "key": "nam",
+        "doc": "A name for connections' `cst` (default: the function's name).",
+        "value": {
+          "type": "name"
+        }
+      },
+      {
+        "key": "dhl",
+        "doc": "Time constant.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "required": true,
+        "only": [
+          "sig"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "modulator",
+    "doc": "A neuromodulator: how a release spreads and clears.",
+    "keys": [
+      {
+        "key": "nam",
+        "doc": "Its name, for receptors' and releases' `mod`.",
+        "value": {
+          "type": "name"
+        },
+        "required": true
+      },
+      {
+        "key": "clr",
+        "doc": "Clearance time constant.",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "required": true
+      },
+      {
+        "key": "rad",
+        "doc": "Reach.",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        }
+      },
+      {
+        "key": "spd",
+        "doc": "Spreading speed (default: instantaneous).",
+        "value": {
+          "type": "quantity",
+          "quantity": "speed",
+          "unit": "m/s"
+        }
+      },
+      {
+        "key": "lat",
+        "doc": "Latency from release to spreading (with several shards, at least the lookahead).",
+        "value": {
+          "type": "quantity",
+          "quantity": "time",
+          "unit": "ms"
+        },
+        "default": "1 ms"
+      },
+      {
+        "key": "len",
+        "doc": "Falloff length: amplitude × e^(−distance/len).",
+        "value": {
+          "type": "quantity",
+          "quantity": "length",
+          "unit": "µm"
+        }
+      }
+    ]
+  }
+]
