@@ -36,7 +36,7 @@ pub trait Modulators {
 }
 
 /// No modulators: every concentration is zero.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct NoModulators;
 
 impl Modulators for NoModulators {
@@ -54,7 +54,7 @@ impl Modulators for NoModulators {
 }
 
 /// Three-factor (reward-modulated) learning: STDP marks synapses, the modulator turns marks into weight changes.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ThreeFactor {
     /// Eligibility trace time constant `τ_e` in ms.
     pub eligibility_ms: f64,
@@ -63,7 +63,7 @@ pub struct ThreeFactor {
 }
 
 /// One receptor on a neuron.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Receptor {
     /// Index of the modulator it responds to.
     pub modulator: u16,
@@ -97,7 +97,7 @@ impl Receptor {
 }
 
 /// The combined effect of a neuron's receptors at one moment.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Effects {
     pub(crate) excitatory: f64,
     pub(crate) inhibitory: f64,
@@ -144,7 +144,7 @@ impl Effects {
 
 /// A modulator pulse at a neuron: arrives at `arrival` with `amplitude`, then decays with the modulator's clearance
 /// time constant.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Pulse {
     /// When it reaches the neuron.
     pub arrival: SimTime,

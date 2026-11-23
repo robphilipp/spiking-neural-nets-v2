@@ -11,7 +11,7 @@ use crate::stdp::LearningRule;
 use crate::units::{decay, since_ms, uniform, wiener};
 
 /// Excitatory or inhibitory: a property of the synapse, so one neuron can have both kinds (decision 13).
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Sign {
     /// Raises the receiver's membrane potential.
     Excitatory,
@@ -30,7 +30,7 @@ impl Sign {
 }
 
 /// How a weight relaxes toward its equilibrium between events (`WDF`).
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WeightDecay {
     /// No decay (`fnc=zer`).
     None,
@@ -52,7 +52,7 @@ impl WeightDecay {
 }
 
 /// Bounds on a weight (`WLF`).
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WeightLimit {
     /// No bounds (`fnc=unb`).
     Unbounded,
@@ -86,7 +86,7 @@ impl WeightLimit {
 /// Weight stickiness (`CST`): slows the decay toward equilibrium after long gaps between updates, so learned
 /// weights are retained (v1 parsed this but never applied it, discrepancy 6). The adjusted decay factor is
 /// `d + (1 − d)·s(Δt)` with `s(Δt) = 2·(1/(1 + exp(−Δt/τ)) − ½)`, as v1 defined it.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Stickiness {
     /// No stickiness (`fnc=none`).
     None,
@@ -113,7 +113,7 @@ impl Stickiness {
 /// Stochastic release (`SRP`), after Maass: `p = 1 − exp(−C·V)` with facilitation
 /// `C = C₀ + α·Σ exp(−(t−tᵢ)/τc)` over earlier action potentials and depletion
 /// `V = max(0, V₀ − β·Σ exp(−(t−tⱼ)/τv))` over earlier releases.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Release {
     /// `C₀` (`fcb`).
     pub facilitation_base: f64,
@@ -142,7 +142,7 @@ impl Release {
 }
 
 /// Parameters shared by a class of synapses (indexed by [`Synapse::params`]).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SynapseParams {
     /// Decay toward equilibrium.
     pub decay: WeightDecay,
@@ -173,7 +173,7 @@ impl SynapseParams {
 }
 
 /// One incoming synapse's state.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Synapse {
     /// Current weight (efficacy).
     pub weight: f32,

@@ -18,7 +18,7 @@
 use crate::units::heaviside;
 
 /// How a synapse learns.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum LearningRule {
     /// No learning (`fnc=flat`).
     None,
@@ -31,7 +31,7 @@ pub enum LearningRule {
 }
 
 /// Parameters of the exponential STDP windows.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ExponentialStdp {
     /// Depression amplitude, `ina`.
     pub inhibition_amplitude: f64,
@@ -45,7 +45,7 @@ pub struct ExponentialStdp {
 
 /// Alpha-function learning: `α(t) = max(β, e·(1−β)·x·e^(−x) + β)` with `x = (t₀ − t)/τ`, offset by `t₀` so that
 /// `α(0) = 0`.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AlphaStdp {
     /// Baseline `β`.
     pub baseline: f64,

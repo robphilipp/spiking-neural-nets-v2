@@ -85,7 +85,10 @@ enum Request {
         node: u32,
         mesh: Vec<SocketAddr>,
         shards: u32,
+        /// The description's source text (for recordings) and the description itself (a generated network has
+        /// no text to parse).
         text: String,
+        description: Box<spikes_dna::NetworkDescription>,
         seed: u64,
         min_delay_ns: u64,
         jitter: WireJitter,
@@ -297,6 +300,7 @@ impl Coordinator {
     pub(crate) fn start(
         nodes: &[String],
         text: &str,
+        description: &spikes_dna::NetworkDescription,
         settings: &BuildSettings,
     ) -> Result<(Arc<Self>, NodeSetup), SessionError> {
         let clients = nodes
@@ -345,6 +349,7 @@ impl Coordinator {
                 mesh: mesh.clone(),
                 shards: shards as u32,
                 text: text.to_string(),
+                description: Box::new(description.clone()),
                 seed: settings.seed,
                 min_delay_ns: settings.min_delay.as_nanos(),
                 jitter: settings.jitter.into(),
@@ -797,6 +802,7 @@ fn handle(
             mesh: addresses,
             shards,
             text,
+            description,
             seed,
             min_delay_ns,
             jitter,
@@ -808,7 +814,7 @@ fn handle(
             let listener = mesh
                 .take()
                 .ok_or_else(|| SessionError::Invalid("build before prepare".into()))?;
-            let s = crate::Session::new(id, format!("node {node}"), text)?;
+            let s = crate::Session::described(id, format!("node {node}"), text, *description);
             let shards = shards as usize;
             let link = StrictLink::new(
                 node,

@@ -9,7 +9,7 @@ publish.workspace = true
 
 [dependencies]
 serde.workspace = true
-tempo-core = { path = "../tempo-core" }
+tempo-core = { path = "../tempo-core", features = ["serde"] }
 rand_core.workspace = true
 
 [dev-dependencies]

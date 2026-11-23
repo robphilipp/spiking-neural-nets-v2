@@ -231,6 +231,19 @@ node builds the whole description and keeps its share); the 10⁸-neuron synthet
   (rates, ISI distributions, weight trajectories). This confirms that infrastructure lateness acts like benign noise.
 - **Accept**: identical traces across hosts in strict mode, plus a written comparison report.
 
+### Phase 5 status: done (2026-11-23)
+
+- Strict mode is the cluster's lockstep (phase 4): node reports with sent counts, the coordinator's decision, and
+  no window starts before every event for it has arrived. Identical traces for any partitioning are tested (1 and 3
+  nodes, in memory and over TCP, several runs in a row; and a recorded spikes session, paced or not).
+- Validation experiment and report: `docs/reports/cluster-validation.md` (reproduce with the `validate_cluster`
+  example). A recurrent STDP network run in lockstep, in best effort at 1× and 2× real time, with intentional delay
+  jitter, and with another seed. Best effort's late spikes changed rates, ISI distributions and weight trajectories
+  less than the intentional jitter, and far less than another seed: infrastructure lateness acts like benign noise.
+- Found on the way: a network generated in code couldn't be built on nodes (they parsed its placeholder text); nodes
+  now get the parsed description.
+- Not done: the experiment across separate hosts (it ran on one machine over loopback TCP).
+
 ## Phase 6: scale to 1M+ neurons, then toward 10⁹ (ongoing)
 
 - Compact route and synapse storage (8–12 byte edges, a 20–24 byte synapse state), SoA hot state, prefetching.

@@ -29,7 +29,7 @@ use crate::synapse::{Synapse, SynapseParams};
 use crate::units::{decay, duration_ms, since_ms, wiener};
 
 /// Sub-threshold resonance: a damped oscillation at `frequency_hz` with amplitude time constant `damping_ms`.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Resonance {
     /// Oscillation frequency in Hz.
     pub frequency_hz: f64,
@@ -59,7 +59,7 @@ impl Resonance {
 }
 
 /// The dynamics class and its own parameters.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum NeuronKind {
     /// Monostable integrator (`nty=mi`).
     MonostableIntegrator,
@@ -97,7 +97,7 @@ impl NeuronKind {
 }
 
 /// Parameters shared by a population of neurons.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NeuronParams {
     /// Dynamics class.
     pub kind: NeuronKind,
@@ -140,7 +140,7 @@ impl NeuronParams {
 }
 
 /// Tonic or not.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Phase {
     /// Below threshold (or the only phase, for monostable neurons).
     Rest,
@@ -149,7 +149,7 @@ pub enum Phase {
 }
 
 /// A neuron's state.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NeuronState {
     /// Membrane potential in mV (for resonators, the imaginary part of the oscillator state).
     pub u: f64,
@@ -189,7 +189,7 @@ impl NeuronState {
 }
 
 /// What arrives at a neuron.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Input {
     /// From outside the network (a sensor): weight 1, no synapse.
     External {
@@ -206,7 +206,7 @@ pub enum Input {
 }
 
 /// Whether the neuron needs a wake-up message.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Wakeup {
     /// No change to any pending wake-up.
     Keep,
@@ -226,7 +226,7 @@ pub enum Transition {
 }
 
 /// A weight changed by learning.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WeightChange {
     /// The synapse.
     pub synapse: u32,
@@ -237,7 +237,7 @@ pub struct WeightChange {
 }
 
 /// The result of an update.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Outcome {
     /// A spike, emitted this long after the event (the rise time).
     pub spike: Option<SimDuration>,
@@ -875,7 +875,7 @@ impl Model<'_> {
 }
 
 /// One event being processed.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct Event {
     now: SimTime,
     /// The (signed, weighted) input in mV, or `None` for a wake-up.

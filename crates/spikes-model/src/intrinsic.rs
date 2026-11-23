@@ -12,7 +12,7 @@
 use crate::units::decay;
 
 /// Intrinsic-plasticity parameters (`ipb`, `ipl`, `ipd`, plus the optional homeostasis).
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IntrinsicParams {
     /// `b₀` in mV (`ipb`).
     pub base_mv: f64,
@@ -35,7 +35,7 @@ impl IntrinsicParams {
 }
 
 /// Homeostatic intrinsic plasticity.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Homeostasis {
     /// Target firing rate `r*` in Hz.
     pub target_hz: f64,

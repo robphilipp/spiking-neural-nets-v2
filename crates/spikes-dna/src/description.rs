@@ -7,7 +7,7 @@ use spikes_model::{LearningRule, NeuronParams, Receptor, Release, Sign, Stickine
 use crate::Span;
 
 /// A whole network.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NetworkDescription {
     /// Execution groups (`GRP`).
     pub groups: Vec<GroupDescription>,
@@ -24,7 +24,7 @@ pub struct NetworkDescription {
 }
 
 /// A neuromodulator: how it spreads from a release and how fast it is cleared.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModulatorDescription {
     /// Name (`nam`).
     pub name: String,
@@ -49,7 +49,7 @@ impl NetworkDescription {
 }
 
 /// An execution group: where its neurons run.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GroupDescription {
     /// Group ID (`gid`).
     pub id: String,
@@ -58,7 +58,7 @@ pub struct GroupDescription {
 }
 
 /// One neuron.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NeuronDescription {
     /// Neuron ID (`nid`).
     pub id: String,
@@ -86,7 +86,7 @@ pub struct NeuronDescription {
 }
 
 /// Settings a neuron gives its incoming synapses.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SynapseDefaults {
     /// Weight decay toward equilibrium (`WDF`).
     pub decay: WeightDecay,
@@ -99,7 +99,7 @@ pub struct SynapseDefaults {
 }
 
 /// A connection weight: fixed, or drawn uniformly from a range when the network is built.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum WeightSpec {
     /// A fixed value.
     Fixed(f64),
@@ -113,7 +113,7 @@ pub enum WeightSpec {
 }
 
 /// One connection.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConnectionDescription {
     /// Pre-synaptic neuron ID.
     pub pre: String,

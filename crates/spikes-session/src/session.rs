@@ -404,7 +404,12 @@ impl Session {
         let cluster = if inner.nodes.is_empty() {
             None
         } else {
-            Some(Coordinator::start(&inner.nodes, &inner.text, &settings)?)
+            Some(Coordinator::start(
+                &inner.nodes,
+                &inner.text,
+                &inner.description,
+                &settings,
+            )?)
         };
         let (rt, net, network) = match self.build_network(&mut inner, settings, cluster.as_ref().map(|(_, s)| s)) {
             Ok(built) => built,

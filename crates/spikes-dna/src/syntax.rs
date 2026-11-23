@@ -17,7 +17,7 @@
 use std::fmt;
 
 /// A position in the source text (1-based).
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Span {
     /// Line number.
     pub line: u32,

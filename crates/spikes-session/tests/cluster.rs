@@ -255,3 +255,23 @@ fn best_effort_runs_follow_the_coordinators_clock_and_count_late_spikes() {
     assert!(session.cluster_status().unwrap().lockstep);
     engine.close(session.id()).unwrap();
 }
+
+#[test]
+fn a_network_generated_in_code_builds_on_nodes() {
+    // Its "source" is a placeholder: the nodes get the description itself.
+    let engine = Engine::new();
+    let mut description = spikes_dna::parse(&data("v1", "stdp-test.boo")).unwrap();
+    description.neurons.iter_mut().for_each(|n| n.id = format!("gen-{}", n.id));
+    description.connections.iter_mut().for_each(|c| {
+        c.pre = format!("gen-{}", c.pre);
+        c.post = format!("gen-{}", c.post);
+    });
+    let session = engine.create_described("generated", "// generated in code", description);
+    session.set_nodes(agents(2)).unwrap();
+    let network = session.build(BuildSettings::default()).unwrap();
+    assert_eq!(network.neurons[0].name, "gen-input-1");
+    session.stimulate(&[0, 1], 20.0).unwrap();
+    run(&session, 100, None);
+    assert!(session.query_neuron(2).unwrap().last_event > tempo_runtime::SimTime::ZERO);
+    engine.close(session.id()).unwrap();
+}
