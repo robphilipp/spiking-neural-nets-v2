@@ -1,7 +1,7 @@
 import { type ProtocolClient, type Status, WebSocketClient } from "@spikes/client";
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 import { useAppDispatch, useAppSelector } from "./hooks";
-import { stateChanged } from "./store";
+import { networkUpdated, stateChanged } from "./store";
 import { inTauri, TauriClient } from "./tauriClient";
 
 interface Connection {
@@ -59,7 +59,11 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!connection.client || sessionId === null) return;
     return connection.client.onNotice((session, notice) => {
-      if (session === sessionId && notice.type === "stateChanged") dispatch(stateChanged(notice.state));
+      if (session !== sessionId) return;
+      if (notice.type === "stateChanged") dispatch(stateChanged(notice.state));
+      if (notice.type === "networkChanged") {
+        void connection.client!.getNetwork(session).then((n) => dispatch(networkUpdated(n)));
+      }
     });
   }, [connection.client, sessionId, dispatch]);
 

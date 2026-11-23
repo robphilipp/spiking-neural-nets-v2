@@ -182,3 +182,106 @@ export class LiveView {
     this.stats.complete();
   }
 }
+
+/** A synapse shown in the weights chart. */
+export interface WeightSeries {
+  post: number;
+  synapse: number;
+  name: string;
+  weight: number;
+}
+
+/**
+ * The inspector's live view: membrane potential (on every update) of a few neurons, and the weights of their
+ * incoming synapses. Its own viewer asks only for those, so it stays cheap at any network size.
+ */
+export class InspectView {
+  readonly membrane: TimeSeriesDataSource;
+  readonly weights: TimeSeriesDataSource;
+  private readonly membraneFrames = new Subject<Frame>();
+  private readonly weightFrames = new Subject<Frame>();
+  private viewer: Viewer | null = null;
+  private readonly latest = new Map<string, number>();
+  private disposed = false;
+
+  private constructor(
+    private readonly neurons: Map<number, string>,
+    private readonly synapses: Map<string, WeightSeries>,
+  ) {
+    for (const s of synapses.values()) this.latest.set(s.name, s.weight);
+    const membraneNames = [...neurons.values()];
+    const weightNames = [...synapses.values()].map((s) => s.name);
+    this.membrane = new TimeSeriesDataSource({
+      initialData: membraneNames.map((n) => emptySeries<Datum>(n)),
+      generator: () => this.membraneFrames.pipe(map((f) => this.membraneData(f))),
+      dropDataAfter: KEEP_MS,
+    });
+    this.weights = new TimeSeriesDataSource({
+      initialData: weightNames.map((n) => emptySeries<Datum>(n)),
+      generator: () => this.weightFrames.pipe(map((f) => this.weightData(f))),
+      dropDataAfter: KEEP_MS,
+    });
+  }
+
+  static async attach(
+    client: ProtocolClient,
+    session: number,
+    neurons: Array<{ index: number; name: string }>,
+    synapses: WeightSeries[],
+  ): Promise<InspectView> {
+    const view = new InspectView(
+      new Map(neurons.map((n) => [n.index, n.name])),
+      new Map(synapses.map((s) => [`${s.post}:${s.synapse}`, s])),
+    );
+    view.membrane.start();
+    view.weights.start();
+    const indices = neurons.map((n) => n.index);
+    view.viewer = await client.attach(
+      session,
+      { frameMs: 16, budgetBytesPerS: 4 << 20, spikes: { type: "nothing" }, membrane: indices, weights: { type: "neurons", neurons: indices } },
+      (f) => {
+        view.membraneFrames.next(f);
+        view.weightFrames.next(f);
+      },
+    );
+    return view;
+  }
+
+  private membraneData(frame: Frame): TimeSeriesChartData {
+    const points = new Map<string, Datum[]>();
+    const m = frame.membrane;
+    if (m) {
+      m.neuron.forEach((n, i) => {
+        const name = this.neurons.get(n);
+        if (name === undefined) return;
+        let list = points.get(name);
+        if (!list) points.set(name, (list = []));
+        list.push({ x: timeMs(frame.header, m.offset[i]!), y: m.mv[i]! });
+      });
+    }
+    return chartData([...this.neurons.values()], frame.header.t1Ms, points);
+  }
+
+  private weightData(frame: Frame): TimeSeriesChartData {
+    const w = frame.weights;
+    if (w) {
+      w.post.forEach((post, i) => {
+        const series = this.synapses.get(`${post}:${w.synapse[i]}`);
+        if (series) this.latest.set(series.name, w.weight[i]!);
+      });
+    }
+    // Every series gets its current value each frame, so the lines run on between changes.
+    const t = frame.header.t1Ms;
+    const points = new Map<string, Datum[]>([...this.latest].map(([name, weight]) => [name, [{ x: t, y: weight }]]));
+    return chartData([...this.latest.keys()], t, points);
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    await this.viewer?.detach().catch(() => {});
+    this.membrane.dispose();
+    this.weights.dispose();
+  }
+}
+

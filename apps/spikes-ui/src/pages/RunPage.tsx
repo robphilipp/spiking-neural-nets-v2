@@ -31,6 +31,8 @@ import {
   ScatterPlot,
   type SeriesLineStyle,
 } from "stream-charts";
+import { Inspector } from "../components/Inspector";
+import { Modulators } from "../components/Modulators";
 import { useConnection } from "../connection";
 import { useAppDispatch, useAppSelector } from "../hooks";
 import { LiveView, type LiveStats } from "../live";
@@ -409,6 +411,12 @@ export function RunPage() {
           )}
         </Box>
       </Paper>
+      {network && client && (
+        <Modulators client={client} session={id} modulators={network.modulators} onError={setError} />
+      )}
+      {network && client && (
+        <Inspector client={client} session={id} network={network} width={width} labelWidth={labelWidth} colors={colors} windowMs={windowMs} />
+      )}
     </Stack>
   );
 }

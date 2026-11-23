@@ -149,6 +149,10 @@ const session = createSlice({
       state.network = action.payload;
       state.state = "ready";
     },
+    /** Connections were added or pruned (the run state doesn't change). */
+    networkUpdated(state, action: PayloadAction<Network>) {
+      state.network = action.payload;
+    },
     /** Switched to a session that already exists on the engine. */
     opened(_, action: PayloadAction<{ id: number; name: string; description: string; state: SessionState; simMs: number; network: Network | null }>) {
       const s = action.payload;
@@ -164,7 +168,7 @@ export const { updateSettings } = settings.actions;
 export const { projectOpened, projectSaved, projectRenamed, runSettingsChanged, backgroundChanged, forgetRecent, newProjectStarted } =
   project.actions;
 export { DEFAULT_RUN };
-export const { setDescription, applied, parseFailed, stateChanged, simTime, built, opened, forget } = session.actions;
+export const { setDescription, applied, parseFailed, stateChanged, simTime, built, networkUpdated, opened, forget } = session.actions;
 
 export const store = configureStore({
   reducer: { settings: settings.reducer, session: session.reducer, project: project.reducer },
