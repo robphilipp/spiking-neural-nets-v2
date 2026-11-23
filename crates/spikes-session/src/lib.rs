@@ -9,6 +9,7 @@
 //! Outside the engine, neurons are numbered densely in description order ([`NetworkInfo`]); actor ids stay
 //! inside.
 
+mod connection;
 mod network;
 mod sensors;
 mod session;
@@ -18,6 +19,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+pub use connection::{Connection, Outgoing, api_error};
 pub use network::{GRID, NetworkInfo, NeuronInfo, SynapseInfo};
 pub use sensors::{Encoding, OnPause, SampleBatch, Sensor, SensorSpec, SensorStats, SpikeBatch};
 pub use session::{

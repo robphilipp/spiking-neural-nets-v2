@@ -420,6 +420,7 @@ fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, kno
     let header = FrameHeader {
         session,
         seq: slot.seq,
+        viewer: slot.id as u16,
         t0_ns: t0,
         t1_ns: t1,
         wall_unix_ms: SystemTime::now()

@@ -1,0 +1,619 @@
+//! One client's connection to the engine, independent of transport (app plan 01 §4).
+//!
+//! The WebSocket server and the Tauri app both wrap a [`Connection`]: they hand it JSON requests and binary sensor
+//! batches, and send on whatever comes out of its outgoing stream: responses, session notices, and the frames of
+//! the viewers this client attached. Dropping the connection detaches its viewers and disconnects its sensors.
+//!
+//! Requests run in order, on the caller's thread; some block briefly (stopping a run waits for it to end).
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use spikes_api::input::InputBatch;
+use spikes_api::protocol::{
+    self as api, ApiError, ClientMessage, ErrorCode, Notice, Outcome, Request, Response, ServerMessage, SourceError,
+};
+use tempo_runtime::{SimDuration, SimTime};
+
+use crate::sensors::{Encoding, OnPause, SampleBatch, Sensor, SensorSpec, SpikeBatch};
+use crate::session::{BuildSettings, InputSpec, RunSettings, Session, SessionNotice, Speed, State};
+use crate::viewer::{Selection, ViewSettings, Viewer};
+use crate::{Engine, SessionError, SessionId};
+
+/// Something to send to the client.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Outgoing {
+    /// A JSON message (a response or a notice).
+    Message(ServerMessage),
+    /// A binary frame.
+    Frame(Vec<u8>),
+}
+
+/// A viewer shared with the thread forwarding its frames (`None` once detached).
+type SharedViewer = Arc<Mutex<Option<Viewer>>>;
+
+/// How long background forwarders wait before checking whether the connection is gone.
+const POLL: Duration = Duration::from_millis(100);
+
+struct Forwarder {
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for Forwarder {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// One client's view of an engine.
+pub struct Connection {
+    engine: Arc<Engine>,
+    recordings: PathBuf,
+    out: Sender<Outgoing>,
+    /// (session, viewer) → the thread forwarding its frames, and the viewer's handle for updates.
+    viewers: BTreeMap<(u32, u32), (Forwarder, SharedViewer)>,
+    /// Connection-wide sensor id → sensor.
+    sensors: BTreeMap<u32, Sensor>,
+    next_sensor: u32,
+    /// Sessions whose notices this connection forwards.
+    watched: BTreeMap<u32, Forwarder>,
+}
+
+impl std::fmt::Debug for Connection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Connection")
+            .field("viewers", &self.viewers.len())
+            .field("sensors", &self.sensors.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Connection {
+    /// A connection to `engine`; recorded runs go under `recordings`. Returns the stream of things to send.
+    pub fn new(engine: Arc<Engine>, recordings: impl Into<PathBuf>) -> (Self, Receiver<Outgoing>) {
+        let (out, rx) = channel();
+        (
+            Self {
+                engine,
+                recordings: recordings.into(),
+                out,
+                viewers: BTreeMap::new(),
+                sensors: BTreeMap::new(),
+                next_sensor: 0,
+                watched: BTreeMap::new(),
+            },
+            rx,
+        )
+    }
+
+    /// Handles a JSON text message; the response also goes to the outgoing stream. A message that isn't valid
+    /// JSON for a [`ClientMessage`] gets an error response with id 0.
+    pub fn handle_text(&mut self, text: &str) {
+        let message = match serde_json::from_str::<ClientMessage>(text) {
+            Ok(message) => message,
+            Err(e) => {
+                let _ = self.out.send(Outgoing::Message(ServerMessage::Response {
+                    id: 0,
+                    result: Outcome::Error(error(ErrorCode::Invalid, format!("not a valid request: {e}"))),
+                }));
+                return;
+            }
+        };
+        let response = self.handle(message);
+        let _ = self.out.send(Outgoing::Message(response));
+    }
+
+    /// Handles a binary message: a sensor input batch.
+    pub fn handle_binary(&mut self, bytes: &[u8]) -> Result<(), ApiError> {
+        let batch = InputBatch::decode(bytes).map_err(|e| error(ErrorCode::Invalid, e.to_string()))?;
+        let sensor = self
+            .sensors
+            .get(&batch.sensor())
+            .ok_or_else(|| error(ErrorCode::NotFound, format!("sensor {}", batch.sensor())))?;
+        match batch {
+            InputBatch::Samples {
+                t0_ns, dt_ns, values, ..
+            } => sensor.send_samples(&SampleBatch {
+                t0_ns,
+                dt_ns: u64::from(dt_ns),
+                values,
+            }),
+            InputBatch::Events { t0_ns, events, .. } => sensor.send_spikes(&SpikeBatch {
+                t0_ns,
+                events: events.into_iter().map(|(c, o)| (c, u64::from(o))).collect(),
+            }),
+        }
+        .map_err(api_error)
+    }
+
+    /// Handles a request and returns the response.
+    pub fn handle(&mut self, message: ClientMessage) -> ServerMessage {
+        let result = match self.dispatch(message.request) {
+            Ok(response) => Outcome::Ok(response),
+            Err(e) => Outcome::Error(e),
+        };
+        ServerMessage::Response { id: message.id, result }
+    }
+
+    fn session(&mut self, id: u32) -> Result<Session, ApiError> {
+        let session = self.engine.session(SessionId(id)).map_err(api_error)?;
+        self.watch(&session);
+        Ok(session)
+    }
+
+    /// Forwards a session's notices to this client (once per session).
+    fn watch(&mut self, session: &Session) {
+        let id = session.id().0;
+        if self.watched.contains_key(&id) {
+            return;
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let notices = session.notices();
+        let out = self.out.clone();
+        let stopping = Arc::clone(&stop);
+        let spawned = std::thread::Builder::new()
+            .name(format!("notices-{id}"))
+            .spawn(move || {
+                while !stopping.load(Ordering::Relaxed) {
+                    match notices.recv_timeout(POLL) {
+                        Ok(notice) => {
+                            let message = ServerMessage::Notice {
+                                session: id,
+                                notice: notice_dto(notice),
+                            };
+                            if out.send(Outgoing::Message(message)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    }
+                }
+            });
+        if spawned.is_ok() {
+            self.watched.insert(id, Forwarder { stop });
+        }
+    }
+
+    fn dispatch(&mut self, request: Request) -> Result<Response, ApiError> {
+        match request {
+            Request::ListSessions => Ok(Response::Sessions {
+                sessions: self.engine.sessions().iter().map(summary).collect(),
+            }),
+            Request::CreateSession { name, description } => {
+                let session = self.engine.create(name, description).map_err(api_error)?;
+                self.watch(&session);
+                Ok(Response::Session {
+                    session: summary(&session),
+                })
+            }
+            Request::UpdateDescription { session, description } => {
+                self.session(session)?
+                    .update_description(description)
+                    .map_err(api_error)?;
+                Ok(Response::Done)
+            }
+            Request::CloseSession { session } => {
+                self.viewers.retain(|(s, _), _| *s != session);
+                self.watched.remove(&session);
+                self.engine.close(SessionId(session)).map_err(api_error)?;
+                Ok(Response::Done)
+            }
+            Request::Build { session, settings } => {
+                let s = self.session(session)?;
+                let defaults = BuildSettings::default();
+                let min_delay = match settings.min_delay_ms {
+                    Some(ms) if !(ms.is_finite() && ms >= 0.0) => {
+                        return Err(error(ErrorCode::Invalid, format!("minDelayMs must be ≥ 0, not {ms}")));
+                    }
+                    Some(ms) => SimDuration::from_millis_f64(ms),
+                    None => defaults.min_delay,
+                };
+                s.build(BuildSettings {
+                    seed: settings.seed.map_or(defaults.seed, u64::from),
+                    shards: settings.shards.map_or(defaults.shards, |n| n as usize),
+                    min_delay,
+                    record_weights: settings.record_weights.unwrap_or(defaults.record_weights),
+                    ..defaults
+                })
+                .map_err(api_error)?;
+                Ok(Response::Done)
+            }
+            Request::GetNetwork { session } => {
+                let network = self.session(session)?.network();
+                Ok(Response::Network {
+                    network: api::Network {
+                        neurons: network
+                            .neurons
+                            .iter()
+                            .map(|n| api::Neuron {
+                                index: n.index,
+                                name: n.name.clone(),
+                                group: n.group.clone(),
+                                kind: n.kind.to_string(),
+                                position: n.position,
+                                inhibitory: n.inhibitory,
+                                cell: network.cells[n.index as usize],
+                            })
+                            .collect(),
+                        synapses: network
+                            .synapses
+                            .iter()
+                            .map(|s| api::Synapse {
+                                post: s.post,
+                                synapse: s.synapse,
+                                pre: s.pre,
+                                weight: s.weight,
+                                inhibitory: s.inhibitory,
+                            })
+                            .collect(),
+                        modulators: network.modulators.clone(),
+                    },
+                })
+            }
+            Request::Start {
+                session,
+                speed,
+                duration_ms,
+                record,
+            } => {
+                let s = self.session(session)?;
+                let record = record.then(|| self.recording_dir(&s));
+                s.start(RunSettings {
+                    speed: speed_of(speed)?,
+                    duration: duration_ms.map(duration).transpose()?,
+                    record,
+                })
+                .map_err(api_error)?;
+                Ok(Response::Done)
+            }
+            Request::Pause { session } => self.session(session)?.pause().map(done).map_err(api_error),
+            Request::Resume { session } => self.session(session)?.resume().map(done).map_err(api_error),
+            Request::Step { session, ms } => self.session(session)?.step(duration(ms)?).map(done).map_err(api_error),
+            Request::SetSpeed { session, speed } => self
+                .session(session)?
+                .set_speed(speed_of(speed)?)
+                .map(done)
+                .map_err(api_error),
+            Request::Stop { session } => self.session(session)?.stop().map(done).map_err(api_error),
+            Request::Stimulate { session, neurons, mv } => self
+                .session(session)?
+                .stimulate(&neurons, mv)
+                .map(done)
+                .map_err(api_error),
+            Request::ReleaseModulator {
+                session,
+                modulator,
+                amount,
+            } => self
+                .session(session)?
+                .release_modulator(modulator, amount)
+                .map(done)
+                .map_err(api_error),
+            Request::AddInput { session, input } => {
+                let input = match input {
+                    api::Input::Poisson {
+                        targets,
+                        rate_hz,
+                        mv,
+                        duration_ms,
+                    } => InputSpec::Poisson {
+                        targets,
+                        rate_hz,
+                        mv,
+                        duration: duration_ms.map(duration).transpose()?,
+                    },
+                    api::Input::Periodic {
+                        targets,
+                        period_ms,
+                        mv,
+                        duration_ms,
+                    } => InputSpec::Periodic {
+                        targets,
+                        period: duration(period_ms)?,
+                        mv,
+                        duration: duration_ms.map(duration).transpose()?,
+                    },
+                };
+                self.session(session)?.add_input(input).map(done).map_err(api_error)
+            }
+            Request::QueryNeuron { session, neuron } => {
+                let n = self.session(session)?.query_neuron(neuron).map_err(api_error)?;
+                Ok(Response::Neuron {
+                    neuron: api::NeuronState {
+                        membrane_mv: n.membrane_mv,
+                        intrinsic_mv: n.intrinsic_mv,
+                        rate_hz: n.rate_hz,
+                        last_event_ms: ms_of(n.last_event),
+                        last_spike_ms: n.last_spike.map(ms_of),
+                        tonic: n.tonic,
+                        spikes: u32::try_from(n.spikes).unwrap_or(u32::MAX),
+                        synapses: n
+                            .synapses
+                            .iter()
+                            .map(|&(pre, weight, eligibility)| api::SynapseState {
+                                pre,
+                                weight,
+                                eligibility,
+                            })
+                            .collect(),
+                    },
+                })
+            }
+            Request::Observe { session, neurons, on } => self
+                .session(session)?
+                .observe(&neurons, on)
+                .map(done)
+                .map_err(api_error),
+            Request::Attach { session, view } => {
+                let s = self.session(session)?;
+                let viewer = s.attach(view_settings(&view)?);
+                let id = u32::try_from(viewer.id()).unwrap_or(u32::MAX);
+                let handle = Arc::new(Mutex::new(Some(viewer)));
+                let forwarder = self.forward_frames(session, id, Arc::clone(&handle))?;
+                self.viewers.insert((session, id), (forwarder, handle));
+                Ok(Response::Viewer { viewer: id })
+            }
+            Request::UpdateView { session, viewer, view } => {
+                let s = self.session(session)?;
+                let (_, handle) = self
+                    .viewers
+                    .get(&(session, viewer))
+                    .ok_or_else(|| error(ErrorCode::NotFound, format!("viewer {viewer}")))?;
+                let settings = view_settings(&view)?;
+                if let Some(v) = handle.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
+                    s.update_view(v, settings);
+                }
+                Ok(Response::Done)
+            }
+            Request::Detach { session, viewer } => {
+                self.viewers
+                    .remove(&(session, viewer))
+                    .ok_or_else(|| error(ErrorCode::NotFound, format!("viewer {viewer}")))?;
+                Ok(Response::Done)
+            }
+            Request::ConnectSensor { session, sensor } => {
+                let s = self.session(session)?;
+                let spec = SensorSpec {
+                    name: sensor.name,
+                    targets: sensor.targets,
+                    encoding: match sensor.encoding {
+                        api::Encoding::Current { gain_mv } => Encoding::Current { gain_mv },
+                        api::Encoding::Rate { max_hz, mv } => Encoding::Rate { max_hz, mv },
+                        api::Encoding::Threshold { level, mv } => Encoding::Threshold { level, mv },
+                        api::Encoding::Spikes { mv } => Encoding::Spikes { mv },
+                    },
+                    ingress_delay: match sensor.ingress_delay_ms {
+                        Some(ms) => duration(ms)?,
+                        None => SimDuration::from_millis(20),
+                    },
+                    on_pause: if sensor.buffer_while_paused {
+                        OnPause::Buffer
+                    } else {
+                        OnPause::Drop
+                    },
+                };
+                let connected = s.connect_sensor(spec).map_err(api_error)?;
+                let id = self.next_sensor;
+                self.next_sensor += 1;
+                self.sensors.insert(id, connected);
+                Ok(Response::Sensor { sensor: id })
+            }
+            Request::DisconnectSensor { sensor, .. } => {
+                self.sensors
+                    .remove(&sensor)
+                    .ok_or_else(|| error(ErrorCode::NotFound, format!("sensor {sensor}")))?;
+                Ok(Response::Done)
+            }
+            Request::ListRecordings => Ok(Response::Recordings {
+                recordings: list_recordings(&self.recordings),
+            }),
+        }
+    }
+
+    fn recording_dir(&self, session: &Session) -> PathBuf {
+        let name: String = session
+            .name()
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        self.recordings.join(format!("{stamp}-{name}-s{}", session.id()))
+    }
+
+    fn forward_frames(&self, session: u32, viewer: u32, handle: SharedViewer) -> Result<Forwarder, ApiError> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopping = Arc::clone(&stop);
+        let out = self.out.clone();
+        std::thread::Builder::new()
+            .name(format!("frames-{session}-{viewer}"))
+            .spawn(move || {
+                while !stopping.load(Ordering::Relaxed) {
+                    let frame = handle
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .as_ref()
+                        .and_then(|v| v.recv_timeout(Duration::from_millis(20)));
+                    if let Some(frame) = frame
+                        && out.send(Outgoing::Frame(frame)).is_err()
+                    {
+                        break;
+                    }
+                }
+                // Detach.
+                handle.lock().unwrap_or_else(|p| p.into_inner()).take();
+            })
+            .map_err(|e| error(ErrorCode::Internal, format!("couldn't start a frame forwarder: {e}")))?;
+        Ok(Forwarder { stop })
+    }
+}
+
+fn done(_: ()) -> Response {
+    Response::Done
+}
+
+fn error(code: ErrorCode, message: impl Into<String>) -> ApiError {
+    ApiError {
+        code,
+        message: message.into(),
+        spans: Vec::new(),
+    }
+}
+
+/// The protocol form of an engine error.
+pub fn api_error(e: SessionError) -> ApiError {
+    let code = match &e {
+        SessionError::Parse(_) => ErrorCode::Parse,
+        SessionError::State { .. } => ErrorCode::InvalidState,
+        SessionError::NotFound(_) => ErrorCode::NotFound,
+        SessionError::Invalid(_) => ErrorCode::Invalid,
+        SessionError::Record(_) => ErrorCode::Io,
+        SessionError::Timeout => ErrorCode::Timeout,
+    };
+    let spans = match &e {
+        SessionError::Parse(errors) => errors
+            .iter()
+            .map(|p| SourceError {
+                line: p.span.line,
+                column: p.span.column,
+                message: p.message.clone(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    ApiError {
+        code,
+        message: e.to_string(),
+        spans,
+    }
+}
+
+fn state_dto(state: State) -> api::State {
+    match state {
+        State::Loaded => api::State::Loaded,
+        State::Ready => api::State::Ready,
+        State::Running => api::State::Running,
+        State::Paused => api::State::Paused,
+        State::Failed => api::State::Failed,
+    }
+}
+
+fn summary(s: &Session) -> api::SessionSummary {
+    api::SessionSummary {
+        id: s.id().0,
+        name: s.name().to_string(),
+        state: state_dto(s.state()),
+        sim_ms: ms_of(s.sim_time()),
+        speed: match s.speed() {
+            Speed::AsFastAsPossible => None,
+            Speed::Factor(f) => Some(f),
+        },
+        neurons: s.network().neurons.len() as u32,
+    }
+}
+
+fn notice_dto(notice: SessionNotice) -> Notice {
+    match notice {
+        SessionNotice::StateChanged(state) => Notice::StateChanged {
+            state: state_dto(state),
+        },
+        SessionNotice::RunEnded { at, recording } => Notice::RunEnded {
+            sim_ms: ms_of(at),
+            recording: recording.and_then(|r| r.dir.file_name().map(|n| n.to_string_lossy().to_string())),
+        },
+        SessionNotice::RecordingFailed(message) => Notice::RecordingFailed { message },
+        SessionNotice::Failed(message) => Notice::Failed { message },
+    }
+}
+
+fn ms_of(t: SimTime) -> f64 {
+    t.since_start().as_millis_f64()
+}
+
+fn duration(ms: f64) -> Result<SimDuration, ApiError> {
+    if ms.is_finite() && ms >= 0.0 {
+        Ok(SimDuration::from_millis_f64(ms))
+    } else {
+        Err(error(
+            ErrorCode::Invalid,
+            format!("a duration must be ≥ 0 ms, not {ms}"),
+        ))
+    }
+}
+
+fn speed_of(speed: Option<f64>) -> Result<Speed, ApiError> {
+    match speed {
+        None => Ok(Speed::AsFastAsPossible),
+        Some(f) if f.is_finite() && f > 0.0 => Ok(Speed::Factor(f)),
+        Some(f) => Err(error(ErrorCode::Invalid, format!("speed must be positive, not {f}"))),
+    }
+}
+
+fn selection(s: &api::Selection) -> Selection {
+    match s {
+        api::Selection::All => Selection::All,
+        api::Selection::Neurons { neurons } => Selection::Neurons(neurons.clone()),
+        api::Selection::Nothing => Selection::Nothing,
+    }
+}
+
+fn view_settings(view: &api::View) -> Result<ViewSettings, ApiError> {
+    if !(view.frame_ms.is_finite() && view.frame_ms >= 1.0) {
+        return Err(error(
+            ErrorCode::Invalid,
+            format!("frameMs must be ≥ 1, not {}", view.frame_ms),
+        ));
+    }
+    Ok(ViewSettings {
+        frame: Duration::from_secs_f64(view.frame_ms / 1e3),
+        budget_bytes_per_s: view.budget_bytes_per_s as usize,
+        spikes: selection(&view.spikes),
+        membrane: view.membrane.clone(),
+        weights: selection(&view.weights),
+    })
+}
+
+fn list_recordings(root: &Path) -> Vec<api::Recording> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut recordings: Vec<api::Recording> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_dir())
+        .map(|e| {
+            let path = e.path();
+            let mut files: Vec<api::RecordingFile> = std::fs::read_dir(&path)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter_map(|f| {
+                    let bytes = f.metadata().ok()?.len() as f64;
+                    Some(api::RecordingFile {
+                        name: f.file_name().to_string_lossy().to_string(),
+                        bytes,
+                    })
+                })
+                .collect();
+            files.sort_by(|a, b| a.name.cmp(&b.name));
+            api::Recording {
+                id: e.file_name().to_string_lossy().to_string(),
+                path: path.to_string_lossy().to_string(),
+                files,
+            }
+        })
+        .collect();
+    recordings.sort_by(|a, b| a.id.cmp(&b.id));
+    recordings
+}

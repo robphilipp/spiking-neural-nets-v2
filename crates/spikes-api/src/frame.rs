@@ -9,7 +9,7 @@
 //!  32  wall_unix_ms u64
 //!  40  speed f32 (sim s per wall s; +inf = as fast as possible, 0 = not running)
 //!  44  lag_ms f32 (simulation ms behind the clock)
-//!  48  lod u8                 49  section_count u8     50  reserved u16
+//!  48  lod u8                 49  section_count u8     50  viewer u16 (which of the client's views)
 //!  52  dropped_events u32     56  dropped_frames u32
 //!  60  time_unit_ns u32       offsets are in this unit (1 unless the frame spans more than ~4.3 s)
 //! sections, each:
@@ -88,6 +88,8 @@ pub struct FrameHeader {
     pub session: u32,
     /// Sequence number per viewer (gaps mean dropped frames).
     pub seq: u32,
+    /// The viewer the frame is for (its id within the session, modulo 2¹⁶).
+    pub viewer: u16,
     /// Start of the simulation interval covered, in ns.
     pub t0_ns: u64,
     /// End of the simulation interval covered, in ns.
@@ -114,6 +116,7 @@ impl Default for FrameHeader {
             version: crate::PROTOCOL_VERSION,
             session: 0,
             seq: 0,
+            viewer: 0,
             t0_ns: 0,
             t1_ns: 0,
             wall_unix_ms: 0,
@@ -159,7 +162,7 @@ impl FrameBuilder {
         bytes.extend_from_slice(&header.lag_ms.to_le_bytes());
         bytes.push(header.lod as u8);
         bytes.push(0); // section count, set in finish
-        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&header.viewer.to_le_bytes());
         bytes.extend_from_slice(&header.dropped_events.to_le_bytes());
         bytes.extend_from_slice(&header.dropped_frames.to_le_bytes());
         bytes.extend_from_slice(&header.time_unit_ns.to_le_bytes());
@@ -357,6 +360,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, FrameError> {
             version: u16_at(4),
             session: u32_at(8),
             seq: u32_at(12),
+            viewer: u16_at(50),
             t0_ns: u64_at(16),
             t1_ns: u64_at(24),
             wall_unix_ms: u64_at(32),
@@ -429,6 +433,7 @@ mod tests {
         let header = FrameHeader {
             session: 3,
             seq: 9,
+            viewer: 2,
             t0_ns: 1_000,
             t1_ns: 17_000_000,
             wall_unix_ms: 123,
