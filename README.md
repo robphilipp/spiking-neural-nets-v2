@@ -14,7 +14,6 @@ This is a monorepo. Projects are added as they're needed.
 | `apps/` | `spikes-cli` (`spikes check/run/parquet`), `spikes-server` (HTTP + WebSocket, serves the UI); planned: `spikes-ui` (Tauri + TypeScript) | see `docs/plans/app/` |
 | `packages/` | `spikes-client` (TypeScript client: protocol types, frames, sensors) | done |
 | `clients/` | `python/spikes_sensor` (stream sensor data, microphone example) | done |
-| `packages/` | Shared TypeScript packages (types generated from the Rust API) | planned |
 | `test-data/v1/` | v1 network descriptions, a parser conformance suite | |
 | `docs/plans/` | Design plans: `actors/` (framework), `neurons/` (model crates), `app/` (engine, server, Tauri UI) | |
 | `notes/` | Notes on the original v1 project | |
