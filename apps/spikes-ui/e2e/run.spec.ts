@@ -61,8 +61,13 @@ test("the editor suggests keys and explains them", async ({ page }) => {
   await page.keyboard.press("Escape");
   // Hover help on a key.
   await page.keyboard.type("mpd=250 ms)])");
-  await page.getByText("mpd", { exact: true }).hover();
-  await expect(page.locator(".monaco-hover").filter({ hasText: "decay time constant" })).toBeVisible();
+  // Monaco shows hover help after a delay; hover again if the first one landed while the editor was settling.
+  const help = page.locator(".monaco-hover").filter({ hasText: "decay time constant" });
+  await expect(async () => {
+    await page.mouse.move(0, 0);
+    await page.getByText("mpd", { exact: true }).hover();
+    await expect(help).toBeVisible({ timeout: 1500 });
+  }).toPass({ timeout: 10_000 });
 });
 
 test("open a .boo file and download it again (browser projects)", async ({ page }) => {

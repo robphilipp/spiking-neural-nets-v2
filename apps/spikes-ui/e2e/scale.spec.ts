@@ -43,6 +43,7 @@ test("100k neurons at real time: the charts keep up", async ({ page, baseURL }) 
     );
     const timing = await page.getByTestId("timing").innerText();
     await page.screenshot({ path: "test-results/scale-100k.png" });
+    await page.getByTestId("network-3d").screenshot({ path: "test-results/scale-100k-3d.png" });
     console.log(`page ${fps.toFixed(1)} fps; ${timing.replace(/\n/g, " ")}`);
 
     expect(fps).toBeGreaterThan(50);

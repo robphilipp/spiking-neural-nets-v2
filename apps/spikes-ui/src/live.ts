@@ -55,6 +55,8 @@ export class LiveView {
   readonly stats = new BehaviorSubject<LiveStats>(EMPTY_STATS);
   private readonly selected = new Subject<Frame>();
   private readonly whole = new Subject<Frame>();
+  /** The whole-network frames (for the 3D view). */
+  readonly frames: Observable<Frame> = this.whole.asObservable();
   private readonly viewers: Viewer[] = [];
   private readonly frameTimes: number[] = [];
   private readonly spikeTimes: Array<[number, number]> = [];

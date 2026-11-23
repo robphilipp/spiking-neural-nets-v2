@@ -51,9 +51,13 @@ export function Inspector(props: {
   labelWidth: number;
   colors: ChartColors;
   windowMs: number;
+  /** The neurons being inspected (shared with the 3D view). */
+  picked: Neuron[];
+  onPicked: (neurons: Neuron[]) => void;
 }) {
-  const { client, session, network, width, labelWidth, colors, windowMs } = props;
-  const [picked, setPicked] = useState<Neuron[]>([]);
+  const { client, session, network, width, labelWidth, colors, windowMs, picked } = props;
+  const setPicked = (value: Neuron[] | ((p: Neuron[]) => Neuron[])) =>
+    props.onPicked(typeof value === "function" ? value(props.picked) : value);
   const [view, setView] = useState<InspectView | null>(null);
   const [state, setState] = useState<NeuronState | null>(null);
   const [error, setError] = useState<string | null>(null);

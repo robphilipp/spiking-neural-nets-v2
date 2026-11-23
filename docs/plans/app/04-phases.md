@@ -155,6 +155,31 @@ Acceptance:
 - **Accept**: the STDP and reward-learning examples can be run and *seen* end to end (weights change in the
   chart after a reward press); selecting a region in 3D switches the raster from counts to exact spikes.
 
+### A4 status: done (2026-11-23)
+
+- **Connect and prune during runs**: every neuron has a route (empty if it has no connections, and then not used at
+  spike time); a synapse parameter set per (receiving neuron's defaults × learning rule) is prepared at build;
+  `Session::connect/prune` add the synapse first, then the route edge; pruned synapses keep their index (weight 0,
+  no sender); `networkChanged` notice. `Runtime::apply_control` answers control requests that race the end of a
+  run (found by the property test).
+- **Neuron inspector**: up to 6 neurons; state twice a second; live membrane traces (every update) and incoming
+  weights; synapse table with eligibility and prune; connect from any neuron with a learning rule.
+- **Neuromodulator buttons**; `test-data/examples/reward.boo` (three-factor STDP with dopamine).
+- **3D view** (three.js): instanced spheres up to 5,000 neurons, point sprites above; spikes flash (cells light as
+  many neurons as they had spikes); renders only when something changes; click to inspect, shift-drag a region to
+  make it the raster's rows; connections of the inspected neurons drawn.
+
+Acceptance:
+- Reward learning seen end to end (browser test): with background input, weights stay at 1.0 while eligibility
+  builds; *Release dopamine* raises them (to ~2.2 in the run shown); prune and connect while running.
+- 3D: renders the ring (blue at rest, orange flashes); a shift-drag region of all 25 neurons becomes the raster's rows.
+- **100k neurons with the 3D view, raster and rate drawing live: 60 fps, 6.6 ms behind the clock** (GPU).
+- Browser tests now use the GPU (`--use-angle=metal`): headless Chromium otherwise draws WebGL in software, which
+  ran the same page at 0.5–22 fps and said nothing about real use.
+
+Found and fixed along the way: frames dying after a rebuild in debug builds (an overflow); Start enabled during a
+build; a 7–15% slowdown from empty routes; a flaky hover test.
+
 ## A5: recordings, replay, inputs (1–2 weeks)
 
 - Recordings screen, replay sessions with seeking, Parquet download; input editor and signal designer (the v1

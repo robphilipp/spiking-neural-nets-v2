@@ -19,7 +19,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
-import { Lod } from "@spikes/client";
+import { Lod, type Neuron } from "@spikes/client";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AxisLocation,
@@ -32,6 +32,7 @@ import {
   type SeriesLineStyle,
 } from "stream-charts";
 import { Inspector } from "../components/Inspector";
+import { Network3D } from "../components/Network3D";
 import { Modulators } from "../components/Modulators";
 import { useConnection } from "../connection";
 import { useAppDispatch, useAppSelector } from "../hooks";
@@ -95,6 +96,10 @@ export function RunPage() {
   const [durationText, setDurationText] = useState(run.durationS === null ? "" : String(run.durationS));
   useEffect(() => setDurationText(run.durationS === null ? "" : String(run.durationS)), [run.durationS]);
   const [filter, setFilter] = useState("");
+  /** Neurons selected in the 3D view: the raster's rows, instead of the name filter. */
+  const [region, setRegion] = useState<number[] | null>(null);
+  const [picked, setPicked] = useState<Neuron[]>([]);
+  const [show3d, setShow3d] = useState(true);
   const [stimulus, setStimulus] = useState({ prefix: "", mv: 10 });
   const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12, prefix: "" });
   const [windowMs, setWindowMs] = useState(1000);
@@ -107,8 +112,14 @@ export function RunPage() {
 
   const selection = useMemo(() => {
     const neurons = network?.neurons ?? [];
+    if (region) return region.slice(0, MAX_ROWS).map((i) => neurons[i]!).filter(Boolean);
     return neurons.filter((n) => !filter || n.name.startsWith(filter)).slice(0, MAX_ROWS);
-  }, [network, filter]);
+  }, [network, filter, region]);
+  // A new network (rebuild, or connections changed): forget selections that may not fit it.
+  useEffect(() => {
+    setRegion(null);
+    setPicked((p) => p.filter((n) => network?.neurons[n.index]?.name === n.name));
+  }, [network]);
 
   // Live views follow the built network and the raster selection.
   useEffect(() => {
@@ -344,11 +355,42 @@ export function RunPage() {
         </Stack>
       </Paper>
 
+      {network && live && (
+        <Paper variant="outlined" sx={{ p: 1.5 }}>
+          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 1 }}>
+            <Typography variant="subtitle2" sx={{ flex: 1 }}>
+              Network
+            </Typography>
+            <FormControlLabel control={<Switch checked={show3d} onChange={(e) => setShow3d(e.target.checked)} />} label="3D view" />
+          </Stack>
+          {show3d && (
+            <Network3D
+              network={network}
+              frames={live.frames}
+              width={width}
+              height={420}
+              selected={picked.map((n) => n.index)}
+              onPick={(i) => {
+                const neuron = network.neurons[i];
+                if (neuron) setPicked([neuron]);
+              }}
+              onRegion={setRegion}
+            />
+          )}
+        </Paper>
+      )}
       <Paper variant="outlined" sx={{ p: 1.5 }}>
         <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", mb: 1 }}>
           <Typography variant="subtitle2" sx={{ flex: 1 }}>
             Spikes {selection.length < (network?.neurons.length ?? 0) ? `(${selection.length} of ${network?.neurons.length})` : ""}
           </Typography>
+          {region && (
+            <Chip
+              label={`Region: ${region.length.toLocaleString()} neurons${region.length > MAX_ROWS ? ` (first ${MAX_ROWS} shown)` : ""}`}
+              onDelete={() => setRegion(null)}
+              data-testid="region"
+            />
+          )}
           <TextField label="Show neurons starting with" value={filter} sx={{ width: 240 }} onChange={(e) => setFilter(e.target.value)} />
           <TextField select label="Time window" value={windowMs} sx={{ width: 120 }} onChange={(e) => setWindowMs(Number(e.target.value))}>
             {[1000, 5000, 20_000].map((ms) => (
@@ -415,7 +457,17 @@ export function RunPage() {
         <Modulators client={client} session={id} modulators={network.modulators} onError={setError} />
       )}
       {network && client && (
-        <Inspector client={client} session={id} network={network} width={width} labelWidth={labelWidth} colors={colors} windowMs={windowMs} />
+        <Inspector
+          client={client}
+          session={id}
+          network={network}
+          width={width}
+          labelWidth={labelWidth}
+          colors={colors}
+          windowMs={windowMs}
+          picked={picked}
+          onPicked={setPicked}
+        />
       )}
     </Stack>
   );
