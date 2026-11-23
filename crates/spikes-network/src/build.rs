@@ -345,12 +345,15 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
     }
     let mut routes = Vec::with_capacity(n);
     for (i, ((synapses, pre), edges)) in synapses.into_iter().zip(pre).zip(edges).enumerate() {
+        let connected = !edges.is_empty();
         let route = rt.add_route(ids[i], edges, options.jitter);
         routes.push(route);
         let actor = rt.actor_mut::<NeuronActor>(ids[i]).expect("just spawned");
         actor.synapses = synapses;
         actor.pre = pre;
-        actor.out = Some(route);
+        // A neuron without outgoing connections doesn't look its (empty) route up at every spike; it's switched on
+        // when it gains a connection.
+        actor.out = connected.then_some(route);
     }
     let wiring = Wiring {
         neurons: description

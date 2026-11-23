@@ -731,6 +731,8 @@ impl Session {
         };
         let index = self.on_neuron(post_id, move |actor| actor.add_synapse(pre_id, synapse))?;
         self.change_route(route, tempo_runtime::TopologyOp::Connect(edge(index)))?;
+        // The sender may have had no outgoing connections, and so not have been using its route.
+        self.on_neuron(pre_id, move |actor| actor.out = Some(route))?;
         let mut updated = (*network).clone();
         updated.synapses.push(crate::SynapseInfo {
             post,
