@@ -85,6 +85,11 @@ impl SeqCounter {
         seq
     }
 
+    /// A counter whose next number is `next` (restoring a saved one).
+    pub const fn starting_at(next: u64) -> Self {
+        Self(next)
+    }
+
     /// The number that [`Self::next_seq`] will return next.
     pub const fn peek(&self) -> u64 {
         self.0

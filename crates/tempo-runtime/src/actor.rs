@@ -53,6 +53,7 @@ pub struct RouteId(pub u32);
 /// assert!(!timer.fire(second));     // ...and only once
 /// ```
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Timer {
     generation: u32,
     armed: bool,

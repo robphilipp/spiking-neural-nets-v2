@@ -44,6 +44,7 @@ pub trait Field: Clone + Send + 'static {
 pub(crate) trait AnyField: Send {
     fn apply_any(&mut self, at: SimTime, update: Box<dyn Any + Send>);
     fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 impl<F: Field> AnyField for F {
@@ -55,6 +56,10 @@ impl<F: Field> AnyField for F {
     }
 
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 }

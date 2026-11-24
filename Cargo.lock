@@ -3558,6 +3558,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "905ba3ffb2d41441ed3382287a8c9d7cde1bdf49c33db808956e9f01ebb13436"
 dependencies = [
  "rand_core 0.10.1",
+ "serde",
 ]
 
 [[package]]
@@ -4859,6 +4860,7 @@ dependencies = [
 name = "tempo-runtime"
 version = "0.1.0"
 dependencies = [
+ "postcard",
  "rand 0.10.4",
  "rand_core 0.10.1",
  "rand_xoshiro",

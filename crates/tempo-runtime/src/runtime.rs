@@ -114,21 +114,21 @@ impl Default for RuntimeConfig {
 /// respect the lookahead (see [`Stats::lookahead_violations`]), results are identical for any number of shards.
 pub struct Runtime<M, E> {
     config: RuntimeConfig,
-    world: World,
-    shards: Vec<Shard<M, E>>,
+    pub(crate) world: World,
+    pub(crate) shards: Vec<Shard<M, E>>,
     kind_ids: HashMap<TypeId, u16>,
     /// The block currently being filled for each (partition, kind), and the next index in it.
     open_blocks: HashMap<(u32, u16), (BlockId, u32)>,
     next_partition: u32,
     next_group: u32,
     /// Everything before this time has been processed.
-    now: SimTime,
+    pub(crate) now: SimTime,
     clock: ClockHandle,
-    control: Arc<ControlShared<M, E>>,
+    pub(crate) control: Arc<ControlShared<M, E>>,
     subscribers: Arc<Subscribers<E>>,
     system: Arc<SystemBus>,
     dropped_unknown: u64,
-    needs_shrink: bool,
+    pub(crate) needs_shrink: bool,
     placement: NodePlacement,
     link: Option<Arc<dyn Link<M>>>,
 }

@@ -13,14 +13,18 @@ tempo-queue = { path = "../tempo-queue" }
 rand_core.workspace = true
 rand_xoshiro.workspace = true
 serde = { workspace = true, optional = true }
+postcard = { workspace = true, optional = true }
 
 [features]
 # Serialize/Deserialize for the runtime's small value types (timer tokens, edge and route ids), so messages that
 # contain them can cross processes.
-serde = ["dep:serde", "tempo-core/serde"]
+# Also snapshots (`Runtime::snapshot`, `Runtime::restore`).
+serde = ["dep:serde", "dep:postcard", "tempo-core/serde", "rand_xoshiro/serde"]
 
 [dev-dependencies]
 rand.workspace = true
+serde.workspace = true
+postcard.workspace = true
 
 [lints]
 workspace = true
