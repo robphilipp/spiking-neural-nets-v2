@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { AxisLocation, Chart, ContinuousAxis, defaultLineStyle, ScatterPlot, type SeriesLineStyle } from "stream-charts";
 import { Heading, Panel, Stat } from "@/components/kit";
 import type { ChartColors } from "../theme";
+import { CADENCE_MS } from "../live";
 import { WEIGHT_SERIES, type WeightSummary, WeightsView } from "../weights";
 
 /** Okabe–Ito: mean, median, and the two percentiles (dashed, as a band). */
@@ -130,6 +131,7 @@ export function WeightsPanel(props: {
           </div>
           {view && (
             <Chart
+              key={windowMs}
               chartId={5}
               width={trendWidth}
               height={220}
@@ -137,8 +139,8 @@ export function WeightsPanel(props: {
               color={colors.color}
               backgroundColor={colors.backgroundColor}
               seriesStyles={styles}
-              windowingTime={100}
-              dataUpdatePeriod={50}
+              windowingTime={CADENCE_MS}
+              dataUpdatePeriod={CADENCE_MS}
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
               <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />

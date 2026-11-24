@@ -37,7 +37,9 @@ const EMPTY_STATS: LiveStats = {
 };
 
 /** How much simulated time the charts keep, ms. */
-export const KEEP_MS = 10_000;
+export const KEEP_MS = 100_000;
+/** How often the raster and weight charts take in new data and redraw (wall ms). */
+export const CADENCE_MS = 50;
 
 export function chartData(names: string[], time: number, points: Map<string, Datum[]>): TimeSeriesChartData {
   return {
@@ -102,7 +104,9 @@ export class LiveView {
       await client.attach(
         session,
         {
-          frameMs: 16,
+          // The raster's frames, at the raster's cadence (the whole-network view above stays at 16 ms for the 3D
+          // view's flashes).
+          frameMs: CADENCE_MS,
           budgetBytesPerS: 4 << 20,
           spikes: { type: "neurons", neurons: selection.map((n) => n.index) },
           membrane: [],

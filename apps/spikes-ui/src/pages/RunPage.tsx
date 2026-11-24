@@ -23,7 +23,7 @@ import { WeightsPanel } from "../components/WeightsPanel";
 import { useConnection } from "../connection";
 import { useAppDispatch, useAppSelector } from "../hooks";
 import { stopInput, useActiveInput } from "../inputStreams";
-import { type LiveStats, LiveView } from "../live";
+import { CADENCE_MS, type LiveStats, LiveView } from "../live";
 import { backgroundChanged, built, runSettingsChanged, simTime } from "../store";
 import { useChartColors } from "../theme";
 
@@ -419,7 +419,7 @@ export function RunPage() {
             width={120}
             value={windowMs}
             onChange={setWindowMs}
-            options={[1000, 5000, 20_000].map((ms) => ({ value: ms, label: `${ms / 1000} s` }))}
+            options={[1000, 5000, 20_000, 60_000, 100_000].map((ms) => ({ value: ms, label: `${ms / 1000} s` }))}
           />
         </Row>
         {running && stats !== null && stats.spikesPerS === 0 && (
@@ -431,6 +431,7 @@ export function RunPage() {
         <div ref={rasterRef} data-testid="raster">
           {live && selection.length > 0 && (
             <Chart
+              key={windowMs}
               chartId={1}
               width={width}
               height={rasterHeight}
@@ -438,8 +439,8 @@ export function RunPage() {
               color={colors.color}
               backgroundColor={colors.backgroundColor}
               seriesStyles={lineStyles}
-              windowingTime={50}
-              dataUpdatePeriod={16}
+              windowingTime={CADENCE_MS}
+              dataUpdatePeriod={CADENCE_MS}
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
               <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
@@ -458,6 +459,7 @@ export function RunPage() {
         <div data-testid="rate">
           {live && (
             <Chart
+              key={windowMs}
               chartId={2}
               width={width}
               height={180}

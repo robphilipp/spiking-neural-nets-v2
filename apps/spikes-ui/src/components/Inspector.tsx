@@ -6,7 +6,7 @@ import { Choice, Field, Heading, NeuronPicker, Notice, Panel, Row, Stat } from "
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { InspectView, type WeightSeries } from "../live";
+import { CADENCE_MS, InspectView, type WeightSeries } from "../live";
 import type { ChartColors } from "../theme";
 
 /** Okabe–Ito: distinguishable for colour-blind viewers. */
@@ -177,7 +177,7 @@ export function Inspector(props: {
             <Heading className="mb-1">Membrane potential (mV)</Heading>
             <Legend names={membraneNames} />
             {view && (
-              <Chart chartId={3} width={width} height={200} dataSource={view.membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membraneNames)} windowingTime={50} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
+              <Chart key={windowMs} chartId={3} width={width} height={200} dataSource={view.membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membraneNames)} windowingTime={50} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
                 <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
                 <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-1, 15]} label="mV" autoScale />
                 <ScatterPlot />
@@ -189,7 +189,7 @@ export function Inspector(props: {
             <Heading className="mb-1">Incoming weights</Heading>
             {weightNames.length ? <Legend names={weightNames} /> : <p className="text-sm text-muted-foreground">No incoming connections.</p>}
             {view && weightNames.length > 0 && (
-              <Chart chartId={4} width={width} height={180} dataSource={view.weights} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(weightNames)} windowingTime={50} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
+              <Chart key={windowMs} chartId={4} width={width} height={180} dataSource={view.weights} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(weightNames)} windowingTime={CADENCE_MS} dataUpdatePeriod={CADENCE_MS} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
                 <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
                 <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[0, 2]} label="weight" autoScale />
                 <ScatterPlot />

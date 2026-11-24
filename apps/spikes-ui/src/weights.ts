@@ -4,7 +4,7 @@
 import type { Network, ProtocolClient, Viewer } from "@spikes/client";
 import { BehaviorSubject, map, Subject } from "rxjs";
 import { type Datum, emptySeries, TimeSeriesDataSource } from "stream-charts";
-import { chartData, KEEP_MS } from "./live";
+import { CADENCE_MS, chartData, KEEP_MS } from "./live";
 
 /** The series of the weight trend chart. */
 export const WEIGHT_SERIES = ["mean", "median", "10th percentile", "90th percentile"] as const;
@@ -29,7 +29,7 @@ export interface WeightSummary {
 
 const BINS = 40;
 /** Recompute the summary this often (simulated time can run much faster than wall time). */
-const EVERY_WALL_MS = 250;
+const EVERY_WALL_MS = CADENCE_MS;
 
 const key = (post: number, synapse: number) => post * 4_294_967_296 + synapse;
 
@@ -77,7 +77,7 @@ export class WeightsView {
     view.publish(0, true);
     view.viewer = await client.attach(
       session,
-      { frameMs: 50, budgetBytesPerS: 8 << 20, spikes: { type: "nothing" }, membrane: [], weights: { type: "all" } },
+      { frameMs: CADENCE_MS, budgetBytesPerS: 8 << 20, spikes: { type: "nothing" }, membrane: [], weights: { type: "all" } },
       (f) => {
         const w = f.weights;
         if (w) {
