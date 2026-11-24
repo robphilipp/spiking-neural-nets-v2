@@ -273,8 +273,22 @@ Milestone 1, big networks on one machine, done:
   (about 140 B per synapse), running at ~5 Hz at 40 s per simulated second (12 M synaptic events/s). The same
   network listed connection by connection took 4.6 GB per 2×10⁷ synapses just to describe.
 
-Next: compact synapse and edge storage (48 + 8 + 24 bytes per synapse now), per-event cost (230–400 ns: queue,
-membrane update, cache misses), the 10⁹-synapse network on a cluster, snapshots.
+Milestone 2, memory and speed per synapse (2026-11-24):
+- Done: 16-byte route edges (delays as u32 ns, up to `MAX_ROUTE_DELAY` ≈ 4.29 s) and trimmed synapse lists: **120 →
+  90 bytes of heap per synapse** (48 synapse state + 8 sender + 16 edge + overheads), measured with a counting
+  allocator in the `scale` example.
+- Tried and set aside (kept in `git stash`): a 12-byte form for fixed synapses with dynamic state in a side table.
+  Every neuron has stochastic release by default (`SRP`, from v1), so almost no synapse is fixed; in real networks
+  it made synapses larger (60 bytes) and runs 25% slower.
+- Per-event cost is bound by memory latency: ~220 ns an event when the network mostly fits in cache, ~400 ns when it
+  doesn't (one shard). The wheel's bucket width (1–64 µs) changes throughput by ±3%; prefetching the next event's
+  actor (inline `prfm`) gained nothing, since the stall is the synapse, whose address is in the actor. Real gains
+  need a different layout, e.g. synapses grouped by sender and delivered per spike rather than per synapse.
+- Decision: leave memory and per-event cost here for now (10⁸ synapses fit on one machine; 10⁹ needs a cluster
+  either way).
+
+Next: snapshots (save and restore a network, also onto another number of nodes), the 10⁹-synapse network on a
+cluster.
 
 ## Benchmarks to keep from day one
 
