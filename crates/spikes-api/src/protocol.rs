@@ -298,6 +298,11 @@ pub enum Request {
         /// The sensor.
         sensor: u32,
     },
+    /// The sensors connected to a session (through any connection).
+    ListSensors {
+        /// The session.
+        session: u32,
+    },
     /// Recorded runs.
     ListRecordings,
     /// Opens a recorded run (by its id from `listRecordings`) as a replay session; build and start it like a run.
@@ -515,6 +520,11 @@ pub enum Response {
         /// Its id, used in binary input batches.
         sensor: u32,
     },
+    /// A session's connected sensors.
+    Sensors {
+        /// One each.
+        sensors: Vec<SensorInfo>,
+    },
     /// Recorded runs.
     Recordings {
         /// One each.
@@ -560,6 +570,28 @@ pub struct SessionSummary {
     pub replay_end_ms: Option<f64>,
     /// Nodes the session runs on: 1 for this server alone.
     pub nodes: u32,
+}
+
+/// A sensor connected to a session.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SensorInfo {
+    /// Unique among the session's sensors.
+    #[ts(type = "number")]
+    pub id: u64,
+    /// Its name.
+    pub name: String,
+    /// The neurons (indices) each channel drives.
+    pub channels: Vec<Vec<u32>>,
+    /// How samples become input: `current`, `rate`, `threshold` or `spikes`.
+    pub encoding: String,
+    /// Samples (or events) received so far.
+    #[ts(type = "number")]
+    pub samples: u64,
+    /// Neuron inputs produced so far.
+    #[ts(type = "number")]
+    pub inputs: u64,
 }
 
 /// A session's cluster: this server (the coordinator, node 0) and its node agents.
@@ -765,6 +797,8 @@ pub enum Notice {
     },
     /// Connections were added or pruned: fetch the network again.
     NetworkChanged,
+    /// A sensor connected or disconnected: list them again (`listSensors`).
+    SensorsChanged,
     /// The run thread failed.
     Failed {
         /// Why.

@@ -281,3 +281,40 @@ fn live_sensors_drop_samples_while_paused() {
     let stats = sensor.stats();
     assert_eq!((stats.samples, stats.dropped, stats.inputs), (30, 20, 10));
 }
+
+#[test]
+fn a_session_lists_its_sensors_until_they_disconnect() {
+    let engine = Engine::new();
+    let session = session(&engine, 4, 10.0);
+    let notices = session.notices();
+    let sensor = session
+        .connect_sensor(SensorSpec {
+            encoding: Encoding::Current { gain_mv: 1.0 },
+            ..SensorSpec::new("mic", vec![vec![0, 1], vec![2]])
+        })
+        .unwrap();
+    let copy = sensor.clone();
+    let listed = session.sensors();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].spec.name, "mic");
+    assert_eq!(listed[0].spec.targets, vec![vec![0, 1], vec![2]]);
+    session
+        .start(RunSettings {
+            speed: Speed::Factor(1.0),
+            duration: Some(SimDuration::from_millis(200)),
+            record: None,
+        })
+        .unwrap();
+    stream(&sensor, 2, 5, 3.0);
+    assert!(session.sensors()[0].stats.samples >= 50, "its counters are listed");
+    session.stop().unwrap();
+    drop(sensor);
+    assert_eq!(session.sensors().len(), 1, "a clone keeps it connected");
+    drop(copy);
+    assert!(session.sensors().is_empty());
+    let changes = notices
+        .try_iter()
+        .filter(|n| matches!(n, spikes_session::SessionNotice::SensorsChanged))
+        .count();
+    assert_eq!(changes, 2, "connected, then disconnected");
+}

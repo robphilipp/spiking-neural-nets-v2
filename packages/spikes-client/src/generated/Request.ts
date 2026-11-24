@@ -228,7 +228,11 @@ session: number,
 /**
  * The sensor.
  */
-sensor: number, } | { "type": "listRecordings" } | { "type": "openRecording", 
+sensor: number, } | { "type": "listSensors", 
+/**
+ * The session.
+ */
+session: number, } | { "type": "listRecordings" } | { "type": "openRecording", 
 /**
  * The recording.
  */

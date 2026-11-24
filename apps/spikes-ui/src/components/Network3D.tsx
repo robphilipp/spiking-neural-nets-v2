@@ -3,7 +3,7 @@
 // big ones are point sprites (one vertex per neuron), so 100k+ neurons are one cheap draw call either way.
 
 import { cssColor, useThemeMode } from "../theme";
-import type { Frame, Network } from "@spikes/client";
+import type { Frame, Network, SensorInfo } from "@spikes/client";
 import { useEffect, useRef, useState } from "react";
 import type { Observable } from "rxjs";
 import * as THREE from "three";
@@ -147,6 +147,38 @@ function nearestSpacing(network: Network): number {
 const EXCITATORY = 0x8fb3cf;
 const INHIBITORY = 0xd3a6c3;
 const FLASH = 0xff8c00;
+/** Sensors: Okabe–Ito bluish green, apart from both neuron kinds and the flash. */
+const SENSOR = 0x009e73;
+/** Lines from one sensor to its neurons, at most. */
+const MAX_SENSOR_LINES = 5000;
+
+/** Frees a group's geometries, materials and textures. */
+function disposeGroup(group: THREE.Group) {
+  group.traverse((o) => {
+    if (o instanceof THREE.Mesh || o instanceof THREE.LineSegments || o instanceof THREE.Sprite) {
+      if ("geometry" in o && o.geometry) o.geometry.dispose();
+      const material = o.material as THREE.Material & { map?: THREE.Texture | null };
+      material.map?.dispose();
+      material.dispose();
+    }
+  });
+}
+
+/** A text label that always faces the camera (scale it to the scene). */
+function textSprite(text: string, color: string): THREE.Sprite {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 96;
+  const g = canvas.getContext("2d")!;
+  g.font = "500 52px system-ui, sans-serif";
+  g.fillStyle = color;
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText(text.length > 24 ? `${text.slice(0, 23)}…` : text, 256, 48);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false }));
+  sprite.scale.set(1, 96 / 512, 1);
+  return sprite;
+}
 
 interface Props {
   network: Network;
@@ -155,11 +187,13 @@ interface Props {
   height: number;
   /** Neurons whose connections are drawn (and which are highlighted). */
   selected: number[];
+  /** Connected sensors: drawn above the network, with lines to the neurons they drive. */
+  sensors?: SensorInfo[];
   onPick: (neuron: number) => void;
   onRegion: (neurons: number[]) => void;
 }
 
-export function Network3D({ network, frames, width, height, selected, onPick, onRegion }: Props) {
+export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion }: Props) {
   const mode = useThemeMode();
   const mount = useRef<HTMLDivElement>(null);
   const scene = useRef<{
@@ -175,6 +209,11 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
     controls: OrbitControls;
     /** Something changed: draw the next animation frame. */
     invalidate: () => void;
+    bounds: THREE.Box3;
+    size: number;
+    radius: number;
+    /** The sensors' markers, labels and lines. */
+    sensors: THREE.Group;
   } | null>(null);
   /** Counts scene builds (a new network or theme), so the selection's lines are redrawn into each. */
   const [built, setBuilt] = useState(0);
@@ -271,7 +310,9 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
       renderer.render(world, camera);
     };
     draw();
-    scene.current = { renderer, camera, neurons, lines, flash, lit: litSet, base, controls, invalidate };
+    const sensorGroup = new THREE.Group();
+    world.add(sensorGroup);
+    scene.current = { renderer, camera, neurons, lines, flash, lit: litSet, base, controls, invalidate, bounds, size, radius, sensors: sensorGroup };
     setBuilt((b) => b + 1); // the selection's lines go into the new scene
     return () => {
       cancelAnimationFrame(frame);
@@ -279,6 +320,7 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
       neurons.dispose();
       lines.geometry.dispose();
       allGeometry.dispose();
+      disposeGroup(sensorGroup);
       renderer.dispose();
       renderer.domElement.remove();
       scene.current = null;
@@ -342,6 +384,64 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
     s.lines.geometry = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
     s.invalidate();
   }, [selected, network, built]);
+
+  // Sensors: a diamond each, above the network near the neurons it drives, labelled, with lines to them. Rebuilt when
+  // the sensors change; a sensor glows while its data flows.
+  const shape = sensors.map((x) => `${x.id}:${x.name}:${x.channels.map((c) => c.join(",")).join(";")}`).join("|");
+  const samples = useRef(new Map<number, number>());
+  useEffect(() => {
+    const s = scene.current;
+    if (!s) return;
+    disposeGroup(s.sensors);
+    s.sensors.clear();
+    const top = s.bounds.max.y + s.size * 0.18;
+    sensors.forEach((sensor, k) => {
+      const targets = [...new Set(sensor.channels.flat())].filter((i) => network.neurons[i]);
+      const centre = new THREE.Vector3();
+      for (const i of targets) centre.add(new THREE.Vector3(...network.neurons[i]!.position));
+      if (targets.length) centre.divideScalar(targets.length);
+      else s.bounds.getCenter(centre);
+      // Spread several sensors out sideways so they don't overlap.
+      const at = new THREE.Vector3(centre.x + (k - (sensors.length - 1) / 2) * s.size * 0.12, top, centre.z);
+      const marker = new THREE.Mesh(
+        new THREE.OctahedronGeometry(Math.max(s.radius * 3, s.size * 0.015)),
+        new THREE.MeshLambertMaterial({ color: SENSOR, emissive: SENSOR, emissiveIntensity: 0.2 }),
+      );
+      marker.position.copy(at);
+      marker.userData = { sensor: sensor.id };
+      s.sensors.add(marker);
+      const label = textSprite(sensor.name, mode === "dark" ? "#e5e5e5" : "#262626");
+      label.position.copy(at).add(new THREE.Vector3(0, s.size * 0.07, 0));
+      label.scale.multiplyScalar(s.size * 0.3);
+      s.sensors.add(label);
+      const points: number[] = [];
+      for (const i of targets.slice(0, MAX_SENSOR_LINES)) points.push(at.x, at.y, at.z, ...network.neurons[i]!.position);
+      const lines = new THREE.LineSegments(
+        new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(points, 3)),
+        new THREE.LineBasicMaterial({ color: SENSOR, transparent: true, opacity: 0.45 }),
+      );
+      s.sensors.add(lines);
+    });
+    s.invalidate();
+    // (Only when the sensors' shape changes; their counters are handled below.)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shape, network, built, mode]);
+  useEffect(() => {
+    const s = scene.current;
+    if (!s) return;
+    for (const sensor of sensors) {
+      const before = samples.current.get(sensor.id);
+      samples.current.set(sensor.id, sensor.samples);
+      const active = before !== undefined && sensor.samples > before;
+      for (const child of s.sensors.children) {
+        if (child instanceof THREE.Mesh && child.userData.sensor === sensor.id) {
+          (child.material as THREE.MeshLambertMaterial).emissiveIntensity = active ? 1 : 0.2;
+          child.scale.setScalar(active ? 1.35 : 1);
+        }
+      }
+    }
+    s.invalidate();
+  }, [sensors]);
 
   // Click: pick the neuron under the pointer. Shift-drag: select the neurons inside the box.
   const pointer = (e: React.PointerEvent) => {
@@ -417,6 +517,7 @@ export function Network3D({ network, frames, width, height, selected, onPick, on
       </div>
       <p className="text-xs text-muted-foreground">
         Drag to orbit, scroll to zoom, click a neuron to inspect it, shift-drag to select a region for the raster.
+        {sensors.length > 0 && " Green diamonds are sensors, with lines to the neurons they drive; they light up while their data flows."}
       </p>
     </div>
   );

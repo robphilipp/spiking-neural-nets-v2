@@ -133,7 +133,7 @@ impl Anchor {
     }
 }
 
-struct State {
+pub(crate) struct State {
     anchor: Option<Anchor>,
     /// The last sample's (sensor time, mapped time), to re-anchor continuously on a speed change.
     last: Option<(u64, SimTime)>,
@@ -145,13 +145,64 @@ struct State {
     stats: SensorStats,
 }
 
-/// A connected sensor. Send batches from any thread; dropping it disconnects.
+/// A connected sensor. Send batches from any thread; dropping it (every clone) disconnects.
 #[derive(Clone)]
 pub struct Sensor {
     id: u32,
     spec: Arc<SensorSpec>,
     session: Session,
     state: Arc<Mutex<State>>,
+    /// Its entry in the session's list of sensors, removed when the last clone goes.
+    _registration: Arc<Registration>,
+}
+
+/// A sensor's place in its session's list (see [`Session::sensors`]).
+struct Registration {
+    session: Session,
+    key: u64,
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        self.session.unregister_sensor(self.key);
+    }
+}
+
+/// A connected sensor, as its session lists it.
+#[derive(Clone, Debug)]
+pub struct SensorInfo {
+    /// Unique among the session's sensors (unlike [`Sensor::id`], which restarts at each build).
+    pub key: u64,
+    /// Its declaration: name, channels and the neurons each drives, encoding.
+    pub spec: Arc<SensorSpec>,
+    /// Counters so far.
+    pub stats: SensorStats,
+}
+
+/// A sensor's encoding state (opaque outside this module).
+pub(crate) type SensorState = State;
+
+/// The session's record of a connected sensor.
+pub(crate) struct SensorEntry {
+    pub(crate) key: u64,
+    pub(crate) spec: Arc<SensorSpec>,
+    state: std::sync::Weak<Mutex<State>>,
+}
+
+impl SensorEntry {
+    pub(crate) fn new(key: u64, spec: Arc<SensorSpec>, state: std::sync::Weak<Mutex<State>>) -> Self {
+        Self { key, spec, state }
+    }
+
+    pub(crate) fn info(&self) -> Option<SensorInfo> {
+        let state = self.state.upgrade()?;
+        let stats = state.lock().unwrap_or_else(|p| p.into_inner()).stats;
+        Some(SensorInfo {
+            key: self.key,
+            spec: Arc::clone(&self.spec),
+            stats,
+        })
+    }
 }
 
 impl std::fmt::Debug for Sensor {
@@ -182,18 +233,22 @@ impl Sensor {
         let channels = spec.targets.len();
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed ^ (u64::from(id) << 32) ^ 0x5e45_0e5e);
         let need = (0..channels).map(|_| exp1(&mut rng)).collect();
+        let spec = Arc::new(spec);
+        let state = Arc::new(Mutex::new(State {
+            anchor: None,
+            last: None,
+            need,
+            reference: vec![None; channels],
+            rng,
+            stats: SensorStats::default(),
+        }));
+        let key = session.register_sensor(Arc::clone(&spec), Arc::downgrade(&state));
         Self {
             id,
-            spec: Arc::new(spec),
-            session,
-            state: Arc::new(Mutex::new(State {
-                anchor: None,
-                last: None,
-                need,
-                reference: vec![None; channels],
-                rng,
-                stats: SensorStats::default(),
-            })),
+            spec,
+            session: session.clone(),
+            state,
+            _registration: Arc::new(Registration { session, key }),
         }
     }
 

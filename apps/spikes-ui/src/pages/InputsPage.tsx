@@ -220,7 +220,15 @@ export function InputsPage() {
               if (!("signal" in compiled)) return;
               const signal = compiled.signal;
               const sensor = await connect(client!, "designed signal (live)", channels, false);
-              startInput({ kind: "live", session: id, stop: stream(sensor, channels, DT_MS, (first, count) => sample(signal, channels, DT_MS, first, count)) });
+              const stopStream = stream(sensor, channels, DT_MS, (first, count) => sample(signal, channels, DT_MS, first, count));
+              startInput({
+                kind: "live",
+                session: id,
+                stop: () => {
+                  stopStream();
+                  void sensor.disconnect().catch(() => {}); // the engine forgets it
+                },
+              });
             })}
           >
             <Play data-icon="inline-start" />
@@ -255,6 +263,7 @@ export function InputsPage() {
                 session: id,
                 stop: () => {
                   stopStream();
+                  void sensor.disconnect().catch(() => {});
                   media.getTracks().forEach((t) => t.stop());
                   void audio.close();
                 },

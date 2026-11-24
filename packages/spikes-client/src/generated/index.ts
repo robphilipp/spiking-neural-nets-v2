@@ -17,6 +17,7 @@ export type * from "./RecordingFile";
 export type * from "./Request";
 export type * from "./Response";
 export type * from "./Selection";
+export type * from "./SensorInfo";
 export type * from "./SensorSpec";
 export type * from "./ServerMessage";
 export type * from "./SessionSummary";

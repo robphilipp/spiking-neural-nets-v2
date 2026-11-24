@@ -166,6 +166,8 @@ pub enum SessionNotice {
     StateChanged(State),
     /// Connections were added or pruned: fetch the network again.
     NetworkChanged,
+    /// A sensor connected or disconnected: list them again.
+    SensorsChanged,
     /// A run ended (reached its duration, was stopped, or ran out of events).
     RunEnded {
         /// Simulation time at the end.
@@ -249,6 +251,9 @@ struct Shared {
     hub: Arc<Hub>,
     /// Sensor data of the current recorded run.
     sensor_log: Mutex<Option<SensorLog>>,
+    /// Connected sensors (from any connection), and the next key for one.
+    sensors: Mutex<Vec<crate::sensors::SensorEntry>>,
+    next_sensor_key: std::sync::atomic::AtomicU64,
     next_sensor: std::sync::atomic::AtomicU32,
 }
 
@@ -303,6 +308,8 @@ impl Session {
                 hub: Hub::start(id.0),
                 sensor_log: Mutex::new(None),
                 next_sensor: std::sync::atomic::AtomicU32::new(0),
+                sensors: Mutex::new(Vec::new()),
+                next_sensor_key: std::sync::atomic::AtomicU64::new(1),
             }),
         }
     }
@@ -1388,6 +1395,30 @@ impl Session {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let seed = self.inner().settings.seed;
         Ok(Sensor::new(id, spec, self.clone(), seed))
+    }
+
+    /// The sensors connected to this session (through any connection), with their counters.
+    pub fn sensors(&self) -> Vec<crate::sensors::SensorInfo> {
+        lock(&self.shared.sensors).iter().filter_map(|e| e.info()).collect()
+    }
+
+    pub(crate) fn register_sensor(
+        &self,
+        spec: Arc<SensorSpec>,
+        state: std::sync::Weak<Mutex<crate::sensors::SensorState>>,
+    ) -> u64 {
+        let key = self
+            .shared
+            .next_sensor_key
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        lock(&self.shared.sensors).push(crate::sensors::SensorEntry::new(key, spec, state));
+        self.notify(SessionNotice::SensorsChanged);
+        key
+    }
+
+    pub(crate) fn unregister_sensor(&self, key: u64) {
+        lock(&self.shared.sensors).retain(|e| e.key != key);
+        self.notify(SessionNotice::SensorsChanged);
     }
 
     /// Where "now" is for a sensor, and how fast simulation time runs. Not running counts as paused.

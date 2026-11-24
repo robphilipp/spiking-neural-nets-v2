@@ -470,6 +470,27 @@ impl Connection {
                 self.sensors.insert(id, connected);
                 Ok(Response::Sensor { sensor: id })
             }
+            Request::ListSensors { session } => Ok(Response::Sensors {
+                sensors: self
+                    .session(session)?
+                    .sensors()
+                    .into_iter()
+                    .map(|s| api::SensorInfo {
+                        id: s.key,
+                        name: s.spec.name.clone(),
+                        channels: s.spec.targets.clone(),
+                        encoding: match s.spec.encoding {
+                            Encoding::Current { .. } => "current",
+                            Encoding::Rate { .. } => "rate",
+                            Encoding::Threshold { .. } => "threshold",
+                            Encoding::Spikes { .. } => "spikes",
+                        }
+                        .into(),
+                        samples: s.stats.samples,
+                        inputs: s.stats.inputs,
+                    })
+                    .collect(),
+            }),
             Request::DisconnectSensor { sensor, .. } => {
                 self.sensors
                     .remove(&sensor)
@@ -634,6 +655,7 @@ fn notice_dto(notice: SessionNotice) -> Notice {
         SessionNotice::RecordingFailed(message) => Notice::RecordingFailed { message },
         SessionNotice::Failed(message) => Notice::Failed { message },
         SessionNotice::NetworkChanged => Notice::NetworkChanged,
+        SessionNotice::SensorsChanged => Notice::SensorsChanged,
     }
 }
 

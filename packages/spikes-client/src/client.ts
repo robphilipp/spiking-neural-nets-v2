@@ -14,6 +14,7 @@ import type { Notice } from "./generated/Notice";
 import type { Recording } from "./generated/Recording";
 import type { Request } from "./generated/Request";
 import type { Response } from "./generated/Response";
+import type { SensorInfo } from "./generated/SensorInfo";
 import type { SensorSpec } from "./generated/SensorSpec";
 import type { ServerMessage } from "./generated/ServerMessage";
 import type { SessionSummary } from "./generated/SessionSummary";
@@ -161,6 +162,11 @@ export abstract class ProtocolClient {
   /** How a session built on node agents is doing. */
   async getCluster(session: number): Promise<Cluster> {
     return (await this.expect({ type: "getCluster", session }, "cluster")).cluster;
+  }
+
+  /** The sensors connected to a session (from any client), with their counters. */
+  async listSensors(session: number): Promise<SensorInfo[]> {
+    return (await this.expect({ type: "listSensors", session }, "sensors")).sensors;
   }
 
   async getNetwork(session: number): Promise<Network> {

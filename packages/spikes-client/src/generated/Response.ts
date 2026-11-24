@@ -3,6 +3,7 @@ import type { Cluster } from "./Cluster";
 import type { Network } from "./Network";
 import type { NeuronState } from "./NeuronState";
 import type { Recording } from "./Recording";
+import type { SensorInfo } from "./SensorInfo";
 import type { SessionSummary } from "./SessionSummary";
 
 /**
@@ -40,7 +41,11 @@ viewer: number, } | { "type": "sensor",
 /**
  * Its id, used in binary input batches.
  */
-sensor: number, } | { "type": "recordings", 
+sensor: number, } | { "type": "sensors", 
+/**
+ * One each.
+ */
+sensors: Array<SensorInfo>, } | { "type": "recordings", 
 /**
  * One each.
  */

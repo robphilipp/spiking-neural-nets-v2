@@ -1,4 +1,4 @@
-import { Lod, type Neuron } from "@spikes/client";
+import { Lod, type Neuron, type SensorInfo } from "@spikes/client";
 import { Hammer, Pause, Play, SkipForward, Square, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -99,6 +99,34 @@ export function RunPage() {
   const [live, setLive] = useState<LiveView | null>(null);
   const [stats, setStats] = useState<LiveStats | null>(null);
   const [rasterRef, width] = useWidth();
+  // Connected sensors (from this page, the Inputs page or any other client), refreshed every second.
+  const [sensors, setSensors] = useState<SensorInfo[]>([]);
+  useEffect(() => {
+    if (!client || id === null || !network) return setSensors([]);
+    let live = true;
+    const poll = () =>
+      client
+        .listSensors(id)
+        .then((list) => live && setSensors(list))
+        .catch(() => {});
+    void poll();
+    const timer = setInterval(poll, 1000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [client, id, network]);
+  // Which sensors sent data since the last refresh.
+  const lastSamples = useRef(new Map<number, number>());
+  const sensorActive = useMemo(() => {
+    const active = new Set<number>();
+    for (const x of sensors) {
+      const before = lastSamples.current.get(x.id);
+      if (before !== undefined && x.samples > before) active.add(x.id);
+      lastSamples.current.set(x.id, x.samples);
+    }
+    return active;
+  }, [sensors]);
 
   const selection = useMemo(() => {
     const neurons = network?.neurons ?? [];
@@ -390,12 +418,24 @@ export function RunPage() {
               width={width}
               height={420}
               selected={picked.map((n) => n.index)}
+              sensors={sensors}
               onPick={(i) => {
                 const neuron = network.neurons[i];
                 if (neuron) setPicked([neuron]);
               }}
               onRegion={setRegion}
             />
+          )}
+          {sensors.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5" data-testid="sensor-legend">
+              <span className="text-xs text-muted-foreground">Sensors</span>
+              {sensors.map((x) => (
+                <Badge key={x.id} variant="outline" className="gap-1.5" title={`${x.encoding} encoding · ${x.samples.toLocaleString()} samples · ${x.inputs.toLocaleString()} inputs`}>
+                  <span className={`size-2 rounded-full ${sensorActive.has(x.id) ? "bg-[#009e73]" : "bg-muted-foreground/40"}`} />
+                  {x.name} · {x.channels.length} channel{x.channels.length === 1 ? "" : "s"}
+                </Badge>
+              ))}
+            </div>
           )}
         </Panel>
       )}

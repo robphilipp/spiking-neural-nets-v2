@@ -20,7 +20,7 @@ recording: string | null, } | { "type": "recordingFailed",
 /**
  * Why.
  */
-message: string, } | { "type": "networkChanged" } | { "type": "failed", 
+message: string, } | { "type": "networkChanged" } | { "type": "sensorsChanged" } | { "type": "failed", 
 /**
  * Why.
  */
