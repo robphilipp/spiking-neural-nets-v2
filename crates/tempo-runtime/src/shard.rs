@@ -593,7 +593,7 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
                     let delay = edge.delay.saturating_sub(r.jitter.max_reduction());
                     self.core.lookahead_proposal = self.core.lookahead_proposal.min(delay.max(SimDuration::NANOSECOND));
                 }
-                r.edges.push(edge);
+                r.edges.push(crate::route::Edge::new(edge));
                 self.core.topology_added += 1;
                 true
             }

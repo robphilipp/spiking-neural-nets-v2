@@ -539,6 +539,10 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         let Some(actor) = rt.actor_mut::<NeuronActor>(ids[i]) else {
             continue;
         };
+        // Built by pushing, so up to half their capacity is spare: trim it (it's most of the network's memory).
+        let (mut synapses, mut pre) = (synapses, pre);
+        synapses.shrink_to_fit();
+        pre.shrink_to_fit();
         actor.synapses = synapses;
         actor.pre = pre;
         // A neuron without outgoing connections doesn't look its (empty) route up at every spike; it's switched on

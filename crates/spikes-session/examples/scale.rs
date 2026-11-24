@@ -7,7 +7,50 @@
 //! A random network (neurons in a cube, each with `k` random inputs, 20% inhibitory), driven at ~5 Hz. Reports the
 //! time and memory of each stage, then runs as fast as possible and reports throughput.
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
+
+/// Counts live heap bytes (the process's resident size keeps freed pages, so it can't show savings).
+struct Counting;
+static LIVE: AtomicUsize = AtomicUsize::new(0);
+static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+// SAFETY: forwards to the system allocator, only counting.
+#[allow(unsafe_code)]
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let p = unsafe { System.alloc(layout) };
+        if !p.is_null() {
+            let now = LIVE.fetch_add(layout.size(), Ordering::Relaxed) + layout.size();
+            PEAK.fetch_max(now, Ordering::Relaxed);
+        }
+        p
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) };
+        LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let p = unsafe { System.realloc(ptr, layout, new_size) };
+        if !p.is_null() {
+            let now = if new_size >= layout.size() {
+                LIVE.fetch_add(new_size - layout.size(), Ordering::Relaxed) + new_size - layout.size()
+            } else {
+                LIVE.fetch_sub(layout.size() - new_size, Ordering::Relaxed) - (layout.size() - new_size)
+            };
+            PEAK.fetch_max(now, Ordering::Relaxed);
+        }
+        p
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: Counting = Counting;
+
+fn gb(bytes: usize) -> f64 {
+    bytes as f64 / 1e9
+}
 
 use spikes_session::{BuildSettings, Engine, InputSpec, RunSettings, Speed};
 use tempo_runtime::SimDuration;
@@ -28,8 +71,10 @@ fn rss_gb() -> f64 {
 
 fn stage(name: &str, t: Instant) {
     println!(
-        "{name:<28} {:>8.2} s   RSS {:>6.2} GB",
+        "{name:<28} {:>8.2} s   heap {:>6.2} GB (peak {:>6.2})   RSS {:>6.2} GB",
         t.elapsed().as_secs_f64(),
+        gb(LIVE.load(Ordering::Relaxed)),
+        gb(PEAK.load(Ordering::Relaxed)),
         rss_gb()
     );
 }
@@ -67,6 +112,10 @@ fn main() {
         })
         .expect("build");
     stage("built", t);
+    println!(
+        "  {:.0} bytes of heap per synapse",
+        LIVE.load(Ordering::Relaxed) as f64 / network.synapse_count as f64
+    );
     println!(
         "  {} synapses; the summary lists {}",
         network.synapse_count,

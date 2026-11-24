@@ -491,9 +491,20 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
         let id = RouteId(u32::try_from(dir.route_homes.len()).expect("too many routes"));
         dir.route_homes.push((node, shard));
         if node == self.placement.node {
-            self.shards[usize::from(shard)]
-                .routes
-                .insert(id, Route { owner, edges, jitter });
+            self.shards[usize::from(shard)].routes.insert(
+                id,
+                Route {
+                    owner,
+                    edges: {
+                        // (Collected in place, the 24-byte edges' buffer would be kept: trim it.)
+                        let mut compact: Vec<crate::route::Edge> =
+                            edges.into_iter().map(crate::route::Edge::new).collect();
+                        compact.shrink_to_fit();
+                        compact
+                    },
+                    jitter,
+                },
+            );
         }
         id
     }
@@ -592,7 +603,7 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
                         .home(edge.target)
                         .is_some_and(|home| home != (node, index as u16))
                     {
-                        lookahead = lookahead.min(edge.delay.saturating_sub(reduction));
+                        lookahead = lookahead.min(edge.delay().saturating_sub(reduction));
                     }
                 }
             }
@@ -674,7 +685,7 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             .shards
             .iter()
             .flat_map(|s| s.routes.values())
-            .map(|r| size_of::<Route>() + r.edges.capacity() * size_of::<RouteEdge>())
+            .map(|r| size_of::<Route>() + r.edges.capacity() * size_of::<crate::route::Edge>())
             .sum();
         actors + directory + routes
     }

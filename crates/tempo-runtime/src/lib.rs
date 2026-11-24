@@ -63,7 +63,7 @@ pub use field::Field;
 pub use metrics::{LatencyHistogram, PacingStats, Stats};
 pub use placement::Partition;
 pub use reply::{Cancelled, Reply};
-pub use route::{Jitter, RouteEdge};
+pub use route::{Jitter, MAX_ROUTE_DELAY, RouteEdge};
 pub use runtime::{EventPublisher, QueueKind, Runtime, RuntimeConfig, SystemPublisher};
 pub use shard::{DeliveryKind, TraceEntry};
 pub use subscribe::{Closed, EventFilter, EventStream};

@@ -190,7 +190,7 @@ impl<M: Clone, E> Ctx<'_, M, E> {
         assert_eq!(r.owner, self.me, "{route:?} belongs to {}, not {}", r.owner, self.me);
         for (sub, edge) in r.edges.iter().enumerate() {
             let sub = sub as u32;
-            let delay = r.jitter.apply(edge.delay, world.seed, self.me, seq, sub);
+            let delay = r.jitter.apply(edge.delay(), world.seed, self.me, seq, sub);
             let key = OrderKey {
                 at: base + delay,
                 src: self.me,

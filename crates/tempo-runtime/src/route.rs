@@ -36,10 +36,45 @@ pub enum Jitter {
     },
 }
 
+/// The longest delay a route edge can have: 2³² − 1 ns, about 4.29 s (edges are stored in 16 bytes).
+pub const MAX_ROUTE_DELAY: SimDuration = SimDuration::from_nanos(u32::MAX as u64);
+
+/// A route edge as stored: 16 bytes (a route can hold billions of them across a cluster).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Edge {
+    pub(crate) target: ActorId,
+    delay_ns: u32,
+    pub(crate) edge: EdgeIdx,
+}
+
+const _: () = assert!(size_of::<Edge>() == 16);
+
+impl Edge {
+    /// # Panics
+    /// If the delay is longer than [`MAX_ROUTE_DELAY`].
+    pub(crate) fn new(e: RouteEdge) -> Self {
+        let delay_ns = u32::try_from(e.delay.as_nanos()).unwrap_or_else(|_| {
+            panic!(
+                "route edge to {} has a delay of {}, longer than the longest a route can hold ({MAX_ROUTE_DELAY})",
+                e.target, e.delay
+            )
+        });
+        Self {
+            target: e.target,
+            delay_ns,
+            edge: e.edge,
+        }
+    }
+
+    pub(crate) fn delay(self) -> SimDuration {
+        SimDuration::from_nanos(u64::from(self.delay_ns))
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Route {
     pub(crate) owner: ActorId,
-    pub(crate) edges: Vec<RouteEdge>,
+    pub(crate) edges: Vec<Edge>,
     pub(crate) jitter: Jitter,
 }
 

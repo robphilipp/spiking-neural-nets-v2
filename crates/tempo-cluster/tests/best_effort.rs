@@ -105,6 +105,9 @@ fn slowing_the_clock_makes_events_on_time() {
         late_slow as f64 / events_slow as f64,
     );
     // Timing-based, so with margins for a busy machine (alone: ~8% late at real time, ~0.3% at 20× slower).
-    assert!(slow <= fast / 2.0, "slower runs have far fewer late events: {slow} vs {fast}");
+    assert!(
+        slow <= fast / 2.0,
+        "slower runs have far fewer late events: {slow} vs {fast}"
+    );
     assert!(slow < 0.05, "at 20× slower nearly every event is on time: {slow}");
 }
