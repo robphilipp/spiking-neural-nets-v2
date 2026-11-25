@@ -8,9 +8,9 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use spikes_api::input::InputBatch;
@@ -33,9 +33,6 @@ pub enum Outgoing {
     Frame(Vec<u8>),
 }
 
-/// A viewer shared with the thread forwarding its frames (`None` once detached).
-type SharedViewer = Arc<Mutex<Option<Viewer>>>;
-
 /// How long background forwarders wait before checking whether the connection is gone.
 const POLL: Duration = Duration::from_millis(100);
 
@@ -54,8 +51,8 @@ pub struct Connection {
     engine: Arc<Engine>,
     recordings: PathBuf,
     out: Sender<Outgoing>,
-    /// (session, viewer) → the thread forwarding its frames, and the viewer's handle for updates.
-    viewers: BTreeMap<(u32, u32), (Forwarder, SharedViewer)>,
+    /// (session, viewer) → the thread forwarding its frames (it owns the viewer), and the viewer's id for updates.
+    viewers: BTreeMap<(u32, u32), (Forwarder, u64)>,
     /// Connection-wide sensor id → sensor.
     sensors: BTreeMap<u32, Sensor>,
     next_sensor: u32,
@@ -419,22 +416,19 @@ impl Connection {
             Request::Attach { session, view } => {
                 let s = self.session(session)?;
                 let viewer = s.attach(view_settings(&view)?);
-                let id = u32::try_from(viewer.id()).unwrap_or(u32::MAX);
-                let handle = Arc::new(Mutex::new(Some(viewer)));
-                let forwarder = self.forward_frames(session, id, Arc::clone(&handle))?;
-                self.viewers.insert((session, id), (forwarder, handle));
+                let full_id = viewer.id();
+                let id = u32::try_from(full_id).unwrap_or(u32::MAX);
+                let forwarder = self.forward_frames(session, id, viewer)?;
+                self.viewers.insert((session, id), (forwarder, full_id));
                 Ok(Response::Viewer { viewer: id })
             }
             Request::UpdateView { session, viewer, view } => {
                 let s = self.session(session)?;
-                let (_, handle) = self
+                let &(_, full_id) = self
                     .viewers
                     .get(&(session, viewer))
                     .ok_or_else(|| error(ErrorCode::NotFound, format!("viewer {viewer}")))?;
-                let settings = view_settings(&view)?;
-                if let Some(v) = handle.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
-                    s.update_view(v, settings);
-                }
+                s.update_view_id(full_id, view_settings(&view)?);
                 Ok(Response::Done)
             }
             Request::Detach { session, viewer } => {
@@ -591,27 +585,23 @@ impl Connection {
         self.recordings.join(format!("{stamp}-{name}-s{}", session.id()))
     }
 
-    fn forward_frames(&self, session: u32, viewer: u32, handle: SharedViewer) -> Result<Forwarder, ApiError> {
+    /// Forwards a viewer's frames on a thread of its own, which owns the viewer (updates go through the session by
+    /// the viewer's id, so they never wait for this thread). Stopping the forwarder drops, so detaches, the viewer.
+    fn forward_frames(&self, session: u32, id: u32, viewer: Viewer) -> Result<Forwarder, ApiError> {
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let out = self.out.clone();
         std::thread::Builder::new()
-            .name(format!("frames-{session}-{viewer}"))
+            .name(format!("frames-{session}-{id}"))
             .spawn(move || {
                 while !stopping.load(Ordering::Relaxed) {
-                    let frame = handle
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                        .as_ref()
-                        .and_then(|v| v.recv_timeout(Duration::from_millis(20)));
-                    if let Some(frame) = frame
+                    if let Some(frame) = viewer.recv_timeout(Duration::from_millis(20))
                         && out.send(Outgoing::Frame(frame)).is_err()
                     {
                         break;
                     }
                 }
-                // Detach.
-                handle.lock().unwrap_or_else(|p| p.into_inner()).take();
+                drop(viewer);
             })
             .map_err(|e| error(ErrorCode::Internal, format!("couldn't start a frame forwarder: {e}")))?;
         Ok(Forwarder { stop })

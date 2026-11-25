@@ -7,7 +7,7 @@ import { create } from "zustand";
 import { DEFAULT_RUN, type Background, newProject, type Project, type RunSettings } from "./project";
 import type { ThemeChoice } from "./theme";
 
-function remember(key: string, value: unknown) {
+export function remember(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
@@ -133,7 +133,12 @@ export interface CurrentSession {
   network: Network | null;
   /** A replay: the recording's last event time; null for a live session. */
   replayEndMs: number | null;
+  /** Counts builds (and sessions opened): live views keep their data until this or the session changes (adding or
+   *  pruning connections changes the network, but not this). */
+  build: number;
 }
+
+let builds = 0;
 
 const initialSession: CurrentSession = {
   id: null,
@@ -145,6 +150,7 @@ const initialSession: CurrentSession = {
   simMs: 0,
   network: null,
   replayEndMs: null,
+  build: 0,
 };
 
 export const useSession = create<CurrentSession>()(() => initialSession);
@@ -170,7 +176,7 @@ export function simTime(simMs: number) {
 }
 
 export function built(network: Network) {
-  useSession.setState({ network, state: "ready" });
+  useSession.setState({ network, state: "ready", build: ++builds });
 }
 
 /** Connections were added or pruned (the run state doesn't change). */
@@ -188,7 +194,7 @@ export function opened(s: {
   network: Network | null;
   replayEndMs?: number | null;
 }) {
-  useSession.setState({ ...initialSession, ...s, replayEndMs: s.replayEndMs ?? null, applied: s.description }, true);
+  useSession.setState({ ...initialSession, ...s, replayEndMs: s.replayEndMs ?? null, applied: s.description, build: ++builds }, true);
 }
 
 export function forget() {

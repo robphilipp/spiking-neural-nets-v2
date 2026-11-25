@@ -6,7 +6,10 @@ import { Choice, Field, Heading, NeuronPicker, Notice, Panel, Row, Stat } from "
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CADENCE_MS, InspectView, type WeightSeries } from "../live";
+import { useChartSettings } from "../chartSettings";
+import { connectInspect, useInspect, type WeightSeries } from "../live";
+import { useSession } from "../store";
+import { useBehavior } from "../useBehavior";
 import type { ChartColors } from "../theme";
 
 /** Okabe–Ito: distinguishable for colour-blind viewers. */
@@ -47,7 +50,6 @@ export function Inspector(props: {
   const { client, session, network, width, labelWidth, colors, windowMs, picked } = props;
   const setPicked = (value: Neuron[] | ((p: Neuron[]) => Neuron[])) =>
     props.onPicked(typeof value === "function" ? value(props.picked) : value);
-  const [view, setView] = useState<InspectView | null>(null);
   const [state, setState] = useState<NeuronState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [from, setFrom] = useState<Neuron | null>(null);
@@ -82,24 +84,17 @@ export function Inspector(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [network, picked, names, listed, first?.index, ownSynapses]);
 
-  // The live view follows the picked neurons and their synapses.
+  // The live view (in a store: one per session and build) follows the picked neurons and their synapses, keeping
+  // what it showed of the ones still picked.
+  const build = useSession((s) => s.build);
+  useEffect(() => connectInspect(client, session, build), [client, session, build]);
+  const view = useInspect((s) => s.view);
   useEffect(() => {
-    if (!picked.length) return;
-    let v: InspectView | null = null;
-    let cancelled = false;
-    InspectView.attach(client, session, picked, incoming)
-      .then((created) => {
-        if (cancelled) return void created.dispose();
-        v = created;
-        setView(created);
-      })
-      .catch((e: Error) => setError(e.message));
-    return () => {
-      cancelled = true;
-      setView(null);
-      void v?.dispose();
-    };
-  }, [client, session, picked, incoming]);
+    view?.follow(picked, incoming).catch((e: Error) => setError(e.message));
+  }, [view, picked, incoming]);
+  const membrane = useBehavior(view?.membrane);
+  const weightSource = useBehavior(view?.weights);
+  const { bufferMs, updateMs, cadence } = useChartSettings();
 
   // The first picked neuron's state, twice a second (a replay has none: its neurons were recorded).
   useEffect(() => {
@@ -176,11 +171,11 @@ export function Inspector(props: {
           <div>
             <Heading className="mb-1">Membrane potential (mV)</Heading>
             <Legend names={membraneNames} />
-            {view && (
-              <Chart key={windowMs} chartId={3} width={width} height={200} dataSource={view.membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membraneNames)} windowingTime={50} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
+            {membrane && (
+              <Chart key={`${windowMs}:${cadence}`} chartId={3} width={width} height={200} dataSource={membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membrane.seriesList().map((s) => s.name))} windowingTime={bufferMs} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
                 <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
                 <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-1, 15]} label="mV" autoScale />
-                <ScatterPlot />
+                <ScatterPlot withCadence={cadence} />
               </Chart>
             )}
           </div>
@@ -188,11 +183,11 @@ export function Inspector(props: {
           <div>
             <Heading className="mb-1">Incoming weights</Heading>
             {weightNames.length ? <Legend names={weightNames} /> : <p className="text-sm text-muted-foreground">No incoming connections.</p>}
-            {view && weightNames.length > 0 && (
-              <Chart key={windowMs} chartId={4} width={width} height={180} dataSource={view.weights} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(weightNames)} windowingTime={CADENCE_MS} dataUpdatePeriod={CADENCE_MS} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
+            {weightSource && weightSource.seriesList().length > 0 && (
+              <Chart key={`${windowMs}:${cadence}`} chartId={4} width={width} height={180} dataSource={weightSource} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(weightSource.seriesList().map((s) => s.name))} windowingTime={bufferMs} dataUpdatePeriod={updateMs} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
                 <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
                 <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[0, 2]} label="weight" autoScale />
-                <ScatterPlot />
+                <ScatterPlot withCadence={cadence} />
               </Chart>
             )}
           </div>

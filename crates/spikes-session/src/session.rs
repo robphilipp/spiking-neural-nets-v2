@@ -964,10 +964,13 @@ impl Session {
 
     /// Changes what a viewer gets.
     pub fn update_view(&self, viewer: &Viewer, settings: ViewSettings) {
+        self.update_view_id(viewer.id(), settings);
+    }
+
+    /// Like [`Self::update_view`], for the viewer with this id (whichever thread holds it).
+    pub(crate) fn update_view_id(&self, viewer: u64, settings: ViewSettings) {
         let membrane = settings.membrane.clone();
-        self.shared
-            .hub
-            .update(viewer.id(), settings, self.network().neurons.len());
+        self.shared.hub.update(viewer, settings, self.network().neurons.len());
         let _ = self.observe(&membrane, true);
     }
 

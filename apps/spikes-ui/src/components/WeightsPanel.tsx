@@ -3,8 +3,10 @@ import { useEffect, useState } from "react";
 import { AxisLocation, Chart, ContinuousAxis, defaultLineStyle, ScatterPlot, type SeriesLineStyle } from "stream-charts";
 import { Heading, Panel, Stat } from "@/components/kit";
 import type { ChartColors } from "../theme";
-import { CADENCE_MS } from "../live";
-import { WEIGHT_SERIES, type WeightSummary, WeightsView } from "../weights";
+import { useChartSettings } from "../chartSettings";
+import { useSession } from "../store";
+import { useBehavior } from "../useBehavior";
+import { connectWeights, useWeights, WEIGHT_SERIES, type WeightSummary } from "../weights";
 
 /** Okabe–Ito: mean, median, and the two percentiles (dashed, as a band). */
 const SERIES_COLORS = ["#0072B2", "#009E73", "#E69F00", "#E69F00"];
@@ -60,31 +62,13 @@ export function WeightsPanel(props: {
   windowMs: number;
 }) {
   const { client, session, network, width, labelWidth, colors, windowMs } = props;
-  const [view, setView] = useState<WeightsView | null>(null);
-  const [summary, setSummary] = useState<WeightSummary | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let v: WeightsView | null = null;
-    let cancelled = false;
-    const subscription = { unsubscribe: () => {} };
-    WeightsView.attach(client, session, network)
-      .then((created) => {
-        if (cancelled) return void created.dispose();
-        v = created;
-        setView(created);
-        const sub = created.summary.subscribe(setSummary);
-        subscription.unsubscribe = () => sub.unsubscribe();
-      })
-      .catch((e: Error) => setError(e.message));
-    return () => {
-      cancelled = true;
-      subscription.unsubscribe();
-      setView(null);
-      setSummary(null);
-      void v?.dispose();
-    };
-  }, [client, session, network]);
+  // The view lives in a store (one per session and build), so adding a connection doesn't restart it.
+  const build = useSession((s) => s.build);
+  useEffect(() => connectWeights(client, session, build, useSession.getState().network ?? network), [client, session, build]);
+  const view = useWeights((s) => s.view);
+  const error = useWeights((s) => s.error);
+  const summary = useBehavior(view?.summary);
+  const { bufferMs, updateMs, cadence } = useChartSettings();
 
   if (!network.synapseCount) return null;
   const listed = network.synapses.length === network.synapseCount;
@@ -131,7 +115,7 @@ export function WeightsPanel(props: {
           </div>
           {view && (
             <Chart
-              key={windowMs}
+              key={`${windowMs}:${cadence}`}
               chartId={5}
               width={trendWidth}
               height={220}
@@ -139,13 +123,13 @@ export function WeightsPanel(props: {
               color={colors.color}
               backgroundColor={colors.backgroundColor}
               seriesStyles={styles}
-              windowingTime={CADENCE_MS}
-              dataUpdatePeriod={CADENCE_MS}
+              windowingTime={bufferMs}
+              dataUpdatePeriod={updateMs}
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
               <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
               <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[0, 2]} label="weight" autoScale />
-              <ScatterPlot />
+              <ScatterPlot withCadence={cadence} />
             </Chart>
           )}
         </div>

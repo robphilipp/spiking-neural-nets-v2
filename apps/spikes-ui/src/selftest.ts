@@ -32,7 +32,8 @@ export async function selftest(): Promise<void> {
       if (n.type === "runEnded") ended = true;
     });
     // The charts' data path too: a LiveView, as the Run page uses.
-    const live = await LiveView.attach(client, id, network.neurons, network.neurons.length);
+    const live = await LiveView.attach(client, id, network.neurons.length);
+    await live.select(network.neurons);
     const group1 = network.neurons.filter((n) => n.name.startsWith("hidden-10")).map((n) => n.index);
     await client.stimulate(id, group1, 10);
     await client.start(id, { durationMs: 200 });
@@ -42,7 +43,7 @@ export async function selftest(): Promise<void> {
     }
     const spikes = frames.reduce((n, f) => n + spikeCount(f), 0);
     await new Promise((r) => setTimeout(r, 300));
-    const rasterPoints = live.raster.seriesList().reduce((n, s) => n + s.length(), 0);
+    const rasterPoints = live.raster.value.seriesList().reduce((n, s) => n + s.length(), 0);
     const ratePoints = live.rate.seriesList().reduce((n, s) => n + s.length(), 0);
     await live.dispose();
     const ok = rasterPoints === 25 && ratePoints > 0 && projectOk && ended && spikes === 25 && network.neurons.length === 25;

@@ -4,7 +4,8 @@
 import type { Network, ProtocolClient, Viewer } from "@spikes/client";
 import { BehaviorSubject, map, Subject } from "rxjs";
 import { type Datum, emptySeries, TimeSeriesDataSource } from "stream-charts";
-import { CADENCE_MS, chartData, KEEP_MS } from "./live";
+import { chartSettings, useChartSettings } from "./chartSettings";
+import { chartData, releaseOnSessionChange, viewStore } from "./live";
 
 /** The series of the weight trend chart. */
 export const WEIGHT_SERIES = ["mean", "median", "10th percentile", "90th percentile"] as const;
@@ -28,8 +29,6 @@ export interface WeightSummary {
 }
 
 const BINS = 40;
-/** Recompute the summary this often (simulated time can run much faster than wall time). */
-const EVERY_WALL_MS = CADENCE_MS;
 
 const key = (post: number, synapse: number) => post * 4_294_967_296 + synapse;
 
@@ -44,6 +43,7 @@ export class WeightsView {
   private lastT = 0;
   private dirty = true;
   private disposed = false;
+  private readonly unfollow: () => void;
 
   private constructor(network: Network) {
     // A network that lists its synapses gives every starting weight; a big one doesn't, so only changes are known.
@@ -67,8 +67,22 @@ export class WeightsView {
             ),
           ),
         ),
-      dropDataAfter: KEEP_MS,
+      dropDataAfter: chartSettings().keepMs,
     });
+    this.unfollow = useChartSettings.subscribe((s, before) => {
+      if (s.keepMs !== before.keepMs) this.trend.setDropDataAfter(s.keepMs);
+      if (s.updateMs !== before.updateMs) void this.viewer?.update(WeightsView.view()).catch(() => {});
+    });
+  }
+
+  private static view() {
+    return {
+      frameMs: chartSettings().updateMs,
+      budgetBytesPerS: 8 << 20,
+      spikes: { type: "nothing" as const },
+      membrane: [],
+      weights: { type: "all" as const },
+    };
   }
 
   static async attach(client: ProtocolClient, session: number, network: Network): Promise<WeightsView> {
@@ -77,7 +91,7 @@ export class WeightsView {
     view.publish(0, true);
     view.viewer = await client.attach(
       session,
-      { frameMs: CADENCE_MS, budgetBytesPerS: 8 << 20, spikes: { type: "nothing" }, membrane: [], weights: { type: "all" } },
+      WeightsView.view(),
       (f) => {
         const w = f.weights;
         if (w) {
@@ -94,10 +108,11 @@ export class WeightsView {
     return view;
   }
 
-  /** Summarizes the current weights, at most every EVERY_WALL_MS of wall time (or now, if forced). */
+  /** Summarizes the current weights, at most once per update period of wall time (or now, if forced): simulated
+   *  time can run much faster than wall time. */
   private publish(t: number, force: boolean) {
     const now = performance.now();
-    if (!force && now - this.lastWall < EVERY_WALL_MS) return;
+    if (!force && now - this.lastWall < chartSettings().updateMs) return;
     this.lastWall = now;
     // Time can go back (a rebuilt network): restart the trend.
     if (t < this.lastT) this.dirty = true;
@@ -174,7 +189,16 @@ export class WeightsView {
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
+    this.unfollow();
     await this.viewer?.detach().catch(() => {});
     this.trend.dispose();
   }
+}
+
+/** The weights panel's view of the current session and build. */
+export const useWeights = viewStore<WeightsView>();
+releaseOnSessionChange(useWeights);
+
+export function connectWeights(client: ProtocolClient, session: number, build: number, network: Network) {
+  useWeights.getState().connect(client, session, build, () => WeightsView.attach(client, session, network));
 }

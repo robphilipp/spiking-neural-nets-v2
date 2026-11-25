@@ -22,7 +22,10 @@ import { Network3D } from "../components/Network3D";
 import { WeightsPanel } from "../components/WeightsPanel";
 import { useConnection } from "../connection";
 import { stopInput, useActiveInput } from "../inputStreams";
-import { CADENCE_MS, type LiveStats, LiveView } from "../live";
+import { ChartControls } from "../components/ChartControls";
+import { useChartSettings } from "../chartSettings";
+import { connectLive, useLive } from "../live";
+import { useBehavior } from "../useBehavior";
 import { backgroundChanged, built, runSettingsChanged, simTime, useProject, useSession, useSettings } from "../store";
 import { useChartColors } from "../theme";
 
@@ -96,8 +99,6 @@ export function RunPage() {
   /** The background input the current network was built with (it's applied at Build). */
   const [builtBackground, setBuiltBackground] = useState<string | null>(() => JSON.stringify(background));
   const needsRebuild = network !== null && JSON.stringify(background) !== builtBackground;
-  const [live, setLive] = useState<LiveView | null>(null);
-  const [stats, setStats] = useState<LiveStats | null>(null);
   const [rasterRef, width] = useWidth();
   // Connected sensors (from this page, the Inputs page or any other client), refreshed every second.
   const [sensors, setSensors] = useState<SensorInfo[]>([]);
@@ -139,28 +140,26 @@ export function RunPage() {
     setPicked((p) => p.filter((n) => network?.neurons[n.index]?.name === n.name));
   }, [network]);
 
-  // Live views follow the built network and the raster selection.
+  // The session's live view (it lives in a store, so its data outlives this page): one per session and build.
+  const build = useSession((s) => s.build);
+  const built_ = network !== null;
   useEffect(() => {
-    if (!client || id === null || !network) return;
-    let view: LiveView | null = null;
-    let cancelled = false;
-    LiveView.attach(client, id, selection, network.neurons.length)
-      .then((v) => {
-        if (cancelled) return void v.dispose();
-        view = v;
-        setLive(v);
-        v.stats.subscribe((s) => {
-          setStats(s);
-          simTime(s.simMs);
-        });
-      })
-      .catch((e: Error) => setError(e.message));
-    return () => {
-      cancelled = true;
-      setLive(null);
-      void view?.dispose();
-    };
-  }, [client, id, network, selection]);
+    if (client && id !== null && built_) connectLive(client, id, build, useSession.getState().network!.neurons.length);
+    else useLive.getState().disconnect();
+  }, [client, id, build, built_]);
+  const live = useLive((s) => s.view);
+  const liveError = useLive((s) => s.error);
+  useEffect(() => void (liveError && setError(liveError)), [liveError]);
+  // The raster shows the selection; what it showed of neurons still selected stays.
+  useEffect(() => {
+    live?.select(selection).catch((e: Error) => setError(e.message));
+  }, [live, selection]);
+  const raster = useBehavior(live?.raster);
+  const stats = useBehavior(live?.stats);
+  useEffect(() => {
+    if (stats) simTime(stats.simMs);
+  }, [stats]);
+  const { bufferMs, updateMs, cadence } = useChartSettings();
 
   const act = (f: () => Promise<unknown>) => async () => {
     setError(null);
@@ -176,14 +175,16 @@ export function RunPage() {
     return <Notice>Open or write a network on the Network page and apply it first.</Notice>;
   }
   const running = state === "running" || state === "paused";
+  // The raster's rows: its data source's series (the selection, once the source follows it).
+  const rows = raster?.seriesList().map((s) => s.name) ?? [];
   // Row names are readable up to ~40 rows; beyond that they're hidden (filter the rows, or use the tooltip).
-  const showNames = selection.length <= 100;
-  const rowHeight = selection.length <= 40 ? 14 : showNames ? 12 : 3;
+  const showNames = rows.length <= 100;
+  const rowHeight = rows.length <= 40 ? 14 : showNames ? 12 : 3;
   // Room for the longest row name (≈ 7 px a character at the axis font), so both charts line up.
-  const labelWidth = showNames ? 24 + 7 * Math.max(4, ...selection.map((n) => n.name.length)) : 48;
-  const rasterHeight = Math.max(200, 60 + selection.length * rowHeight);
+  const labelWidth = showNames ? 24 + 7 * Math.max(4, ...rows.map((n) => n.length)) : 48;
+  const rasterHeight = Math.max(200, 60 + rows.length * rowHeight);
   const lineStyles = new Map<string, SeriesLineStyle>(
-    [...selection.map((n) => n.name), "rate"].map((name) => [name, { ...defaultLineStyle(), color: colors.series, highlightColor: colors.highlight }]),
+    [...rows, "rate"].map((name) => [name, { ...defaultLineStyle(), color: colors.series, highlightColor: colors.highlight }]),
   );
   const setBackground = (next: typeof backgroundDraft) => {
     setBackgroundDraft(next);
@@ -486,6 +487,7 @@ export function RunPage() {
             options={[1000, 5000, 20_000, 60_000, 100_000].map((ms) => ({ value: ms, label: `${ms / 1000} s` }))}
           />
         </Row>
+        <ChartControls />
         {running && stats !== null && stats.spikesPerS === 0 && (
           <Notice data-testid="no-spikes">
             No spikes in the last second. Most networks need input: stimulate their input neurons, or turn on background input (e.g. neurons
@@ -493,29 +495,29 @@ export function RunPage() {
           </Notice>
         )}
         <div ref={rasterRef} data-testid="raster">
-          {live && selection.length > 0 && (
+          {raster && rows.length > 0 && (
             <Chart
-              key={windowMs}
+              key={`${windowMs}:${cadence}`}
               chartId={1}
               width={width}
               height={rasterHeight}
-              dataSource={live.raster}
+              dataSource={raster}
               color={colors.color}
               backgroundColor={colors.backgroundColor}
               seriesStyles={lineStyles}
-              windowingTime={CADENCE_MS}
-              dataUpdatePeriod={CADENCE_MS}
+              windowingTime={bufferMs}
+              dataUpdatePeriod={updateMs}
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
               <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
               <OrdinalAxis
                 axisId="y-axis-1"
                 location={AxisLocation.Left}
-                categories={selection.map((n) => n.name)}
-                label={showNames ? "" : `${selection.length} neurons`}
+                categories={rows}
+                label={showNames ? "" : `${rows.length} neurons`}
                 font={showNames ? (rowHeight < 14 ? { size: 9 } : undefined) : { color: "transparent" }}
               />
-              <RasterPlot spikeMargin={rowHeight >= 10 ? 1 : 0} />
+              <RasterPlot spikeMargin={rowHeight >= 10 ? 1 : 0} withCadence={cadence} />
             </Chart>
           )}
         </div>
@@ -523,7 +525,7 @@ export function RunPage() {
         <div data-testid="rate">
           {live && (
             <Chart
-              key={windowMs}
+              key={`${windowMs}:${cadence}`}
               chartId={2}
               width={width}
               height={180}
@@ -531,13 +533,13 @@ export function RunPage() {
               color={colors.color}
               backgroundColor={colors.backgroundColor}
               seriesStyles={lineStyles}
-              windowingTime={50}
+              windowingTime={bufferMs}
               dataUpdatePeriod={16}
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
               <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
               <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-1, 10]} label="Hz" autoScale autoScaleMin={-1} />
-              <ScatterPlot />
+              <ScatterPlot withCadence={cadence} />
             </Chart>
           )}
         </div>
