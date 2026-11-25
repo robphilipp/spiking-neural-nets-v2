@@ -69,7 +69,7 @@ pub use route::{Jitter, MAX_ROUTE_DELAY, RouteEdge};
 pub use runtime::{EventPublisher, QueueKind, Runtime, RuntimeConfig, SystemPublisher};
 pub use shard::{DeliveryKind, TraceEntry};
 #[cfg(feature = "serde")]
-pub use snapshot::{ActorRecord, EventRecord, Persist, Snapshot, SnapshotCodec, SnapshotError};
+pub use snapshot::{ActorRecord, EventRecord, Persist, PersistField, Snapshot, SnapshotCodec, SnapshotError};
 pub use subscribe::{Closed, EventFilter, EventStream};
 pub use system::{Severity, SystemEvent, SystemEvents, SystemNotice};
 pub use tempo_core::{ActorId, SimDuration, SimTime};

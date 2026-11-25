@@ -22,6 +22,7 @@ pub mod inputs;
 pub mod messages;
 pub mod modulators;
 pub mod neuron;
+pub mod snapshot;
 
 pub use build::{BuildOptions, Network, NewConnection, build};
 pub use inputs::{PeriodicInput, PoissonInput};
@@ -30,6 +31,7 @@ pub use messages::{
 };
 pub use modulators::{ModulatorField, ModulatorKind, ModulatorRelease, ReleaseEvent};
 pub use neuron::{NetworkParams, NeuronActor};
+pub use snapshot::snapshot_codec;
 
 /// A runtime for spiking networks.
 pub type Runtime = tempo_runtime::Runtime<SimMsg, Event>;

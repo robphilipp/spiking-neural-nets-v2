@@ -6,8 +6,8 @@ use std::sync::Arc;
 use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use tempo_runtime::{
-    Actor, ActorId, Ctx, EdgeIdx, Field, Jitter, Persist, QueueKind, RouteEdge, RouteId, Runtime, RuntimeConfig,
-    SimDuration, SimTime, Snapshot, SnapshotCodec, Timer, TimerToken, TopologyOp,
+    Actor, ActorId, Ctx, EdgeIdx, Field, Jitter, Persist, PersistField, QueueKind, RouteEdge, RouteId, Runtime,
+    RuntimeConfig, SimDuration, SimTime, Snapshot, SnapshotCodec, Timer, TimerToken, TopologyOp,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -24,6 +24,16 @@ impl Field for Total {
     type Update = u64;
     fn apply(&mut self, _at: SimTime, update: u64) {
         self.0 = self.0.wrapping_add(update);
+    }
+}
+
+impl PersistField for Total {
+    type State = u64;
+    fn save(&self) -> u64 {
+        self.0
+    }
+    fn restore(&mut self, state: u64) {
+        self.0 = state;
     }
 }
 

@@ -37,6 +37,17 @@ pub trait Persist<M, E>: Actor<M, E> {
     fn restore(&mut self, state: Self::State);
 }
 
+/// A field whose state can be saved and restored (like [`Persist`] for actors). Its updates are saved as they
+/// are, so they must be serializable too.
+pub trait PersistField: Field<Update: Serialize + DeserializeOwned> {
+    /// What changes about it as it runs.
+    type State: Serialize + DeserializeOwned;
+    /// Its state now.
+    fn save(&self) -> Self::State;
+    /// Takes back a saved state (into a field built the same way).
+    fn restore(&mut self, state: Self::State);
+}
+
 /// Something went wrong taking or restoring a snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotError(pub String);
@@ -231,16 +242,12 @@ impl<M: 'static, E: 'static> SnapshotCodec<M, E> {
     }
 
     /// The next field (in the order fields were added to the runtime) is of type `F`.
-    pub fn field<F>(mut self) -> Self
-    where
-        F: Field + Serialize + DeserializeOwned,
-        F::Update: Serialize + DeserializeOwned,
-    {
+    pub fn field<F: PersistField>(mut self) -> Self {
         self.fields.push(FieldCodec {
-            save: |f| postcard::to_stdvec(f.downcast_ref::<F>().expect("field type")).expect("field encodes"),
+            save: |f| postcard::to_stdvec(&f.downcast_ref::<F>().expect("field type").save()).expect("field encodes"),
             load: |f, bytes| {
                 let field = f.downcast_mut::<F>().ok_or_else(|| err("field type mismatch"))?;
-                *field = postcard::from_bytes(bytes).map_err(|e| err(format!("field state: {e}")))?;
+                field.restore(postcard::from_bytes(bytes).map_err(|e| err(format!("field state: {e}")))?);
                 Ok(())
             },
             encode_update: |u| {

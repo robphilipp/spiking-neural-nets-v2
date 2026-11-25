@@ -45,7 +45,7 @@ pub struct NeuronActor {
     pub out: Option<RouteId>,
     /// Soma position in µm (where modulator concentrations are evaluated, and where releases happen).
     pub position: [f64; 3],
-    timer: Timer,
+    pub(crate) timer: Timer,
     changes: Vec<WeightChange>,
 }
 

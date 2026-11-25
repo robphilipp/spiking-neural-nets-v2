@@ -117,6 +117,11 @@ impl ModulatorField {
         &self.releases
     }
 
+    /// Replaces the releases still in effect (restoring a snapshot).
+    pub fn set_releases(&mut self, releases: Vec<ReleaseEvent>) {
+        self.releases = releases;
+    }
+
     /// The concentrations seen from `position`.
     pub fn at(&self, position: [f64; 3]) -> FieldView<'_> {
         FieldView { field: self, position }

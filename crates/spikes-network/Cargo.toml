@@ -17,6 +17,7 @@ rand.workspace = true
 rand_xoshiro.workspace = true
 
 [dev-dependencies]
+postcard.workspace = true
 tempo-testkit = { path = "../tempo-testkit" }
 
 [lints]
