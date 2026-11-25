@@ -1,8 +1,12 @@
 //! Phase 6: how big a network fits, and how fast it runs, on one machine.
 //!
 //! ```text
-//! cargo run --release -p spikes-session --example scale -- [neurons] [synapses per neuron] [seconds] [shards]
+//! cargo run --release -p spikes-session --example scale -- [neurons] [synapses per neuron] [seconds] [shards] [nodes]
 //! ```
+//!
+//! `nodes` builds it on a cluster: node agents' addresses (`host:port,…`, each running `spikes-server --node`), or
+//! `local:N` for N agents in this process (a rehearsal: one machine's memory and cores, but the cluster's code
+//! paths). `shards` is then per node.
 //!
 //! A random network (neurons in a cube, each with `k` random inputs, 20% inhibitory), driven at ~5 Hz. Reports the
 //! time and memory of each stage, then runs as fast as possible and reports throughput.
@@ -85,7 +89,30 @@ fn main() {
     let k: usize = args.get(2).map_or(100, |s| s.parse().expect("synapses per neuron"));
     let seconds: f64 = args.get(3).map_or(1.0, |s| s.parse().expect("seconds"));
     let shards: usize = args.get(4).map_or(8, |s| s.parse().expect("shards"));
-    println!("{n} neurons × {k} synapses = {} synapses, {shards} shards", n * k);
+    let nodes: Vec<String> = match args.get(5).map(String::as_str) {
+        None | Some("") => Vec::new(),
+        Some(local) if local.starts_with("local:") => {
+            let count: usize = local["local:".len()..].parse().expect("local:N");
+            (0..count)
+                .map(|_| {
+                    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+                    let address = listener.local_addr().expect("an address").to_string();
+                    std::thread::spawn(move || spikes_session::cluster::serve_node(listener));
+                    address
+                })
+                .collect()
+        }
+        Some(list) => list.split(',').map(|a| a.trim().to_string()).collect(),
+    };
+    println!(
+        "{n} neurons × {k} synapses = {} synapses, {shards} shards{}",
+        n * k,
+        if nodes.is_empty() {
+            String::new()
+        } else {
+            format!(" on each of {} nodes and the coordinator", nodes.len())
+        }
+    );
 
     let t = Instant::now();
     // Populations and a rule: nothing is listed connection by connection.
@@ -103,6 +130,7 @@ fn main() {
 
     let engine = Engine::new();
     let session = engine.create_described("scale", text, d);
+    session.set_nodes(nodes).expect("nodes");
     let t = Instant::now();
     let network = session
         .build(BuildSettings {
