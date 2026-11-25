@@ -27,7 +27,7 @@ mod parquet;
 mod recorder;
 mod tables;
 
-pub use parquet::{read_table, to_parquet};
+pub use parquet::{PART_ROWS, read_table, to_parquet, to_parquet_in_parts};
 pub use recorder::{RecordOptions, Recorder, RunInfo, Summary, SynapseRow, synapse_rows};
 pub use tables::{Counts, SensorLog};
 

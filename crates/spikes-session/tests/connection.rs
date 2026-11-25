@@ -134,6 +134,13 @@ fn a_session_through_the_protocol() {
             .iter()
             .any(|r| r.id == recording && r.files.iter().any(|f| f.name == "spikes.arrows"))
     );
+    // A partitioned table's parts are listed with their folder.
+    spikes_record::to_parquet_in_parts(dir.join(&recording), 5).unwrap();
+    let Response::Recordings { recordings } = c.ok(json!({"type": "listRecordings"})) else {
+        panic!()
+    };
+    let files = &recordings.iter().find(|r| r.id == recording).unwrap().files;
+    assert!(files.iter().any(|f| f.name.starts_with("spikes/part-")), "{files:?}");
 
     let Response::Neuron { neuron } = c.ok(json!({"type": "queryNeuron", "session": s, "neuron": 0})) else {
         panic!()

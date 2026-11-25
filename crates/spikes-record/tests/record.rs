@@ -6,7 +6,7 @@ use arrow::array::{Array, AsArray, RecordBatch};
 use arrow::datatypes::{Float32Type, UInt32Type, UInt64Type};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use spikes_network::{BuildOptions, Event, PoissonInput, Runtime, build};
-use spikes_record::{RecordOptions, Recorder, RunInfo, read_table, to_parquet};
+use spikes_record::{RecordOptions, Recorder, RunInfo, read_table, to_parquet, to_parquet_in_parts};
 use tempo_runtime::{Emitted, RuntimeConfig, SimDuration, SimTime};
 
 const SEED: u64 = 7;
@@ -182,4 +182,49 @@ fn parquet_is_sorted_and_independent_of_shard_count() {
         tables.push((spikes, weights));
     }
     assert_eq!(tables[0], tables[1], "same spikes and weights on 1 and 3 shards");
+}
+
+#[test]
+fn large_tables_become_partitioned_datasets_with_the_same_rows() {
+    // Three shards: rows arrive in time order only per shard, so some parts may get late rows.
+    let (dir, _) = record("parquet_parts", 3, 16);
+    to_parquet(&dir).unwrap();
+    let whole = parquet_table(&dir.join("spikes.parquet"));
+    assert!(whole.num_rows() > 60, "{} spikes", whole.num_rows());
+
+    // In parts of ~20 rows: the single file gives way to a directory of sorted parts, in time order.
+    let written = to_parquet_in_parts(&dir, 20).unwrap();
+    assert!(!dir.join("spikes.parquet").exists(), "replaced by the dataset");
+    let mut parts: Vec<PathBuf> = written
+        .iter()
+        .filter(|p| p.parent() == Some(dir.join("spikes").as_path()))
+        .cloned()
+        .collect();
+    assert!(parts.len() >= 3, "{parts:?}");
+    parts.sort();
+    let mut tables = Vec::new();
+    let mut previous_main_end = None;
+    for part in &parts {
+        let table = parquet_table(part);
+        let t = u64s(&table, "t_ns");
+        assert!(t.is_sorted(), "{} is sorted", part.display());
+        // `part-00003.parquet` is a span's main file; `part-00003-1.parquet` holds its late rows.
+        let main = part.file_name().unwrap().len() == "part-00000.parquet".len();
+        if main {
+            if let Some(end) = previous_main_end {
+                assert!(t[0] >= end, "spans are in time order");
+            }
+            previous_main_end = t.last().copied();
+        }
+        tables.push(table);
+    }
+    let all = arrow::compute::concat_batches(&whole.schema(), &tables).unwrap();
+    let mut rows: Vec<(u64, u64)> = u64s(&all, "t_ns").into_iter().zip(u64s(&all, "neuron")).collect();
+    rows.sort_unstable();
+    let expected: Vec<(u64, u64)> = u64s(&whole, "t_ns").into_iter().zip(u64s(&whole, "neuron")).collect();
+    assert_eq!(rows, expected, "the parts hold exactly the table's rows");
+    // Small tables stay single files; a new export replaces the dataset again.
+    assert!(dir.join("neurons.parquet").exists());
+    to_parquet(&dir).unwrap();
+    assert!(dir.join("spikes.parquet").exists() && !dir.join("spikes").exists());
 }

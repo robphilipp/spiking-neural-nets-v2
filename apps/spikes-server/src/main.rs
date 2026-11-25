@@ -107,7 +107,7 @@ fn router(state: Arc<AppState>, ui: Option<&Path>) -> Router {
         .route("/api/health", get(health))
         .route("/api/ws", get(websocket))
         .route("/api/recordings", get(recordings))
-        .route("/api/recordings/{id}/{file}", get(recording_file))
+        .route("/api/recordings/{id}/{*file}", get(recording_file))
         .layer(middleware::from_fn_with_state(Arc::clone(&state), authorize))
         .with_state(state);
     match ui {
@@ -174,13 +174,17 @@ async fn recording_file(
     State(state): State<Arc<AppState>>,
     UrlPath((id, file)): UrlPath<(String, String)>,
 ) -> Response {
-    if !plain(&id) || !plain(&file) {
+    // A table's file, or a part of a partitioned table (`spikes/part-00000.parquet`): plain segments only.
+    let segments: Vec<&str> = file.trim_start_matches('/').split('/').collect();
+    if !plain(&id) || segments.len() > 2 || !segments.iter().all(|s| plain(s)) {
         return (StatusCode::BAD_REQUEST, "bad path").into_response();
     }
+    let file = segments.join("/");
     let path = state.recordings.join(id).join(&file);
     match tokio::fs::read(&path).await {
         Ok(bytes) => {
-            let disposition = format!("attachment; filename=\"{file}\"");
+            let name = segments.join("-");
+            let disposition = format!("attachment; filename=\"{name}\"");
             (
                 [
                     (header::CONTENT_TYPE, "application/octet-stream".to_string()),

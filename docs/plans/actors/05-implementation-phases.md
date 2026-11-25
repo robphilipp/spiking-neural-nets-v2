@@ -317,6 +317,21 @@ Milestone 3, preparing for 10⁹ synapses on a cluster (2026-11-24):
 - 10⁹ synapses (~80–90 GB) don't fit on one 64 GB machine, even split into local node agents: running it needs
   machines with ~100 GB between them.
 
+Cluster and recording work while waiting for machines (2026-11-24):
+- Window length: the floor for direct messages was the minimum connection delay (100 µs), capping every window
+  there. It's now the network's shortest direct-message delay (inputs 1 ms, modulator latencies): windows 0.1 →
+  0.51 ms; 100k × 100 synapses 21% faster on 9 shards, 28% on 2 nodes and the coordinator.
+- Placement balances work: the space-filling curve is cut by expected incoming connections, not neuron counts
+  (`uneven` example, halves differing tenfold: 4.23 → 2.74 s per simulated second on 8 shards).
+- `Runtime::sync_wait`: shards wait 3–5% of their time on 2–4 shards, 14% on 6, 34% on 8 of an M1 Max's 8
+  performance cores. The waiting comes from scheduling (other processes, efficiency cores), not from the window
+  structure, so per-link lookahead (each pair of shards synchronizing on its own shortest delay) isn't done: in a
+  spatial network nearly every shard is within a millisecond of every other, and direct messages reach any shard
+  in 1 ms, so a slow shard would still hold the others up. Revisit with measurements from real clusters.
+- Saving while paused (see snapshots above).
+- Recordings: event tables larger than 4M rows export as partitioned Parquet datasets (`spikes/part-*.parquet`,
+  one per span of simulated time, each sorted), converted as a stream in bounded memory.
+
 Next: the 10⁹-synapse network on a cluster (needs the machines).
 
 ## Benchmarks to keep from day one

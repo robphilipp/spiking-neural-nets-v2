@@ -801,18 +801,29 @@ fn list_recordings(root: &Path) -> Vec<api::Recording> {
         .filter(|e| e.path().is_dir() && e.file_name() != SAVES_DIR)
         .map(|e| {
             let path = e.path();
-            let mut files: Vec<api::RecordingFile> = std::fs::read_dir(&path)
-                .into_iter()
-                .flatten()
-                .filter_map(Result::ok)
-                .filter_map(|f| {
-                    let bytes = f.metadata().ok()?.len() as f64;
-                    Some(api::RecordingFile {
-                        name: f.file_name().to_string_lossy().to_string(),
-                        bytes,
-                    })
-                })
-                .collect();
+            // Tables, and the parts of partitioned ones (`spikes/part-00000.parquet`).
+            let mut files: Vec<api::RecordingFile> = Vec::new();
+            for f in std::fs::read_dir(&path).into_iter().flatten().filter_map(Result::ok) {
+                let name = f.file_name().to_string_lossy().to_string();
+                let Ok(meta) = f.metadata() else { continue };
+                if meta.is_dir() {
+                    for part in std::fs::read_dir(f.path()).into_iter().flatten().filter_map(Result::ok) {
+                        if let Ok(m) = part.metadata()
+                            && m.is_file()
+                        {
+                            files.push(api::RecordingFile {
+                                name: format!("{name}/{}", part.file_name().to_string_lossy()),
+                                bytes: m.len() as f64,
+                            });
+                        }
+                    }
+                } else {
+                    files.push(api::RecordingFile {
+                        name,
+                        bytes: meta.len() as f64,
+                    });
+                }
+            }
             files.sort_by(|a, b| a.name.cmp(&b.name));
             api::Recording {
                 id: e.file_name().to_string_lossy().to_string(),

@@ -12,6 +12,21 @@ import { inTauri } from "../tauriClient";
 const size = (bytes: number) =>
   bytes < 1024 ? `${bytes} B` : bytes < 1 << 20 ? `${(bytes / 1024).toFixed(1)} kB` : `${(bytes / (1 << 20)).toFixed(1)} MB`;
 
+/** Partitioned tables (`spikes/part-00000.parquet`, …), one entry each. */
+function datasets(files: Array<{ name: string; bytes: number }>) {
+  const all = new Map<string, { name: string; parts: number; bytes: number }>();
+  for (const f of files) {
+    const slash = f.name.indexOf("/");
+    if (slash < 0) continue;
+    const name = f.name.slice(0, slash);
+    const d = all.get(name) ?? { name, parts: 0, bytes: 0 };
+    d.parts += 1;
+    d.bytes += f.bytes;
+    all.set(name, d);
+  }
+  return [...all.values()];
+}
+
 /** When a recording's id starts with a millisecond timestamp (the engine names them so), when it was made. */
 function made(id: string): string {
   const ms = Number(id.split("-")[0]);
@@ -121,7 +136,13 @@ export function RecordingsPage({ onOpen }: { onOpen: () => void }) {
             </Button>
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {r.files.map((f) =>
+            {datasets(r.files).map((d) => (
+              <Badge key={d.name} variant="outline" title="A partitioned Parquet dataset: read the folder with DuckDB, polars or pyarrow" data-testid="dataset">
+                <Table2 />
+                {d.name}/ · {d.parts} parts · {size(d.bytes)}
+              </Badge>
+            ))}
+            {r.files.filter((f) => !f.name.includes("/")).map((f) =>
               downloads ? (
                 <Badge key={f.name} variant="outline" asChild>
                   <a href={`${base}/api/recordings/${encodeURIComponent(r.id)}/${encodeURIComponent(f.name)}`}>
