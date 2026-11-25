@@ -4,9 +4,8 @@ import { Field, Heading, Notice, Panel } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { pickFolder, readProject, writeProject } from "../files";
-import { useAppDispatch, useAppSelector } from "../hooks";
 import { serializeProject } from "../project";
-import { forget, forgetRecent, newProjectStarted, projectOpened, projectRenamed, projectSaved, setDescription } from "../store";
+import { forget, forgetRecent, newProjectStarted, projectOpened, projectRenamed, projectSaved, setDescription, useProject, useSession } from "../store";
 import { inTauri } from "../tauriClient";
 
 function download(name: string, text: string) {
@@ -18,9 +17,8 @@ function download(name: string, text: string) {
 
 /** Projects: a folder with project.toml and the network (desktop), or files in and out (browser). */
 export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
-  const dispatch = useAppDispatch();
-  const { folder, project, savedDescription, savedProject, recent } = useAppSelector((s) => s.project);
-  const description = useAppSelector((s) => s.session.description);
+  const { folder, project, savedDescription, savedProject, recent } = useProject();
+  const description = useSession((s) => s.description);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const desktop = inTauri();
@@ -37,15 +35,15 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
 
   const open = async (dir: string) => {
     const { project: p, description: text } = await readProject(dir);
-    dispatch(forget()); // a new engine session is created when the network is applied
-    dispatch(projectOpened({ folder: dir, project: p, description: text }));
-    dispatch(setDescription({ name: p.name, description: text }));
+    forget(); // a new engine session is created when the network is applied
+    projectOpened({ folder: dir, project: p, description: text });
+    setDescription({ name: p.name, description: text });
     onOpened();
   };
 
   const save = async (dir: string) => {
     await writeProject(dir, project, description);
-    dispatch(projectSaved({ folder: dir, description }));
+    projectSaved({ folder: dir, description });
     setMessage({ ok: true, text: `Saved to ${dir}` });
   };
 
@@ -58,8 +56,8 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
             label="Project name"
             value={project.name}
             onChange={(e) => {
-              dispatch(projectRenamed(e.target.value));
-              dispatch(setDescription({ name: e.target.value, description }));
+              projectRenamed(e.target.value);
+              setDescription({ name: e.target.value, description });
             }}
           />
           {unsaved && (
@@ -76,9 +74,9 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
             <Button
               variant="outline"
               onClick={() => {
-                dispatch(forget());
-                dispatch(newProjectStarted());
-                dispatch(setDescription({ name: "untitled", description: "" }));
+                forget();
+                newProjectStarted();
+                setDescription({ name: "untitled", description: "" });
               }}
             >
               <FilePlus data-icon="inline-start" />
@@ -132,9 +130,9 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
                 if (!file) return;
                 void file.text().then((text) => {
                   const name = file.name.replace(/\.boo$/, "");
-                  dispatch(forget());
-                  dispatch(projectRenamed(name));
-                  dispatch(setDescription({ name, description: text }));
+                  forget();
+                  projectRenamed(name);
+                  setDescription({ name, description: text });
                   onOpened();
                 });
                 e.target.value = "";
@@ -166,7 +164,7 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
                   <div className="text-sm">{dir.split(/[\\/]/).pop()}</div>
                   <div className="text-xs text-muted-foreground">{dir}</div>
                 </button>
-                <Button variant="ghost" size="icon-xs" title="Remove from the list" aria-label="Remove from the list" onClick={() => dispatch(forgetRecent(dir))}>
+                <Button variant="ghost" size="icon-xs" title="Remove from the list" aria-label="Remove from the list" onClick={() => forgetRecent(dir)}>
                   <X />
                 </Button>
               </li>

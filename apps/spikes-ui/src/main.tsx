@@ -1,9 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { Provider } from "react-redux";
 import { App } from "./App";
 import { ConnectionProvider } from "./connection";
-import { store } from "./store";
+import { useSettings } from "./store";
 import { applyTheme } from "./theme";
 import "./index.css";
 import "./monaco";
@@ -17,14 +16,12 @@ if (inTauri()) {
     .catch(() => {});
 }
 
-applyTheme(store.getState().settings.theme);
+applyTheme(useSettings.getState().theme);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Provider store={store}>
-      <ConnectionProvider>
-        <App />
-      </ConnectionProvider>
-    </Provider>
+    <ConnectionProvider>
+      <App />
+    </ConnectionProvider>
   </StrictMode>,
 );

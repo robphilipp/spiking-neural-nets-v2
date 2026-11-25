@@ -5,8 +5,7 @@ import { Heading, Notice, Panel } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { defaultServer, useConnection } from "../connection";
-import { useAppDispatch, useAppSelector } from "../hooks";
-import { opened } from "../store";
+import { opened, useProject, useSettings } from "../store";
 import { inTauri } from "../tauriClient";
 
 const size = (bytes: number) =>
@@ -37,12 +36,11 @@ function made(id: string): string {
  *  one where it was saved. */
 export function RecordingsPage({ onOpen }: { onOpen: () => void }) {
   const { client } = useConnection();
-  const dispatch = useAppDispatch();
-  const server = useAppSelector((s) => s.settings.server);
+  const server = useSettings((s) => s.server);
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [saves, setSaves] = useState<SavedRun[]>([]);
-  const shards = useAppSelector((s) => s.project.project.run.shards);
-  const nodes = useAppSelector((s) => s.settings.nodes)
+  const shards = useProject((s) => s.project.run.shards);
+  const nodes = useSettings((s) => s.nodes)
     .split(",")
     .map((n) => n.trim())
     .filter(Boolean);
@@ -93,7 +91,7 @@ export function RecordingsPage({ onOpen }: { onOpen: () => void }) {
                 onClick={attempt(async () => {
                   const opened_ = await client!.openSave(s.id, shards, nodes);
                   const [description, network] = await Promise.all([client!.getDescription(opened_.id), client!.getNetwork(opened_.id)]);
-                  dispatch(opened({ id: opened_.id, name: opened_.name, description, state: opened_.state, simMs: opened_.simMs, network }));
+                  opened({ id: opened_.id, name: opened_.name, description, state: opened_.state, simMs: opened_.simMs, network });
                   onOpen();
                 })}
               >
@@ -116,7 +114,7 @@ export function RecordingsPage({ onOpen }: { onOpen: () => void }) {
               data-testid="replay"
               onClick={attempt(async () => {
                 const s = await client!.openRecording(r.id);
-                dispatch(opened({ id: s.id, name: s.name, description: await client!.getDescription(s.id), state: s.state, simMs: s.simMs, network: null, replayEndMs: s.replayEndMs }));
+                opened({ id: s.id, name: s.name, description: await client!.getDescription(s.id), state: s.state, simMs: s.simMs, network: null, replayEndMs: s.replayEndMs });
                 onOpen();
               })}
             >

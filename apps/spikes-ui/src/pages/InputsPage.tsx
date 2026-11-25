@@ -14,12 +14,12 @@ import {
   TimeSeriesDataSource,
 } from "stream-charts";
 import { useConnection } from "../connection";
-import { useAppSelector } from "../hooks";
 import { startInput, stopInput, useActiveInput } from "../inputStreams";
 import { compile, sample, type Signal, SignalError } from "../signal";
 import { Choice, Field, Heading, Notice, Panel, Row } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { useChartColors } from "../theme";
+import { useSession } from "../store";
 
 const PALETTE = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#F0E442", "#999999"];
 const DT_MS = 1; // sample spacing for designed signals
@@ -77,7 +77,7 @@ function bands(spectrum: Float32Array, channels: number, sampleRate: number): Fl
 export function InputsPage() {
   const colors = useChartColors();
   const { client } = useConnection();
-  const { id, network, state, replayEndMs } = useAppSelector((s) => s.session);
+  const { id, network, state, replayEndMs } = useSession();
   const [prefix, setPrefix] = useState("input-");
   const [kind, setKind] = useState<EncodingKind>("rate");
   const [a, setA] = useState(200);

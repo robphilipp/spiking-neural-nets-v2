@@ -8,17 +8,15 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConnection } from "../connection";
 import { examples } from "../examples";
-import { useAppDispatch, useAppSelector } from "../hooks";
 import { LANGUAGE_ID } from "../language/register";
 import { monaco } from "../monaco";
-import { applied, parseFailed, setDescription } from "../store";
+import { applied, parseFailed, setDescription, useSession } from "../store";
 import { useThemeMode } from "../theme";
 
 /** The network description editor: edit, then apply to the engine, which reports parse errors in place. */
 export function NetworkPage() {
   const { client } = useConnection();
-  const dispatch = useAppDispatch();
-  const { id, name, description, applied: appliedText, errors, state } = useAppSelector((s) => s.session);
+  const { id, name, description, applied: appliedText, errors, state } = useSession();
   const dark = useThemeMode() === "dark";
   const exampleId = useId();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
@@ -50,15 +48,15 @@ export function NetworkPage() {
     try {
       if (id === null) {
         const session = await client.createSession(name, description);
-        dispatch(applied({ id: session.id, description }));
+        applied({ id: session.id, description });
       } else {
         await client.updateDescription(id, description);
-        dispatch(applied({ id, description }));
+        applied({ id, description });
       }
       setMessage("Applied. Build it on the Run page.");
     } catch (e) {
       if (e instanceof SpikesError && e.error.code === "parse") {
-        dispatch(parseFailed(e.error.spans ?? []));
+        parseFailed(e.error.spans ?? []);
         setMessage(`${e.error.spans?.length ?? 0} error(s) in the description`);
       } else {
         setMessage(e instanceof Error ? e.message : String(e));
@@ -80,7 +78,7 @@ export function NetworkPage() {
             value=""
             onValueChange={(v) => {
               const example = examples.find((e) => e.name === v);
-              if (example) dispatch(setDescription({ name: example.name, description: example.text }));
+              if (example) setDescription({ name: example.name, description: example.text });
             }}
           >
             <SelectTrigger id={exampleId} className="w-full" aria-label="Open an example">
@@ -115,7 +113,7 @@ export function NetworkPage() {
           language={LANGUAGE_ID}
           theme={dark ? "vs-dark" : "vs"}
           value={description}
-          onChange={(text) => dispatch(setDescription({ description: text ?? "" }))}
+          onChange={(text) => setDescription({ description: text ?? "" })}
           onMount={(editor) => {
             editorRef.current = editor;
           }}

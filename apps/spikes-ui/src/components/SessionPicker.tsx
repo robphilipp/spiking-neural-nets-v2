@@ -2,19 +2,17 @@ import type { SessionSummary } from "@spikes/client";
 import { useState } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConnection } from "../connection";
-import { useAppDispatch, useAppSelector } from "../hooks";
-import { forget, opened } from "../store";
+import { forget, opened, useSession } from "../store";
 
 /** Switches between the sessions on the engine (including ones started elsewhere, e.g. by a sensor script). */
 export function SessionPicker() {
   const { client } = useConnection();
-  const dispatch = useAppDispatch();
-  const current = useAppSelector((s) => s.session);
+  const current = useSession();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
 
   const choose = async (value: string) => {
     if (!client) return;
-    if (value === "new") return void dispatch(forget());
+    if (value === "new") return void forget();
     const id = Number(value);
     const summary = sessions.find((s) => s.id === id);
     if (!summary) return;
@@ -22,9 +20,7 @@ export function SessionPicker() {
       client.getDescription(id),
       summary.state === "loaded" ? Promise.resolve(null) : client.getNetwork(id),
     ]);
-    dispatch(
-      opened({ id, name: summary.name, description, state: summary.state, simMs: summary.simMs, network, replayEndMs: summary.replayEndMs }),
-    );
+    opened({ id, name: summary.name, description, state: summary.state, simMs: summary.simMs, network, replayEndMs: summary.replayEndMs });
   };
 
   const value = current.id === null ? "new" : String(current.id);

@@ -4,14 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useConnection } from "../connection";
-import { useAppDispatch, useAppSelector } from "../hooks";
-import { updateSettings } from "../store";
+import { updateSettings, useSettings } from "../store";
 import { inTauri } from "../tauriClient";
 import { applyTheme, type ThemeChoice } from "../theme";
 
 export function SettingsPage() {
-  const settings = useAppSelector((s) => s.settings);
-  const dispatch = useAppDispatch();
+  const settings = useSettings();
   const { status, error } = useConnection();
   const [server, setServer] = useState(settings.server);
   const [token, setToken] = useState(settings.token);
@@ -35,7 +33,7 @@ export function SettingsPage() {
         />
         <Field label="Access token" type="password" value={token} onChange={(e) => setToken(e.target.value)} help="If the server was started with --token-file" />
         <div className="flex items-center gap-3">
-          <Button onClick={() => dispatch(updateSettings({ server: server.trim(), token: token.trim() }))}>Connect</Button>
+          <Button onClick={() => updateSettings({ server: server.trim(), token: token.trim() })}>Connect</Button>
           <span className="text-sm text-muted-foreground">{status}</span>
         </div>
         {error && <Notice tone="error">{error}</Notice>}
@@ -47,7 +45,7 @@ export function SettingsPage() {
           placeholder="none: the engine alone"
           value={nodes}
           onChange={(e) => setNodes(e.target.value)}
-          onBlur={() => dispatch(updateSettings({ nodes: nodes.trim() }))}
+          onBlur={() => updateSettings({ nodes: nodes.trim() })}
           data-testid="cluster-nodes"
           help="Spread networks over other machines: their node agents (spikes-server --node --listen host:port), comma-separated. Each runs the Run page's shards. Applies at the next build."
         />
@@ -60,7 +58,7 @@ export function SettingsPage() {
           aria-labelledby={themeId}
           onValueChange={(value) => {
             const theme = value as ThemeChoice;
-            dispatch(updateSettings({ theme }));
+            updateSettings({ theme });
             applyTheme(theme);
           }}
         >

@@ -1,7 +1,6 @@
 import { type ProtocolClient, type Status, WebSocketClient } from "@spikes/client";
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
-import { useAppDispatch, useAppSelector } from "./hooks";
-import { networkUpdated, stateChanged } from "./store";
+import { networkUpdated, stateChanged, useSession, useSettings } from "./store";
 import { inTauri, TauriClient } from "./tauriClient";
 
 interface Connection {
@@ -21,9 +20,8 @@ export function defaultServer(): string {
 
 /** Connects to the engine named in the settings and keeps the session's state in the store. */
 export function ConnectionProvider({ children }: { children: ReactNode }) {
-  const { server, token } = useAppSelector((s) => s.settings);
-  const sessionId = useAppSelector((s) => s.session.id);
-  const dispatch = useAppDispatch();
+  const { server, token } = useSettings();
+  const sessionId = useSession((s) => s.id);
   const [connection, setConnection] = useState<Connection>({ client: null, status: "connecting", error: null });
 
   useEffect(() => {
@@ -60,12 +58,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     if (!connection.client || sessionId === null) return;
     return connection.client.onNotice((session, notice) => {
       if (session !== sessionId) return;
-      if (notice.type === "stateChanged") dispatch(stateChanged(notice.state));
+      if (notice.type === "stateChanged") stateChanged(notice.state);
       if (notice.type === "networkChanged") {
-        void connection.client!.getNetwork(session).then((n) => dispatch(networkUpdated(n)));
+        void connection.client!.getNetwork(session).then((n) => networkUpdated(n));
       }
     });
-  }, [connection.client, sessionId, dispatch]);
+  }, [connection.client, sessionId]);
 
   return <ConnectionContext value={connection}>{children}</ConnectionContext>;
 }

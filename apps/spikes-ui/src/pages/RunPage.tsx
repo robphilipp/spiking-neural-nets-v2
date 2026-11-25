@@ -21,10 +21,9 @@ import { Modulators } from "../components/Modulators";
 import { Network3D } from "../components/Network3D";
 import { WeightsPanel } from "../components/WeightsPanel";
 import { useConnection } from "../connection";
-import { useAppDispatch, useAppSelector } from "../hooks";
 import { stopInput, useActiveInput } from "../inputStreams";
 import { CADENCE_MS, type LiveStats, LiveView } from "../live";
-import { backgroundChanged, built, runSettingsChanged, simTime } from "../store";
+import { backgroundChanged, built, runSettingsChanged, simTime, useProject, useSession, useSettings } from "../store";
 import { useChartColors } from "../theme";
 
 /** The width of an element, following resizes. A callback ref, so it starts measuring whenever the element appears. */
@@ -50,22 +49,21 @@ const MAX_ROWS = 300;
 export function RunPage() {
   const colors = useChartColors();
   const { client } = useConnection();
-  const dispatch = useAppDispatch();
-  const session = useAppSelector((s) => s.session);
+  const session = useSession();
   const { id, network, state } = session;
 
   // Run settings belong to the project (saved in project.toml).
-  const run = useAppSelector((s) => s.project.project.run);
-  const background = useAppSelector((s) => s.project.project.background);
+  const run = useProject((s) => s.project.run);
+  const background = useProject((s) => s.project.background);
   const { shards, seed } = run;
   const asFastAsPossible = run.speed === null;
   const [lastSpeedLog, setLastSpeedLog] = useState(0);
   const speedLog = run.speed ? Math.round(Math.log2(run.speed)) : lastSpeedLog;
   const setSpeedLog = (v: number) => {
     setLastSpeedLog(v);
-    dispatch(runSettingsChanged({ speed: speedOf(v) }));
+    runSettingsChanged({ speed: speedOf(v) });
   };
-  const setAsFastAsPossible = (on: boolean) => dispatch(runSettingsChanged({ speed: on ? null : speedOf(speedLog) }));
+  const setAsFastAsPossible = (on: boolean) => runSettingsChanged({ speed: on ? null : speedOf(speedLog) });
   const [durationText, setDurationText] = useState(run.durationS === null ? "" : String(run.durationS));
   useEffect(() => setDurationText(run.durationS === null ? "" : String(run.durationS)), [run.durationS]);
   const [filter, setFilter] = useState("");
@@ -81,7 +79,7 @@ export function RunPage() {
   const [savedNote, setSavedNote] = useState<string | null>(null);
   /** Building (and applying background input): nothing else may start meanwhile. */
   const [building, setBuilding] = useState(false);
-  const nodesSetting = useAppSelector((s) => s.settings.nodes);
+  const nodesSetting = useSettings((s) => s.nodes);
   /** The node agents the network was last built on (empty: the engine alone). */
   const [builtNodes, setBuiltNodes] = useState<string[]>([]);
   const [lockstep, setLockstep] = useState(true);
@@ -153,7 +151,7 @@ export function RunPage() {
         setLive(v);
         v.stats.subscribe((s) => {
           setStats(s);
-          dispatch(simTime(s.simMs));
+          simTime(s.simMs);
         });
       })
       .catch((e: Error) => setError(e.message));
@@ -162,7 +160,7 @@ export function RunPage() {
       setLive(null);
       void view?.dispose();
     };
-  }, [client, id, network, selection, dispatch]);
+  }, [client, id, network, selection]);
 
   const act = (f: () => Promise<unknown>) => async () => {
     setError(null);
@@ -189,15 +187,15 @@ export function RunPage() {
   );
   const setBackground = (next: typeof backgroundDraft) => {
     setBackgroundDraft(next);
-    if (background) dispatch(backgroundChanged(next));
+    if (background) backgroundChanged(next);
   };
 
   return (
     <div className="flex flex-col gap-3">
       <Panel>
         <Row className="items-end">
-          <Field label="Shards" type="number" width={90} value={shards} onChange={(e) => dispatch(runSettingsChanged({ shards: Math.max(1, Math.round(Number(e.target.value)) || 1) }))} />
-          <Field label="Seed" type="number" width={90} value={seed} onChange={(e) => dispatch(runSettingsChanged({ seed: Math.round(Number(e.target.value)) || 0 }))} />
+          <Field label="Shards" type="number" width={90} value={shards} onChange={(e) => runSettingsChanged({ shards: Math.max(1, Math.round(Number(e.target.value)) || 1) })} />
+          <Field label="Seed" type="number" width={90} value={seed} onChange={(e) => runSettingsChanged({ seed: Math.round(Number(e.target.value)) || 0 })} />
           <Button
             variant={needsRebuild && !running ? "default" : "outline"}
             className={needsRebuild && !running ? "bg-warning text-black hover:bg-warning/80" : undefined}
@@ -215,7 +213,7 @@ export function RunPage() {
                   if (!targets.length) throw new Error(`background input: no neuron names start with '${background.prefix}'`);
                   await client!.addInput(id, { type: "poisson", targets, rateHz: background.rateHz * targets.length, mv: background.mv, durationMs: null });
                 }
-                dispatch(built(net));
+                built(net);
                 setBuiltBackground(JSON.stringify(background));
               } finally {
                 setBuilding(false);
@@ -298,7 +296,7 @@ export function RunPage() {
             value={durationText}
             placeholder="until stopped"
             onChange={(e) => setDurationText(e.target.value.replace(/[^\d.]/g, ""))}
-            onBlur={() => dispatch(runSettingsChanged({ durationS: Number(durationText) > 0 ? Number(durationText) : null }))}
+            onBlur={() => runSettingsChanged({ durationS: Number(durationText) > 0 ? Number(durationText) : null })}
           />
           <div className="grid w-52 gap-2 pb-1.5">
             <span className="text-xs text-muted-foreground">Speed {asFastAsPossible ? "max" : speedLabel(speedLog)}</span>
@@ -377,7 +375,7 @@ export function RunPage() {
             <Toggle
               label="Background input"
               checked={background !== null}
-              onChange={(on) => dispatch(backgroundChanged(on ? backgroundDraft : null))}
+              onChange={(on) => backgroundChanged(on ? backgroundDraft : null)}
               testId="background"
               title="Poisson input, applied when the network is built"
             />
