@@ -7,7 +7,7 @@ use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use spikes_dna::{NetworkDescription, Pattern, SynapseSpec, WeightSpec};
 use spikes_model::{NeuronParams, Receptor, Sign, Synapse, SynapseParams};
-use tempo_runtime::placement::spatial_partitions_weighted;
+use tempo_runtime::placement::{spatial_partitions_pinned, spatial_partitions_weighted};
 use tempo_runtime::{ActorId, EdgeIdx, Jitter, RouteEdge, RouteId, SimDuration};
 
 use crate::Runtime;
@@ -27,6 +27,9 @@ pub struct BuildOptions {
     pub jitter: Jitter,
     /// Report every weight change from learning as an event.
     pub record_weights: bool,
+    /// On a cluster: which node each node name of the description is (`main` is 0). Neurons pinned to a node
+    /// (`node=`) run there; without names (or on one node) pins are ignored.
+    pub nodes: HashMap<String, u32>,
 }
 
 impl Default for BuildOptions {
@@ -36,6 +39,7 @@ impl Default for BuildOptions {
             min_delay: SimDuration::ZERO,
             jitter: Jitter::None,
             record_weights: true,
+            nodes: HashMap::new(),
         }
     }
 }
@@ -453,7 +457,26 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
     // Neurons, placed so that nearby neurons share a partition, and partitions get equal work: a neuron's work is
     // mostly its incoming connections.
     let locations: Vec<[f64; 3]> = description.neurons.iter().map(|d| d.location_um()).collect();
-    let partitions = spatial_partitions_weighted(&locations, &expected_work(description), rt.partitions());
+    // Neurons pinned to a node get that node's partitions (on a cluster, when its nodes are named).
+    let placement = rt.placement().clone();
+    let pins: Vec<Option<(u32, u32)>> = if placement.nodes() > 1 && !options.nodes.is_empty() {
+        description
+            .pinned_nodes()
+            .into_iter()
+            .map(|node| {
+                let k = *options.nodes.get(node.as_deref()?)?;
+                (k < placement.nodes()).then(|| placement.partitions_of(k, rt.partitions()))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let work = expected_work(description);
+    let partitions = if pins.iter().any(Option::is_some) {
+        spatial_partitions_pinned(&locations, &work, &pins, rt.partitions())
+    } else {
+        spatial_partitions_weighted(&locations, &work, rt.partitions())
+    };
     let ids: Vec<ActorId> = (0..n)
         .map(|i| {
             let actor = NeuronActor::new(Arc::clone(&params), populations[i], locations[i]);

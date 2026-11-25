@@ -375,3 +375,58 @@ fn a_run_saved_on_a_cluster_continues_anywhere() {
 fn expected_synapses(network: &spikes_session::NetworkInfo) -> u64 {
     network.synapses.len() as u64
 }
+
+const PINNED: &str = "(
+nodes=[(name=edge)],
+neuron_types=[(name=cell, threshold=5 mV, membrane_noise=0 mV, conduction_speed=1 m/s)],
+populations=[
+    (name=sensors, type=cell, count=20, line=(from=[0, 0, 0], to=[190, 0, 0]), node=edge),
+    (name=cortex, type=cell, count=200, random=(box=(corner=[0, 50, 0], size=[400, 400, 100]))),
+],
+connections=[
+    (from=sensors, to=cortex, pattern=fan_in, count=5, weight=2),
+    (from=cortex, to=cortex, pattern=fan_in, count=10, weight=0.5),
+],
+)";
+
+#[test]
+fn a_population_pinned_to_a_named_node_runs_there() {
+    let engine = Engine::new();
+    let session = engine.create("pinned", PINNED).unwrap();
+    let two = agents(2);
+    session
+        .set_nodes(vec![two[0].clone(), format!("edge={}", two[1])])
+        .unwrap();
+    let network = session.build(BuildSettings::default()).unwrap();
+    let nodes = session.neuron_nodes().unwrap();
+    let edge: Vec<u32> = (0..20)
+        .map(|i| nodes[network.by_name(&format!("sensors-{i}")).unwrap() as usize])
+        .collect();
+    assert!(
+        edge.iter().all(|&n| n == 2),
+        "the sensors run on 'edge', the second agent: {edge:?}"
+    );
+    let cortex: Vec<u32> = (0..200)
+        .map(|i| nodes[network.by_name(&format!("cortex-{i}")).unwrap() as usize])
+        .collect();
+    for node in 0..3 {
+        let count = cortex.iter().filter(|&&n| n == node).count();
+        assert!(count > 20, "the rest is spread over every node: {count} on node {node}");
+    }
+    session.stimulate(&(0..20).collect::<Vec<_>>(), 10.0).unwrap();
+    run(&session, 50, None);
+    let spikes: u64 = (0..220).map(|i| session.query_neuron(i).unwrap().spikes).sum();
+    assert!(spikes >= 20, "{spikes} spikes");
+    session.leave_cluster();
+
+    // A cluster that doesn't name the node the network pins to: refused, with what to do.
+    let unnamed = engine.create("unnamed", PINNED).unwrap();
+    unnamed.set_nodes(agents(1)).unwrap();
+    let err = unnamed.build(BuildSettings::default()).unwrap_err();
+    assert!(err.to_string().contains("edge=host:port"), "{err}");
+
+    // In one process, pins don't matter: everything runs here.
+    let alone = engine.create("alone", PINNED).unwrap();
+    alone.build(BuildSettings::default()).unwrap();
+    assert!(alone.neuron_nodes().unwrap().iter().all(|&n| n == 0));
+}

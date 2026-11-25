@@ -37,6 +37,92 @@ pub fn spatial_partitions_weighted(positions: &[[f64; 3]], weights: &[u64], part
     if positions.is_empty() {
         return Vec::new();
     }
+    let order = curve_order(positions);
+    let total: u128 = weights.iter().map(|&w| u128::from(w)).sum::<u128>().max(1);
+    let mut result = vec![Partition(0); positions.len()];
+    let mut before: u128 = 0;
+    for &i in &order {
+        result[i] = Partition((before * u128::from(partitions) / total).min(u128::from(partitions - 1)) as u32);
+        before += u128::from(weights[i]);
+    }
+    result
+}
+
+/// Like [`spatial_partitions_weighted`], with some actors pinned to a range of partitions (`[first, end)`, a node's:
+/// see [`crate::NodePlacement::partitions_of`]). Each range's pinned actors are cut along the curve over its
+/// partitions; the free actors then fill every partition up to an equal share of all the work (what's pinned
+/// counts), in curve order, so the work stays balanced.
+///
+/// # Panics
+/// If `partitions` is zero, the slices' lengths differ, or a range is empty or beyond `partitions`.
+pub fn spatial_partitions_pinned(
+    positions: &[[f64; 3]],
+    weights: &[u64],
+    pinned: &[Option<(u32, u32)>],
+    partitions: u32,
+) -> Vec<Partition> {
+    assert!(partitions > 0, "need at least one partition");
+    assert!(
+        weights.len() == positions.len() && pinned.len() == positions.len(),
+        "a weight and pin for each position"
+    );
+    let order = curve_order(positions);
+    let p = partitions as usize;
+    let mut load = vec![0f64; p];
+    let mut result = vec![Partition(0); positions.len()];
+    // Pinned actors, range by range.
+    let mut ranges: Vec<(u32, u32)> = pinned.iter().flatten().copied().collect();
+    ranges.sort_unstable();
+    ranges.dedup();
+    for &(first, end) in &ranges {
+        assert!(
+            first < end && end <= partitions,
+            "a partition range within the partitions"
+        );
+        let members: Vec<usize> = order
+            .iter()
+            .copied()
+            .filter(|&i| pinned[i] == Some((first, end)))
+            .collect();
+        let total: u128 = members.iter().map(|&i| u128::from(weights[i])).sum::<u128>().max(1);
+        let span = u128::from(end - first);
+        let mut before: u128 = 0;
+        for i in members {
+            let k = first + (before * span / total).min(span - 1) as u32;
+            result[i] = Partition(k);
+            load[k as usize] += weights[i] as f64;
+            before += u128::from(weights[i]);
+        }
+    }
+    // Free actors fill what's left of each partition's share.
+    let free: Vec<usize> = order.iter().copied().filter(|&i| pinned[i].is_none()).collect();
+    if free.is_empty() {
+        return result;
+    }
+    let all: f64 = weights.iter().map(|&w| w as f64).sum();
+    let share = all / p as f64;
+    let mut room: Vec<f64> = load.iter().map(|&l| (share - l).max(0.0)).collect();
+    if room.iter().sum::<f64>() <= 0.0 {
+        room = vec![1.0; p];
+    }
+    let room_total: f64 = room.iter().sum();
+    let free_total: f64 = free.iter().map(|&i| weights[i] as f64).sum::<f64>().max(1.0);
+    let (mut k, mut end_of_k, mut before) = (0usize, room[0], 0f64);
+    for i in free {
+        // Where this actor starts along the free work, in units of room.
+        let at = before / free_total * room_total;
+        while at >= end_of_k && k + 1 < p {
+            k += 1;
+            end_of_k += room[k];
+        }
+        result[i] = Partition(k as u32);
+        before += weights[i] as f64;
+    }
+    result
+}
+
+/// The positions' indices in Z-order (Morton) along their bounding box.
+fn curve_order(positions: &[[f64; 3]]) -> Vec<usize> {
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
     for p in positions {
@@ -60,14 +146,7 @@ pub fn spatial_partitions_weighted(positions: &[[f64; 3]], weights: &[u64], part
         .map(|(i, p)| (morton3(quantize(p[0], 0), quantize(p[1], 1), quantize(p[2], 2)), i))
         .collect();
     order.sort_unstable();
-    let total: u128 = weights.iter().map(|&w| u128::from(w)).sum::<u128>().max(1);
-    let mut result = vec![Partition(0); positions.len()];
-    let mut before: u128 = 0;
-    for &(_, i) in &order {
-        result[i] = Partition((before * u128::from(partitions) / total).min(u128::from(partitions - 1)) as u32);
-        before += u128::from(weights[i]);
-    }
-    result
+    order.into_iter().map(|(_, i)| i).collect()
 }
 
 /// Interleaves the low 21 bits of x, y and z into a 63-bit Morton code.
@@ -138,6 +217,24 @@ mod tests {
         assert_eq!(
             spatial_partitions_weighted(&positions, &[3; 1000], 4),
             spatial_partitions(&positions, 4)
+        );
+    }
+
+    #[test]
+    fn pinned_actors_stay_in_their_range_and_the_rest_balances() {
+        // 1000 points on a line, 64 partitions over 2 nodes ([0, 32) and [32, 64)); the first 300 pinned to node 1.
+        let positions: Vec<[f64; 3]> = (0..1000).map(|i| [f64::from(i), 0.0, 0.0]).collect();
+        let weights = vec![1u64; 1000];
+        let pinned: Vec<Option<(u32, u32)>> = (0..1000).map(|i| (i < 300).then_some((32, 64))).collect();
+        let parts = spatial_partitions_pinned(&positions, &weights, &pinned, 64);
+        assert!(parts[..300].iter().all(|p| (32..64).contains(&p.0)));
+        // Node 0 takes about half the work (500), all of it free; node 1 the pinned 300 and about 200 free.
+        let on_node_0 = parts.iter().filter(|p| p.0 < 32).count();
+        assert!((480..=520).contains(&on_node_0), "{on_node_0}");
+        // Nothing pinned: the plain cut.
+        assert_eq!(
+            spatial_partitions_pinned(&positions, &weights, &vec![None; 1000], 64),
+            spatial_partitions(&positions, 64)
         );
     }
 

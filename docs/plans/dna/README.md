@@ -1,6 +1,6 @@
 # The network description language, restructured
 
-Status: language, builder and migration done (2026-11-25); placement on nodes next. Replaces the v1-derived language (`spikes-dna`, `.boo` files). No compatibility with
+Status: done (2026-11-25): language, builder, migration (`spikes migrate`), placement on nodes, editor. Replaces the v1-derived language (`spikes-dna`, `.boo` files). No compatibility with
 the old form: a one-time `spikes migrate` converts old files, and the test networks are converted with it.
 
 ## Why

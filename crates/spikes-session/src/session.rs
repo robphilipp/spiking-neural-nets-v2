@@ -500,6 +500,7 @@ impl Session {
             min_delay: settings.min_delay,
             jitter: settings.jitter,
             record_weights: settings.record_weights,
+            nodes: node.map(|n| n.node_names.clone()).unwrap_or_default(),
         };
         let net = spikes_network::build(&mut rt, &inner.description, &options);
         // Sensors belong to a built network: numbering them afresh makes a rebuilt network with the same inputs
@@ -523,8 +524,22 @@ impl Session {
         Ok((rt, net, network))
     }
 
-    /// Builds node agents on these addresses (`host:port`) from the next build on, as one cluster that this session
-    /// coordinates; empty for this process alone. See [`crate::cluster`].
+    /// Which node each neuron runs on (0: this process; on a cluster, a node agent's number in the order given to
+    /// [`Self::set_nodes`], from 1), once built.
+    pub fn neuron_nodes(&self) -> Option<Vec<u32>> {
+        let inner = self.inner();
+        let Stage::Ready(built) = &inner.phase else { return None };
+        let network = &inner.network;
+        Some(
+            (0..network.neurons.len() as u32)
+                .map(|i| network.id(i).and_then(|id| built.rt.node_of(id)).unwrap_or(0))
+                .collect(),
+        )
+    }
+
+    /// Builds node agents on these addresses from the next build on, as one cluster that this session coordinates;
+    /// empty for this process alone. Each is `host:port`, or `name=host:port` to be the node a description's
+    /// `node=name` pins neurons to (see [`crate::cluster`]).
     pub fn set_nodes(&self, nodes: Vec<String>) -> Result<(), SessionError> {
         let mut inner = self.inner();
         expect_not_running(&inner)?;

@@ -47,7 +47,7 @@ export function SettingsPage() {
           onChange={(e) => setNodes(e.target.value)}
           onBlur={() => updateSettings({ nodes: nodes.trim() })}
           data-testid="cluster-nodes"
-          help="Spread networks over other machines: their node agents (spikes-server --node --listen host:port), comma-separated. Each runs the Run page's shards. Applies at the next build."
+          help="Spread networks over other machines: their node agents (spikes-server --node --listen host:port), comma-separated. Name one (camera=host:port) to run there the neurons a network pins to that node (node=camera). Each runs the Run page's shards. Applies at the next build."
         />
       </Panel>
       <Panel>

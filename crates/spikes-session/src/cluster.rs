@@ -93,6 +93,8 @@ enum Request {
         min_delay_ns: u64,
         jitter: WireJitter,
         record_weights: bool,
+        /// The description's node names, and which node each is (`main` is 0).
+        node_names: Vec<(String, u32)>,
     },
     /// Add a synthetic input starting at `start_ns` (every node spawns it, so the directories stay identical).
     AddInput {
@@ -297,6 +299,8 @@ pub(crate) struct NewSynapse<'a> {
 /// What a session needs to build as a node of a cluster.
 pub(crate) struct NodeSetup {
     pub(crate) placement: tempo_runtime::NodePlacement,
+    /// The description's node names, and which node each is (`main`, the coordinator, is 0).
+    pub(crate) node_names: std::collections::HashMap<String, u32>,
     pub(crate) link: StrictLink<SimMsg>,
     /// Connects the mesh once the runtime is built (blocks until every node has connected).
     pub(crate) connect: MeshConnect,
@@ -311,9 +315,33 @@ impl Coordinator {
         description: &spikes_dna::NetworkDescription,
         settings: &BuildSettings,
     ) -> Result<(Arc<Self>, NodeSetup), SessionError> {
-        let clients = nodes
+        let entries = node_entries(nodes);
+        // Node names: `main` is the coordinator, a named entry is its node (in the order given).
+        let mut node_names: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::from([("main".into(), 0)]);
+        for (k, (name, _)) in entries.iter().enumerate() {
+            if let Some(name) = name
+                && node_names.insert(name.clone(), k as u32 + 1).is_some()
+            {
+                return Err(SessionError::Invalid(format!("node '{name}' is named twice")));
+            }
+        }
+        // Every node the description pins neurons to must be one of them.
+        for name in &description.nodes {
+            let pinned = description
+                .pinned_nodes()
+                .iter()
+                .any(|n| n.as_deref() == Some(name.as_str()));
+            if pinned && !node_names.contains_key(name) {
+                return Err(SessionError::Invalid(format!(
+                    "the network pins neurons to node '{name}': name one of the node agents '{name}' (e.g. \
+                     {name}=host:port in Settings)"
+                )));
+            }
+        }
+        let clients = entries
             .iter()
-            .map(|a| NodeClient::connect(a))
+            .map(|(_, address)| NodeClient::connect(address))
             .collect::<Result<Vec<_>, _>>()?;
         // The mesh listens on the address the node agents reach us from.
         let ip = clients
@@ -362,6 +390,7 @@ impl Coordinator {
                 min_delay_ns: settings.min_delay.as_nanos(),
                 jitter: settings.jitter.into(),
                 record_weights: settings.record_weights,
+                node_names: node_names.iter().map(|(k, v)| (k.clone(), *v)).collect(),
             };
             let done_tx = done_tx.clone();
             std::thread::spawn(move || {
@@ -375,6 +404,7 @@ impl Coordinator {
                 node: 0,
                 shards_per_node: vec![shards; n as usize],
             },
+            node_names,
             link,
             connect: Box::new(move |link| {
                 let transport =
@@ -834,6 +864,7 @@ fn handle(
             min_delay_ns,
             jitter,
             record_weights,
+            node_names,
         } => {
             if let Some(old) = session.take() {
                 old.leave_cluster();
@@ -854,6 +885,7 @@ fn handle(
                     node,
                     shards_per_node: vec![shards; addresses.len()],
                 },
+                node_names: node_names.into_iter().collect(),
                 link,
                 connect: Box::new(move |link| {
                     let transport =
@@ -928,4 +960,15 @@ fn handle(
             Response::Ok
         }
     })
+}
+
+/// Node agents as given: `host:port`, or `name=host:port` for a node a description can pin neurons to.
+pub(crate) fn node_entries(nodes: &[String]) -> Vec<(Option<String>, String)> {
+    nodes
+        .iter()
+        .map(|entry| match entry.split_once('=') {
+            Some((name, address)) => (Some(name.trim().to_string()), address.trim().to_string()),
+            None => (None, entry.trim().to_string()),
+        })
+        .collect()
 }
