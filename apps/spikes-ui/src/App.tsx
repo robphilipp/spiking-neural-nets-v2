@@ -1,6 +1,14 @@
-import { Activity, Code2, FolderOpen, History, PlayCircle, Radio, Settings } from "lucide-react";
+import {
+  Activity,
+  Code2,
+  FolderOpen,
+  History,
+  PlayCircle,
+  Radio,
+  Settings,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
-import { StateBadge } from "@/components/kit";
+import { Notice, StateBadge } from "@/components/kit";
 import {
   Sidebar,
   SidebarContent,
@@ -16,7 +24,7 @@ import {
 } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SessionPicker } from "./components/SessionPicker";
-import { useConnection } from "./connection";
+import { useConnection, useEngineError } from "./connection";
 import { InputsPage } from "./pages/InputsPage";
 import { NetworkPage } from "./pages/NetworkPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -24,7 +32,8 @@ import { RecordingsPage } from "./pages/RecordingsPage";
 import { RunPage } from "./pages/RunPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
-type Page = "projects" | "network" | "run" | "inputs" | "recordings" | "settings";
+type Page =
+  "projects" | "network" | "run" | "inputs" | "recordings" | "settings";
 const PAGES: Array<{ id: Page; label: string; icon: ReactNode }> = [
   { id: "projects", label: "Project", icon: <FolderOpen /> },
   { id: "network", label: "Network", icon: <Code2 /> },
@@ -37,14 +46,19 @@ const PAGES: Array<{ id: Page; label: string; icon: ReactNode }> = [
 export function App() {
   const [page, setPage] = useState<Page>("network");
   const { status } = useConnection();
+  const engineError = useEngineError();
   return (
     <TooltipProvider>
-      <SidebarProvider style={{ "--sidebar-width": "11rem" } as React.CSSProperties}>
+      <SidebarProvider
+        style={{ "--sidebar-width": "11rem" } as React.CSSProperties}
+      >
         <Sidebar collapsible="icon">
           <SidebarHeader>
             <div className="flex h-8 items-center gap-2 px-2 font-semibold">
               <Activity className="size-4 shrink-0 text-series" />
-              <span className="group-data-[collapsible=icon]:hidden">Spikes</span>
+              <span className="group-data-[collapsible=icon]:hidden">
+                Spikes
+              </span>
             </div>
           </SidebarHeader>
           <SidebarContent>
@@ -77,11 +91,27 @@ export function App() {
             <StateBadge state={status} data-testid="connection" />
           </header>
           <div className="min-w-0 flex-1 p-4">
-            {page === "projects" && <ProjectsPage onOpened={() => setPage("network")} />}
+            {engineError.error && (
+              <Notice
+                tone="error"
+                className="mb-4"
+                onClose={engineError.dismiss}
+                data-testid="engine-error"
+              >
+                The engine reported an error: {engineError.error.message}
+                {engineError.error.count > 1 &&
+                  ` (${engineError.error.count} times)`}
+              </Notice>
+            )}
+            {page === "projects" && (
+              <ProjectsPage onOpened={() => setPage("network")} />
+            )}
             {page === "network" && <NetworkPage />}
             {page === "run" && <RunPage />}
             {page === "inputs" && <InputsPage />}
-            {page === "recordings" && <RecordingsPage onOpen={() => setPage("run")} />}
+            {page === "recordings" && (
+              <RecordingsPage onOpen={() => setPage("run")} />
+            )}
             {page === "settings" && <SettingsPage />}
           </div>
         </SidebarInset>

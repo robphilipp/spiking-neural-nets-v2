@@ -42,9 +42,18 @@ export interface Viewer {
 export interface Sensor {
   readonly id: number;
   /** Samples on all channels at `dtNs` spacing, sample-major; `t0Ns` is the sensor's own clock. */
-  sendSamples(t0Ns: bigint, dtNs: number, channels: number, values: ArrayLike<number>): void;
+  sendSamples(
+    t0Ns: bigint,
+    dtNs: number,
+    channels: number,
+    values: ArrayLike<number>,
+  ): void;
   /** Events: a channel and an offset (ns from `t0Ns`) each. */
-  sendEvents(t0Ns: bigint, channels: ArrayLike<number>, offsetsNs: ArrayLike<number>): void;
+  sendEvents(
+    t0Ns: bigint,
+    channels: ArrayLike<number>,
+    offsetsNs: ArrayLike<number>,
+  ): void;
   disconnect(): Promise<void>;
 }
 
@@ -65,7 +74,9 @@ export abstract class ProtocolClient {
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private readonly viewers = new Map<string, (frame: Frame) => void>();
-  private readonly noticeHandlers = new Set<(session: number, notice: Notice) => void>();
+  private readonly noticeHandlers = new Set<
+    (session: number, notice: Notice) => void
+  >();
   private readonly errorHandlers = new Set<(error: ApiError) => void>();
   private sensorSeq = 0;
 
@@ -86,7 +97,7 @@ export abstract class ProtocolClient {
       else waiting.reject(new SpikesError(message.result.error));
     } else if ("error" in message.result) {
       // Errors without a request (id 0): malformed messages, bad sensor batches.
-      for (const h of this.errorHandlers) h(message.result.error);
+      this.reportError(message.result.error);
     }
   }
 
@@ -118,9 +129,13 @@ export abstract class ProtocolClient {
     });
   }
 
-  private async expect<T extends Response["type"]>(request: Request, type: T): Promise<Extract<Response, { type: T }>> {
+  private async expect<T extends Response["type"]>(
+    request: Request,
+    type: T,
+  ): Promise<Extract<Response, { type: T }>> {
     const response = await this.request(request);
-    if (response.type !== type) throw new Error(`expected a ${type} response, got ${response.type}`);
+    if (response.type !== type)
+      throw new Error(`expected a ${type} response, got ${response.type}`);
     return response as Extract<Response, { type: T }>;
   }
 
@@ -136,12 +151,22 @@ export abstract class ProtocolClient {
     return () => this.errorHandlers.delete(handler);
   }
 
+  /** For transports: reports an error not tied to a request (e.g. a batch the transport couldn't send). */
+  protected reportError(error: ApiError): void {
+    for (const h of this.errorHandlers) h(error);
+  }
+
   async listSessions(): Promise<SessionSummary[]> {
     return (await this.expect({ type: "listSessions" }, "sessions")).sessions;
   }
 
-  async createSession(name: string, description: string): Promise<SessionSummary> {
-    return (await this.expect({ type: "createSession", name, description }, "session")).session;
+  async createSession(
+    name: string,
+    description: string,
+  ): Promise<SessionSummary> {
+    return (
+      await this.expect({ type: "createSession", name, description }, "session")
+    ).session;
   }
 
   async updateDescription(session: number, description: string): Promise<void> {
@@ -157,21 +182,26 @@ export abstract class ProtocolClient {
   }
 
   async getDescription(session: number): Promise<string> {
-    return (await this.expect({ type: "getDescription", session }, "description")).text;
+    return (
+      await this.expect({ type: "getDescription", session }, "description")
+    ).text;
   }
 
   /** How a session built on node agents is doing. */
   async getCluster(session: number): Promise<Cluster> {
-    return (await this.expect({ type: "getCluster", session }, "cluster")).cluster;
+    return (await this.expect({ type: "getCluster", session }, "cluster"))
+      .cluster;
   }
 
   /** The sensors connected to a session (from any client), with their counters. */
   async listSensors(session: number): Promise<SensorInfo[]> {
-    return (await this.expect({ type: "listSensors", session }, "sensors")).sensors;
+    return (await this.expect({ type: "listSensors", session }, "sensors"))
+      .sensors;
   }
 
   async getNetwork(session: number): Promise<Network> {
-    return (await this.expect({ type: "getNetwork", session }, "network")).network;
+    return (await this.expect({ type: "getNetwork", session }, "network"))
+      .network;
   }
 
   async start(session: number, options: StartOptions = {}): Promise<void> {
@@ -206,12 +236,25 @@ export abstract class ProtocolClient {
     await this.request({ type: "stop", session });
   }
 
-  async stimulate(session: number, neurons: number[], mv: number): Promise<void> {
+  async stimulate(
+    session: number,
+    neurons: number[],
+    mv: number,
+  ): Promise<void> {
     await this.request({ type: "stimulate", session, neurons, mv });
   }
 
-  async releaseModulator(session: number, modulator: number, amount: number): Promise<void> {
-    await this.request({ type: "releaseModulator", session, modulator, amount });
+  async releaseModulator(
+    session: number,
+    modulator: number,
+    amount: number,
+  ): Promise<void> {
+    await this.request({
+      type: "releaseModulator",
+      session,
+      modulator,
+      amount,
+    });
   }
 
   async addInput(session: number, input: Input): Promise<void> {
@@ -219,8 +262,22 @@ export abstract class ProtocolClient {
   }
 
   /** Adds a connection now (also while running); `inhibitory` and `learning` default to the sender's sign and none. */
-  async connect(session: number, pre: number, post: number, weight: number, options: { inhibitory?: boolean; learning?: string } = {}): Promise<void> {
-    await this.request({ type: "connect", session, pre, post, weight, inhibitory: options.inhibitory ?? null, learning: options.learning ?? null });
+  async connect(
+    session: number,
+    pre: number,
+    post: number,
+    weight: number,
+    options: { inhibitory?: boolean; learning?: string } = {},
+  ): Promise<void> {
+    await this.request({
+      type: "connect",
+      session,
+      pre,
+      post,
+      weight,
+      inhibitory: options.inhibitory ?? null,
+      learning: options.learning ?? null,
+    });
   }
 
   /** Removes a connection (also while running). */
@@ -229,7 +286,9 @@ export abstract class ProtocolClient {
   }
 
   async queryNeuron(session: number, neuron: number): Promise<NeuronState> {
-    return (await this.expect({ type: "queryNeuron", session, neuron }, "neuron")).neuron;
+    return (
+      await this.expect({ type: "queryNeuron", session, neuron }, "neuron")
+    ).neuron;
   }
 
   async observe(session: number, neurons: number[], on = true): Promise<void> {
@@ -237,12 +296,14 @@ export abstract class ProtocolClient {
   }
 
   async listRecordings(): Promise<Recording[]> {
-    return (await this.expect({ type: "listRecordings" }, "recordings")).recordings;
+    return (await this.expect({ type: "listRecordings" }, "recordings"))
+      .recordings;
   }
 
   /** Opens a recorded run as a replay session (build and start it like a run). */
   async openRecording(id: string): Promise<SessionSummary> {
-    return (await this.expect({ type: "openRecording", id }, "session")).session;
+    return (await this.expect({ type: "openRecording", id }, "session"))
+      .session;
   }
 
   /** Converts a recorded run to Parquet, beside its Arrow files. */
@@ -252,7 +313,8 @@ export abstract class ProtocolClient {
 
   /** Saves a session's run so far (when ready: built, or stopped), to continue later with `openSave`. */
   async saveRun(session: number, name: string): Promise<SavedRun> {
-    return (await this.expect({ type: "saveRun", session, name }, "saved")).save;
+    return (await this.expect({ type: "saveRun", session, name }, "saved"))
+      .save;
   }
 
   /** Saved runs, oldest first. */
@@ -261,8 +323,17 @@ export abstract class ProtocolClient {
   }
 
   /** Opens a saved run as a new session (on `nodes`, if any), ready at the saved time (start it to continue). */
-  async openSave(id: string, shards?: number, nodes?: string[]): Promise<SessionSummary> {
-    return (await this.expect({ type: "openSave", id, shards: shards ?? null, nodes: nodes ?? null }, "session")).session;
+  async openSave(
+    id: string,
+    shards?: number,
+    nodes?: string[],
+  ): Promise<SessionSummary> {
+    return (
+      await this.expect(
+        { type: "openSave", id, shards: shards ?? null, nodes: nodes ?? null },
+        "session",
+      )
+    ).session;
   }
 
   /** A replay: jumps to simulated time `ms` (not while running). */
@@ -271,14 +342,26 @@ export abstract class ProtocolClient {
   }
 
   /** Starts a live view; `onFrame` gets each frame until the view is detached. */
-  async attach(session: number, view: View, onFrame: (frame: Frame) => void): Promise<Viewer> {
-    const { viewer: id } = await this.expect({ type: "attach", session, view }, "viewer");
+  async attach(
+    session: number,
+    view: View,
+    onFrame: (frame: Frame) => void,
+  ): Promise<Viewer> {
+    const { viewer: id } = await this.expect(
+      { type: "attach", session, view },
+      "viewer",
+    );
     const key = `${session}:${id % 65536}`;
     this.viewers.set(key, onFrame);
     return {
       id,
       update: async (next: View) => {
-        await this.request({ type: "updateView", session, viewer: id, view: next });
+        await this.request({
+          type: "updateView",
+          session,
+          viewer: id,
+          view: next,
+        });
       },
       detach: async () => {
         this.viewers.delete(key);
@@ -289,13 +372,20 @@ export abstract class ProtocolClient {
 
   /** Connects an external sensor. */
   async connectSensor(session: number, spec: SensorSpec): Promise<Sensor> {
-    const { sensor: id } = await this.expect({ type: "connectSensor", session, sensor: spec }, "sensor");
+    const { sensor: id } = await this.expect(
+      { type: "connectSensor", session, sensor: spec },
+      "sensor",
+    );
     return {
       id,
       sendSamples: (t0Ns, dtNs, channels, values) =>
-        this.sendBinary(encodeSamples(id, this.sensorSeq++, t0Ns, dtNs, channels, values)),
+        this.sendBinary(
+          encodeSamples(id, this.sensorSeq++, t0Ns, dtNs, channels, values),
+        ),
       sendEvents: (t0Ns, channels, offsetsNs) =>
-        this.sendBinary(encodeEvents(id, this.sensorSeq++, t0Ns, channels, offsetsNs)),
+        this.sendBinary(
+          encodeEvents(id, this.sensorSeq++, t0Ns, channels, offsetsNs),
+        ),
       disconnect: async () => {
         await this.request({ type: "disconnectSensor", session, sensor: id });
       },
@@ -318,12 +408,18 @@ export class WebSocketClient extends ProtocolClient {
   private closed = false;
   private retryMs = 250;
 
-  private constructor(private readonly url: string, private readonly options: WebSocketOptions) {
+  private constructor(
+    private readonly url: string,
+    private readonly options: WebSocketOptions,
+  ) {
     super();
   }
 
   /** Connects; resolves once the connection is open. */
-  static async connect(server: string, options: WebSocketOptions = {}): Promise<WebSocketClient> {
+  static async connect(
+    server: string,
+    options: WebSocketOptions = {},
+  ): Promise<WebSocketClient> {
     const base = server.replace(/^http/, "ws").replace(/\/$/, "");
     const params = new URLSearchParams({ v: "1" });
     if (options.token) params.set("token", options.token);
@@ -366,7 +462,11 @@ export class WebSocketClient extends ProtocolClient {
       socket.onclose = () => {
         this.connectionLost();
         if (!opened) {
-          reject(new Error(`couldn't connect to ${this.url.replace(/token=[^&]*/, "token=…")}`));
+          reject(
+            new Error(
+              `couldn't connect to ${this.url.replace(/token=[^&]*/, "token=…")}`,
+            ),
+          );
           return;
         }
         if (this.closed || this.options.reconnect === false) {
@@ -385,12 +485,14 @@ export class WebSocketClient extends ProtocolClient {
   }
 
   protected sendText(text: string): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error("not connected");
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN)
+      throw new Error("not connected");
     this.socket.send(text);
   }
 
   protected sendBinary(data: ArrayBuffer): void {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error("not connected");
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN)
+      throw new Error("not connected");
     this.socket.send(data);
   }
 
