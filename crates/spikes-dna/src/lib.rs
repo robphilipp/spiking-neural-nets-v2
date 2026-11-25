@@ -21,6 +21,7 @@
 
 mod convert;
 pub mod description;
+mod neurons;
 pub mod schema;
 mod syntax;
 pub mod units;
@@ -29,6 +30,7 @@ pub use description::{
     ConnectionDescription, ConnectionRule, GroupDescription, InDegree, ModulatorDescription, NetworkDescription,
     NeuronDescription, PopulationDescription, Region, SynapseDefaults, WeightSpec,
 };
+pub use neurons::{NeuronNames, NeuronView, Neurons};
 pub use syntax::{ParseError, Span};
 
 /// Parses a `.boo` network description.

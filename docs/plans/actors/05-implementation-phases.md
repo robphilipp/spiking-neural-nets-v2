@@ -304,7 +304,19 @@ Snapshots (2026-11-24):
   the UI uses the Settings page's nodes).
 - Not yet: saving while paused (stop first).
 
-Next: the 10⁹-synapse network on a cluster.
+Milestone 3, preparing for 10⁹ synapses on a cluster (2026-11-24):
+- `scale` builds on a cluster too (`… [shards per node] local:N` for N agents in this process, or addresses).
+- Memory per neuron was ~2 KB, a third of it the description, which every node holds: populations expanded to a
+  full description per neuron, and names were copied about seven times (description, the built network's two
+  name maps, the session summary's names and its name map). Now a population is one template and 24 bytes of
+  position per neuron (`spikes_dna::Neurons`); names of population neurons are derived (`NeuronNames`), shared by
+  the built network and the session summary; parameter tables are filled once per template.
+- Measured: 1M neurons' description 0.71 → 0.02 GB, built network 1.99 → 0.75 GB; 400k × 25 synapses 144 → 100
+  bytes per synapse in one process, 242 → 114 on 2 nodes and the coordinator; 100k × 100 90 → 79 bytes, same speed.
+- 10⁹ synapses (~80–90 GB) don't fit on one 64 GB machine, even split into local node agents: running it needs
+  machines with ~100 GB between them.
+
+Next: the 10⁹-synapse network on a cluster (needs the machines).
 
 ## Benchmarks to keep from day one
 

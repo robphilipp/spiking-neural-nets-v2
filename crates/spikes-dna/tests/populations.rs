@@ -20,15 +20,16 @@ LRN=[(fnc=stdp, ina=0.01, inp=30 ms, exa=0.01, exp=20 ms)],
 fn populations_expand_to_neurons_placed_in_their_regions() {
     let d = parse(NET).unwrap();
     assert_eq!(d.neurons.len(), 1 + 800 + 200);
-    assert_eq!(d.neurons[1].id, "exc-0");
-    assert_eq!(d.neurons[1000].id, "inh-199");
-    assert!(d.neurons[900].inhibitory && !d.neurons[500].inhibitory);
-    assert_eq!(d.neurons[900].params.threshold_mv, 8.0);
-    for n in &d.neurons[1..801] {
+    let neurons: Vec<_> = d.neurons.iter().map(|n| n.to_description()).collect();
+    assert_eq!(neurons[1].id, "exc-0");
+    assert_eq!(neurons[1000].id, "inh-199");
+    assert!(neurons[900].inhibitory && !neurons[500].inhibitory);
+    assert_eq!(neurons[900].params.threshold_mv, 8.0);
+    for n in &neurons[1..801] {
         let [x, y, z] = n.location_um;
         assert!((0.0..=500.0).contains(&x) && (0.0..=500.0).contains(&y) && (0.0..=100.0).contains(&z));
     }
-    for n in &d.neurons[801..] {
+    for n in &neurons[801..] {
         let [x, y, z] = n.location_um;
         assert!(((x - 250.0).powi(2) + (y - 250.0).powi(2) + (z - 50.0).powi(2)).sqrt() <= 200.0);
     }

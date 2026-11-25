@@ -8,6 +8,7 @@ use spikes_model::{
     Release, Resonance, Sign, Stickiness, ThreeFactor, WeightDecay, WeightLimit,
 };
 
+use crate::Neurons;
 use crate::description::{
     ConnectionDescription, ConnectionRule, GroupDescription, InDegree, ModulatorDescription, NetworkDescription,
     NeuronDescription, PopulationDescription, Region, SynapseDefaults, WeightSpec,
@@ -249,10 +250,11 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
             errors.add(root.span, format!("modulator '{}' is defined twice in MOD", m.name));
         }
     }
-    let mut neurons: Vec<NeuronDescription> = list(&top, "NRN", &mut errors)
+    let listed: Vec<NeuronDescription> = list(&top, "NRN", &mut errors)
         .iter()
         .filter_map(|node| neuron(node, &modulator_index, &mut errors))
         .collect();
+    let mut neurons: Neurons = listed.iter().cloned().collect();
     let mut populations: Vec<PopulationDescription> = Vec::new();
     for node in list(&top, "POP", &mut errors) {
         if let Some(p) = population(node, &modulator_index, &mut neurons, &mut errors) {
@@ -262,6 +264,28 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
             populations.push(p);
         }
     }
+    // Population neurons are named `<population>-<i>`: a listed neuron can't have one of those names.
+    for n in &listed {
+        if let Some((p, k)) = n.id.rsplit_once('-')
+            && let Some(pop) = populations.iter().find(|q| q.name == p)
+            && k.parse::<u32>().is_ok_and(|k| k < pop.count)
+        {
+            errors.add(
+                n.span,
+                format!("neuron '{}' has the name of a neuron of population '{p}'", n.id),
+            );
+        }
+    }
+    let templates: Vec<&NeuronDescription> = neurons
+        .iter()
+        .filter(|n| n.population().is_some())
+        .map(|n| n.template())
+        .fold(Vec::new(), |mut all, t| {
+            if !all.iter().any(|&u: &&NeuronDescription| std::ptr::eq(u, t)) {
+                all.push(t);
+            }
+            all
+        });
 
     let mut learning_map: BTreeMap<String, LearningRule> = BTreeMap::from([("flat".to_string(), LearningRule::None)]);
     learning_map.extend(learning);
@@ -271,7 +295,7 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
     // References: groups, duplicate neurons.
     let group_ids: HashSet<&str> = groups.iter().map(|g| g.id.as_str()).collect();
     let mut seen = HashMap::new();
-    for n in &neurons {
+    for n in &listed {
         if let Some(first) = seen.insert(n.id.as_str(), n.span) {
             errors.add(n.span, format!("neuron '{}' is already defined at {first}", n.id));
         }
@@ -285,9 +309,20 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
             );
         }
     }
-    let inhibitory: HashMap<&str, bool> = neurons.iter().map(|n| (n.id.as_str(), n.inhibitory)).collect();
+    for n in &templates {
+        if !groups.is_empty() && !group_ids.contains(n.group.as_str()) {
+            errors.add(
+                n.span,
+                format!(
+                    "neuron '{}' is in group '{}', which isn't defined in GRP",
+                    n.id, n.group
+                ),
+            );
+        }
+    }
+    let inhibitory: HashMap<&str, bool> = listed.iter().map(|n| (n.id.as_str(), n.inhibitory)).collect();
     let mut sets: HashSet<&str> = populations.iter().map(|p| p.name.as_str()).collect();
-    sets.extend(neurons.iter().map(|n| n.group.as_str()));
+    sets.extend(listed.iter().chain(templates.iter().copied()).map(|n| n.group.as_str()));
     sets.extend(groups.iter().map(|g| g.id.as_str()));
     let rules: Vec<ConnectionRule> = list(&top, "RUL", &mut errors)
         .iter()
@@ -308,7 +343,11 @@ pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>
 
     // Without a GRP section, every neuron runs locally in the groups it names.
     let groups = if groups.is_empty() {
-        let mut names: Vec<&str> = neurons.iter().map(|n| n.group.as_str()).collect();
+        let mut names: Vec<&str> = listed
+            .iter()
+            .chain(templates.iter().copied())
+            .map(|n| n.group.as_str())
+            .collect();
         names.sort_unstable();
         names.dedup();
         names
@@ -858,7 +897,7 @@ fn connection(
 fn population(
     node: &Node,
     modulators: &HashMap<String, u16>,
-    neurons: &mut Vec<NeuronDescription>,
+    neurons: &mut Neurons,
     errors: &mut Errors,
 ) -> Option<PopulationDescription> {
     let template = neuron_like(node, modulators, true, errors)?;
@@ -887,8 +926,8 @@ fn population(
     let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(seed ^ name_hash);
     let first = neurons.len() as u32;
     let count = count as u32;
-    neurons.reserve(count as usize);
-    for i in 0..count {
+    let mut locations = Vec::with_capacity(count as usize);
+    for _ in 0..count {
         let location_um = match region {
             Region::Box { corner, size } => std::array::from_fn(|d| corner[d] + size[d] * rng.random::<f64>()),
             Region::Ball { center, radius } => loop {
@@ -898,12 +937,9 @@ fn population(
                 }
             },
         };
-        neurons.push(NeuronDescription {
-            id: format!("{name}-{i}"),
-            location_um,
-            ..template.clone()
-        });
+        locations.push(location_um);
     }
+    neurons.push_population(name.clone(), template, locations);
     Some(PopulationDescription {
         name,
         first,

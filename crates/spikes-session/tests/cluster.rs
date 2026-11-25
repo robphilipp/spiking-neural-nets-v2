@@ -101,7 +101,7 @@ fn line_sensor(engine: &Engine, nodes: Vec<String>, record: PathBuf) -> (Seen, S
     assert_eq!(network.neurons.len(), 69);
     assert_eq!(network.synapses.len(), 871, "every node's synapses are listed");
     let inputs: Vec<u32> = (0..network.neurons.len() as u32)
-        .filter(|&i| network.neurons[i as usize].name.starts_with("input-"))
+        .filter(|&i| network.neurons.get(i).unwrap().name.starts_with("input-"))
         .collect();
     let last = network.neurons.len() as u32 - 1;
     let viewer = session.attach(ViewSettings {
@@ -205,7 +205,7 @@ fn best_effort_runs_follow_the_coordinators_clock_and_count_late_spikes() {
     session.set_nodes(agents(2)).unwrap();
     let network = session.build(BuildSettings::default()).unwrap();
     let inputs: Vec<u32> = (0..network.neurons.len() as u32)
-        .filter(|&i| network.neurons[i as usize].name.starts_with("input-"))
+        .filter(|&i| network.neurons.get(i).unwrap().name.starts_with("input-"))
         .collect();
     session
         .add_input(InputSpec::Poisson {
@@ -261,10 +261,14 @@ fn a_network_generated_in_code_builds_on_nodes() {
     // Its "source" is a placeholder: the nodes get the description itself.
     let engine = Engine::new();
     let mut description = spikes_dna::parse(&data("v1", "stdp-test.boo")).unwrap();
-    description
+    description.neurons = description
         .neurons
-        .iter_mut()
-        .for_each(|n| n.id = format!("gen-{}", n.id));
+        .iter()
+        .map(|n| spikes_dna::NeuronDescription {
+            id: format!("gen-{}", n.id()),
+            ..n.to_description()
+        })
+        .collect();
     description.connections.iter_mut().for_each(|c| {
         c.pre = format!("gen-{}", c.pre);
         c.post = format!("gen-{}", c.post);
@@ -272,7 +276,7 @@ fn a_network_generated_in_code_builds_on_nodes() {
     let session = engine.create_described("generated", "// generated in code", description);
     session.set_nodes(agents(2)).unwrap();
     let network = session.build(BuildSettings::default()).unwrap();
-    assert_eq!(network.neurons[0].name, "gen-input-1");
+    assert_eq!(network.neurons.get(0).unwrap().name, "gen-input-1");
     session.stimulate(&[0, 1], 20.0).unwrap();
     run(&session, 100, None);
     assert!(session.query_neuron(2).unwrap().last_event > tempo_runtime::SimTime::ZERO);

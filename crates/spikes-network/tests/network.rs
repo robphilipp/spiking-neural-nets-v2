@@ -86,7 +86,7 @@ fn stdp_potentiates_the_early_input_and_depresses_the_late_one() {
         events
             .iter()
             .find_map(|e| match e.event {
-                Event::Weight { pre: p, after, .. } if net.name(p) == Some(pre) => Some(f64::from(after)),
+                Event::Weight { pre: p, after, .. } if net.name(p).as_deref() == Some(pre) => Some(f64::from(after)),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("no weight change for {pre}"))
@@ -177,7 +177,7 @@ fn neurons_are_found_by_name() {
     let mut rt = runtime(1);
     let net = build(&mut rt, &v1("simple-wta-2019.boo"), &BuildOptions::default());
     let out = net.neuron("out-1").unwrap();
-    assert_eq!(net.name(out.id()), Some("out-1"));
+    assert_eq!(net.name(out.id()).as_deref(), Some("out-1"));
     assert_eq!(net.matching(|n| n.starts_with("in-")).len(), 2);
     assert!(net.neuron("nope").is_none());
 }

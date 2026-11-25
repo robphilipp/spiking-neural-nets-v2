@@ -43,7 +43,7 @@ fn network(n: usize) -> NetworkDescription {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(7);
     d.neurons = (0..n)
         .map(|i| {
-            let mut neuron = template.neurons[0].clone();
+            let mut neuron = template.neurons.get(0).unwrap().to_description();
             neuron.id = format!("n{i}");
             neuron.inhibitory = i % 5 == 0;
             neuron.location_um = std::array::from_fn(|_| rng.random_range(0.0..1000.0));

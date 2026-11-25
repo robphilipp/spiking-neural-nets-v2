@@ -51,9 +51,9 @@ pub struct NewConnection {
     pub params: u16,
 }
 
+/// What a kind of neuron (a population, or a neuron listed on its own) gives the connections it makes and gets.
 #[derive(Clone, Debug)]
 struct Wire {
-    location: [f64; 3],
     synaptic_delay_ms: f64,
     conduction_m_per_s: f64,
     inhibitory: bool,
@@ -63,7 +63,9 @@ struct Wire {
 
 #[derive(Clone, Debug)]
 struct Wiring {
-    neurons: Vec<Wire>,
+    kinds: Vec<Wire>,
+    /// Each neuron's kind and position.
+    neurons: Vec<(u32, [f64; 3])>,
     /// (synapse defaults kind, learning rule name) → parameter set.
     params: HashMap<(u32, String), u16>,
     min_delay: SimDuration,
@@ -82,20 +84,37 @@ pub struct Network {
     /// Connections in all (on every node, not only this one's).
     pub synapse_count: u64,
     /// What new connections need: positions, delays, signs and synapse parameter sets.
-    wiring: Wiring,
-    by_name: HashMap<String, NeuronRef>,
-    names: HashMap<ActorId, String>,
+    wiring: Arc<Wiring>,
+    names: Arc<spikes_dna::NeuronNames>,
+    /// (actor ID, neuron index), by ID.
+    indices: Arc<Vec<(ActorId, u32)>>,
 }
 
 impl Network {
     /// The neuron with this name.
     pub fn neuron(&self, name: &str) -> Option<NeuronRef> {
-        self.by_name.get(name).copied()
+        self.neurons.get(self.names.index(name)? as usize).copied()
+    }
+
+    /// The index (in description order) of the neuron with this ID.
+    pub fn index(&self, id: ActorId) -> Option<u32> {
+        let i = self.indices.binary_search_by_key(&id, |&(id, _)| id).ok()?;
+        Some(self.indices[i].1)
     }
 
     /// The name of the neuron with this ID.
-    pub fn name(&self, id: ActorId) -> Option<&str> {
-        self.names.get(&id).map(String::as_str)
+    pub fn name(&self, id: ActorId) -> Option<std::borrow::Cow<'_, str>> {
+        self.names.name(self.index(id)?)
+    }
+
+    /// Every neuron's name, by index.
+    pub fn names(&self) -> &Arc<spikes_dna::NeuronNames> {
+        &self.names
+    }
+
+    /// The name of neuron `index`.
+    pub fn name_of(&self, index: u32) -> Option<std::borrow::Cow<'_, str>> {
+        self.names.name(index)
     }
 
     /// Adds a modulator release site at `position` (µm), e.g. for a UI "reward" button. Send it
@@ -121,11 +140,11 @@ impl Network {
     /// its synapse parameter set for `learning` (a rule defined in the description; `None` for `flat`).
     pub fn connection(&self, pre: usize, post: usize, learning: Option<&str>) -> Option<NewConnection> {
         let w = &self.wiring;
-        let (from, to) = (w.neurons.get(pre)?, w.neurons.get(post)?);
-        let distance_um = from
-            .location
+        let (&(from_kind, from_at), &(to_kind, to_at)) = (w.neurons.get(pre)?, w.neurons.get(post)?);
+        let (from, to) = (&w.kinds[from_kind as usize], &w.kinds[to_kind as usize]);
+        let distance_um = from_at
             .iter()
-            .zip(&to.location)
+            .zip(&to_at)
             .map(|(a, b)| (a - b).powi(2))
             .sum::<f64>()
             .sqrt();
@@ -156,8 +175,9 @@ impl Network {
     pub fn matching(&self, matches: impl Fn(&str) -> bool) -> Vec<NeuronRef> {
         self.neurons
             .iter()
-            .copied()
-            .filter(|n| self.names.get(&n.id()).is_some_and(|name| matches(name)))
+            .zip(0u32..)
+            .filter(|&(_, i)| self.names.name(i).is_some_and(|name| matches(&name)))
+            .map(|(&n, _)| n)
             .collect()
     }
 }
@@ -303,29 +323,42 @@ impl Grid {
 /// from [`spikes_dna::parse`] never does).
 pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &BuildOptions) -> Network {
     let n = description.neurons.len();
-    let index: HashMap<&str, usize> = description
-        .neurons
-        .iter()
-        .enumerate()
-        .map(|(i, d)| (d.id.as_str(), i))
-        .collect();
+    let names = description.neurons.names();
+    let index = |name: &str| names.index(name).expect("connections refer to defined neurons") as usize;
 
     // Parameter tables, shared by all neurons. A population is a distinct combination of dynamics, receptors and
-    // modulator release.
+    // modulator release. Each neuron of a description population shares its template: tables are filled once per
+    // template (by address), not once per neuron.
     let mut population_table: Table<Population> = Table::new();
-    let populations: Vec<u32> = description
-        .neurons
-        .iter()
-        .map(|d| population_table.insert((d.params.clone(), d.receptors.clone(), d.release)))
-        .collect();
     let mut synapse_table: Table<SynapseParams> = Table::new();
     // A parameter set for each kind of receiving neuron and learning rule, for connections made during a run.
     let mut defaults_table: Table<spikes_dna::SynapseDefaults> = Table::new();
-    let defaults: Vec<u32> = description
-        .neurons
-        .iter()
-        .map(|d| defaults_table.insert(d.synapses.clone()))
-        .collect();
+    let mut kinds: Vec<Wire> = Vec::new();
+    // Per template: (population, defaults, kind).
+    let mut seen: HashMap<*const spikes_dna::NeuronDescription, (u32, u32, u32)> = HashMap::new();
+    let mut populations: Vec<u32> = Vec::with_capacity(n);
+    let mut defaults: Vec<u32> = Vec::with_capacity(n);
+    let mut neuron_kinds: Vec<u32> = Vec::with_capacity(n);
+    for d in description.neurons.iter() {
+        let &mut (population, synapse_defaults, kind) =
+            seen.entry(std::ptr::from_ref(d.template())).or_insert_with(|| {
+                let defaults = defaults_table.insert(d.synapses().clone());
+                kinds.push(Wire {
+                    synaptic_delay_ms: d.synaptic_delay_ms(),
+                    conduction_m_per_s: d.conduction_m_per_s(),
+                    inhibitory: d.inhibitory(),
+                    defaults,
+                });
+                (
+                    population_table.insert((d.params().clone(), d.receptors().to_vec(), d.release())),
+                    defaults,
+                    kinds.len() as u32 - 1,
+                )
+            });
+        populations.push(population);
+        defaults.push(synapse_defaults);
+        neuron_kinds.push(kind);
+    }
     let mut new_params: HashMap<(u32, String), u16> = HashMap::new();
     for (kind, d) in defaults_table.items.iter().enumerate() {
         for (name, learning) in &description.learning {
@@ -346,14 +379,14 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         .connections
         .iter()
         .map(|c| {
-            let post = &description.neurons[index[c.post.as_str()]];
+            let post = &defaults_table.items[defaults[index(&c.post)] as usize];
             let params = SynapseParams {
-                decay: post.synapses.decay,
-                limit: post.synapses.limit,
+                decay: post.decay,
+                limit: post.limit,
                 stickiness: description.stickiness[&c.stickiness],
-                release: post.synapses.release,
+                release: post.release,
                 learning: description.learning[&c.learning].clone(),
-                weight_noise: post.synapses.weight_noise,
+                weight_noise: post.weight_noise,
             };
             u16::try_from(synapse_table.insert(params)).expect("fewer than 65,536 distinct synapse parameter sets")
         })
@@ -385,10 +418,10 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         .collect();
     let direct: Vec<bool> = (0..description.modulators.len())
         .map(|k| {
-            description
-                .neurons
+            population_table
+                .items
                 .iter()
-                .flat_map(|n| &n.receptors)
+                .flat_map(|(_, receptors, _)| receptors)
                 .any(|r| usize::from(r.modulator) == k && r.direct_mv != 0.0)
         })
         .collect();
@@ -422,7 +455,7 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
     });
 
     // Neurons, placed so that nearby neurons share a partition.
-    let locations: Vec<[f64; 3]> = description.neurons.iter().map(|d| d.location_um).collect();
+    let locations: Vec<[f64; 3]> = description.neurons.iter().map(|d| d.location_um()).collect();
     let partitions = spatial_partitions(&locations, rt.partitions());
     let ids: Vec<ActorId> = (0..n)
         .map(|i| {
@@ -456,7 +489,7 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
                 .sum::<f64>()
                 .sqrt();
             // Synaptic delay plus conduction along the axon.
-            let neuron = &description.neurons[from];
+            let neuron = &kinds[neuron_kinds[from] as usize];
             let synaptic = SimDuration::from_millis_f64(synaptic_delay_ms.unwrap_or(neuron.synaptic_delay_ms));
             let conduction = SimDuration::from_micros_f64(distance_um / neuron.conduction_m_per_s); // µm/µs
             edges[from].push(RouteEdge {
@@ -468,7 +501,7 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
     };
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(options.seed);
     for (c, &synapse_params) in description.connections.iter().zip(&connection_params) {
-        let (from, to) = (index[c.pre.as_str()], index[c.post.as_str()]);
+        let (from, to) = (index(&c.pre), index(&c.post));
         let weight = draw(c.weight, &mut rng);
         let equilibrium = if c.equilibrium == c.weight {
             weight
@@ -515,7 +548,7 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
                 } else {
                     draw(rule.equilibrium, &mut rng)
                 };
-                let sign = rule.sign.unwrap_or(if description.neurons[from].inhibitory {
+                let sign = rule.sign.unwrap_or(if kinds[neuron_kinds[from] as usize].inhibitory {
                     Sign::Inhibitory
                 } else {
                     Sign::Excitatory
@@ -550,40 +583,22 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         actor.out = connected.then_some(route);
     }
     let wiring = Wiring {
-        neurons: description
-            .neurons
-            .iter()
-            .zip(&defaults)
-            .map(|(d, &defaults)| Wire {
-                location: d.location_um,
-                synaptic_delay_ms: d.synaptic_delay_ms,
-                conduction_m_per_s: d.conduction_m_per_s,
-                inhibitory: d.inhibitory,
-                defaults,
-            })
-            .collect(),
+        kinds,
+        neurons: neuron_kinds.into_iter().zip(locations).collect(),
         params: new_params,
         min_delay: options.min_delay,
     };
 
     let neurons: Vec<NeuronRef> = ids.iter().map(|&id| NeuronRef::new(id)).collect();
+    let mut indices: Vec<(ActorId, u32)> = ids.iter().copied().zip(0u32..).collect();
+    indices.sort_unstable();
     Network {
         params,
         routes,
         synapse_count,
-        wiring,
-        by_name: description
-            .neurons
-            .iter()
-            .zip(&neurons)
-            .map(|(d, &r)| (d.id.clone(), r))
-            .collect(),
-        names: description
-            .neurons
-            .iter()
-            .zip(&ids)
-            .map(|(d, &id)| (id, d.id.clone()))
-            .collect(),
+        wiring: Arc::new(wiring),
+        names: Arc::new(names),
+        indices: Arc::new(indices),
         neurons,
     }
 }

@@ -199,8 +199,8 @@ fn write_run(dir: &Path, rt: &Runtime, run: RunInfo<'_>) -> Result<()> {
 
 fn write_neurons(dir: &Path, network: &Network, description: &NetworkDescription) -> Result<u64> {
     let n = description.neurons.len().min(network.neurons.len());
-    let neurons = &description.neurons[..n];
-    let position = |axis: usize| Float64Array::from_iter_values(neurons.iter().map(|d| d.location_um[axis]));
+    let neurons = || description.neurons.iter().take(n);
+    let position = |axis: usize| Float64Array::from_iter_values(neurons().map(|d| d.location_um()[axis]));
     write_table(
         dir,
         "neurons",
@@ -218,12 +218,10 @@ fn write_neurons(dir: &Path, network: &Network, description: &NetworkDescription
             Arc::new(UInt64Array::from_iter_values(
                 network.neurons[..n].iter().map(|r| r.id().raw()),
             )),
-            Arc::new(StringArray::from_iter_values(neurons.iter().map(|d| d.id.as_str()))),
-            Arc::new(StringArray::from_iter_values(neurons.iter().map(|d| d.group.as_str()))),
-            Arc::new(StringArray::from_iter_values(
-                neurons.iter().map(|d| d.params.kind.name()),
-            )),
-            Arc::new(BooleanArray::from_iter(neurons.iter().map(|d| Some(d.inhibitory)))),
+            Arc::new(StringArray::from_iter_values(neurons().map(|d| d.id()))),
+            Arc::new(StringArray::from_iter_values(neurons().map(|d| d.group()))),
+            Arc::new(StringArray::from_iter_values(neurons().map(|d| d.params().kind.name()))),
+            Arc::new(BooleanArray::from_iter(neurons().map(|d| Some(d.inhibitory())))),
             Arc::new(position(0)),
             Arc::new(position(1)),
             Arc::new(position(2)),

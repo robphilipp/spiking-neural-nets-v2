@@ -69,9 +69,9 @@ fn rules_give_each_receiver_its_inputs() {
         } else {
             // Up to 10 from exc within 120 µm.
             assert!(pres.len() <= 10);
-            let here = d.neurons[i].location_um;
+            let here = d.neurons.get(i).unwrap().location_um();
             for &p in &pres {
-                let there = d.neurons[p].location_um;
+                let there = d.neurons.get(p).unwrap().location_um();
                 let distance = (0..3).map(|k| (here[k] - there[k]).powi(2)).sum::<f64>().sqrt();
                 assert!(distance <= 120.0, "{distance}");
             }

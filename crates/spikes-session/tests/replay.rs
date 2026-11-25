@@ -95,7 +95,7 @@ fn a_replay_shows_exactly_what_the_live_run_showed() {
     assert!(replay.is_replay());
     let network = replay.build(BuildSettings::default()).unwrap();
     assert_eq!(
-        network.neurons.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(),
+        network.neurons.iter().map(|n| n.name).collect::<Vec<_>>(),
         ["input-1", "input-2", "output-1"]
     );
     assert_eq!(network.synapses.len(), 2);

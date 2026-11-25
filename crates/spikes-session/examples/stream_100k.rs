@@ -110,7 +110,7 @@ fn main() {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(42);
     description.neurons = (0..n)
         .map(|i| {
-            let mut neuron = template.neurons[0].clone();
+            let mut neuron = template.neurons.get(0).unwrap().to_description();
             neuron.id = format!("n{i}");
             neuron.location_um = [
                 rng.random_range(0.0..1000.0),

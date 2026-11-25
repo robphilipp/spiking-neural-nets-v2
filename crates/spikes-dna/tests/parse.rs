@@ -48,7 +48,7 @@ fn every_v1_network_parses() {
 #[test]
 fn simple_wta_has_six_neurons_eight_connections_and_its_learning_functions() {
     let network = parse(&v1_file("simple-wta-2019.boo")).unwrap();
-    let ids: Vec<&str> = network.neurons.iter().map(|n| n.id.as_str()).collect();
+    let ids: Vec<String> = network.neurons.iter().map(|n| n.id().into_owned()).collect();
     assert_eq!(ids, ["in-1", "in-2", "inh-1", "inh-2", "out-1", "out-2"]);
     // in-{1,2} → out-{1,2} expands to 4, plus 2 output→inhibition and 2 inhibition→output.
     assert_eq!(network.connections.len(), 8);
@@ -74,7 +74,7 @@ fn simple_wta_has_six_neurons_eight_connections_and_its_learning_functions() {
 #[test]
 fn neuron_parameters_are_converted_to_base_units() {
     let network = parse(&v1_file("simple-wta-2019.boo")).unwrap();
-    let inh = network.neuron("inh-1").unwrap();
+    let inh = network.neuron("inh-1").unwrap().to_description();
     assert!(inh.inhibitory);
     assert_eq!(inh.params.threshold_mv, 0.4);
     assert_eq!(inh.params.refractory_ms, 0.1);
@@ -86,7 +86,7 @@ fn neuron_parameters_are_converted_to_base_units() {
     assert_eq!(inh.synapses.decay, WeightDecay::Exponential { tau_ms: 10_000.0 });
     assert_eq!(inh.synapses.limit, WeightLimit::Bounded { lower: 0.0, upper: 1.5 });
     assert_eq!(inh.location_um, [-290.0, 0.0, 0.0]);
-    let out = network.neuron("out-1").unwrap();
+    let out = network.neuron("out-1").unwrap().to_description();
     assert_eq!(out.params.intrinsic.learning_mv, 0.0); // "0 nV"
     assert_eq!(out.synapses.weight_noise, 1e-5);
     // Connections from an inhibitory neuron are inhibitory by default.
@@ -116,7 +116,7 @@ fn older_files_get_defaults_and_old_names() {
     // stdp-test.boo lacks ipb/ipl/ipd and wnm, and uses fnc=stdp.
     let network = parse(&v1_file("stdp-test.boo")).unwrap();
     assert!(matches!(network.learning["stdp"], LearningRule::HardLimit(_)));
-    let input = network.neuron("input-1").unwrap();
+    let input = network.neuron("input-1").unwrap().to_description();
     assert_eq!(input.params.intrinsic.decay_ms, 600_000.0);
     assert_eq!(input.location_um, [1_000.0, 0.0, 0.0], "1 mm");
 }
@@ -165,11 +165,11 @@ CST=[(fnc=sig, dhl=10 s)],
 #[test]
 fn v2_extensions_parse() {
     let network = parse(V2).unwrap();
-    let a = network.neuron("a").unwrap();
+    let a = network.neuron("a").unwrap().to_description();
     assert!(
         matches!(a.params.kind, NeuronKind::MonostableResonator(r) if r.frequency_hz == 40.0 && r.damping_ms == 50.0)
     );
-    let b = network.neuron("b").unwrap();
+    let b = network.neuron("b").unwrap().to_description();
     let NeuronKind::BistableResonator {
         resonance,
         cycle_mv,
@@ -189,7 +189,7 @@ fn v2_extensions_parse() {
     );
     // Cylindrical (r=10, φ=90°, z=5) → (0, 10, 5); spherical (r=10, φ=0, θ=0) → (0, 0, 10).
     assert!((b.location_um[0]).abs() < 1e-9 && (b.location_um[1] - 10.0).abs() < 1e-9 && b.location_um[2] == 5.0);
-    assert!(network.neuron("c").unwrap().location_um[2] == 10.0);
+    assert!(network.neuron("c").unwrap().to_description().location_um[2] == 10.0);
 
     assert_eq!(network.connections.len(), 3);
     assert_eq!(
@@ -282,8 +282,8 @@ fn modulators_receptors_and_releases_parse() {
         ("dopamine", 200.0, 300.0, 0.01, 2.0, Some(100.0))
     );
     assert_eq!(network.modulators[1].radius_um, f64::INFINITY);
-    assert_eq!(network.neuron("vta").unwrap().release, Some((0, 2.0)));
-    let receptors = &network.neuron("pyr").unwrap().receptors;
+    assert_eq!(network.neuron("vta").unwrap().to_description().release, Some((0, 2.0)));
+    let receptors = &network.neuron("pyr").unwrap().to_description().receptors;
     assert_eq!(receptors.len(), 2);
     assert_eq!(receptors[0].modulator, 0);
     assert_eq!(receptors[0].excitatory_gain, 0.5);
@@ -315,8 +315,8 @@ NRN=[
 CON=[(prn=a, psn=b, cnw=1), (prn=b, psn=a, cnw=1), (prn=b, psn=b, cnw=1, syd=800 µs)],
 )";
     let network = parse(text).unwrap();
-    assert_eq!(network.neuron("a").unwrap().synaptic_delay_ms, 0.5);
-    assert_eq!(network.neuron("b").unwrap().synaptic_delay_ms, 0.3);
+    assert_eq!(network.neuron("a").unwrap().to_description().synaptic_delay_ms, 0.5);
+    assert_eq!(network.neuron("b").unwrap().to_description().synaptic_delay_ms, 0.3);
     let overrides: Vec<Option<f64>> = network.connections.iter().map(|c| c.synaptic_delay_ms).collect();
     assert_eq!(overrides, [None, None, Some(0.8)]);
     let errors = parse(&text.replace("syd=0.3 ms", "syd=-1 ms")).unwrap_err();

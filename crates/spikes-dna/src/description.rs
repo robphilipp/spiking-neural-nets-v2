@@ -12,7 +12,7 @@ pub struct NetworkDescription {
     /// Execution groups (`GRP`).
     pub groups: Vec<GroupDescription>,
     /// Neurons in file order (`NRN`), then every population's neurons (`POP`), population by population.
-    pub neurons: Vec<NeuronDescription>,
+    pub neurons: crate::Neurons,
     /// Populations (`POP`): which ranges of `neurons` they are.
     #[serde(default)]
     pub populations: Vec<PopulationDescription>,
@@ -49,9 +49,10 @@ pub struct ModulatorDescription {
 }
 
 impl NetworkDescription {
-    /// The neuron with this ID.
-    pub fn neuron(&self, id: &str) -> Option<&NeuronDescription> {
-        self.neurons.iter().find(|n| n.id == id)
+    /// The neuron with this ID (for many lookups, use [`crate::Neurons::names`]).
+    pub fn neuron(&self, id: &str) -> Option<crate::NeuronView<'_>> {
+        let i = self.neurons.names().index(id)?;
+        self.neurons.get(i as usize)
     }
 }
 
@@ -222,8 +223,12 @@ impl NetworkDescription {
         if let Some(p) = self.populations.iter().find(|p| p.name == name) {
             return Some((p.first..p.first + p.count).collect());
         }
-        let members: Vec<u32> = (0..self.neurons.len() as u32)
-            .filter(|&i| self.neurons[i as usize].group == name)
+        let members: Vec<u32> = self
+            .neurons
+            .iter()
+            .zip(0u32..)
+            .filter(|(n, _)| n.group() == name)
+            .map(|(_, i)| i)
             .collect();
         (!members.is_empty() || self.groups.iter().any(|g| g.id == name)).then_some(members)
     }
