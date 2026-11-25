@@ -60,7 +60,7 @@ export function ChartControls() {
         checked={cadence}
         onChange={setCadence}
         testId="cadence"
-        title="Move the time axes on every animation frame, so the charts scroll smoothly between updates"
+        title="Move the time axes on every animation frame, so the charts scroll smoothly between updates (the membrane potential chart always does)"
       />
       <Button
         variant="ghost"

@@ -172,11 +172,12 @@ export function Inspector(props: {
           <div>
             <Heading className="mb-1">Membrane potential (mV)</Heading>
             <Legend names={membraneNames} />
+            {/* A continuous signal: its time axis always moves smoothly (cadence), whatever the other charts do. */}
             {membrane && (
-              <Chart key={`${windowMs}:${cadence}:${zoomResets}`} chartId={3} width={width} height={200} dataSource={membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membrane.seriesList().map((s) => s.name))} windowingTime={bufferMs} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
+              <Chart key={`${windowMs}:${zoomResets}`} chartId={3} width={width} height={200} dataSource={membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membrane.seriesList().map((s) => s.name))} windowingTime={bufferMs} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
                 <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={timeDomain} label="t (ms)" />
                 <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-1, 15]} label="mV" autoScale />
-                <ScatterPlot withCadence={cadence} {...ZOOM} />
+                <ScatterPlot withCadence {...ZOOM} />
               </Chart>
             )}
           </div>
