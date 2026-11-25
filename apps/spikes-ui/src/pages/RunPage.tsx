@@ -26,7 +26,7 @@ import { ChartControls } from "../components/ChartControls";
 import { useChartSettings } from "../chartSettings";
 import { connectLive, useLive } from "../live";
 import { useBehavior } from "../useBehavior";
-import { backgroundChanged, built, runSettingsChanged, simTime, useProject, useSession, useSettings } from "../store";
+import { backgroundChanged, built, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
 import { useChartColors } from "../theme";
 
 /** The width of an element, following resizes. A callback ref, so it starts measuring whenever the element appears. */
@@ -74,6 +74,7 @@ export function RunPage() {
   const [region, setRegion] = useState<number[] | null>(null);
   const [picked, setPicked] = useState<Neuron[]>([]);
   const [show3d, setShow3d] = useState(true);
+  const tooltips = useSettings((s) => s.tooltips);
   const [stimulus, setStimulus] = useState({ prefix: "", mv: 10 });
   const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12, prefix: "" });
   const [windowMs, setWindowMs] = useState(1000);
@@ -440,6 +441,15 @@ export function RunPage() {
           <div className="flex items-center gap-3">
             <Heading className="flex-1">Network</Heading>
             <Toggle label="3D view" checked={show3d} onChange={setShow3d} />
+            {show3d && (
+              <Toggle
+                label="Show tooltips"
+                checked={tooltips}
+                onChange={(on) => updateSettings({ tooltips: on })}
+                testId="show-tooltips"
+                title="Show the name, position and state of the neuron under the pointer"
+              />
+            )}
           </div>
           {show3d && (
             <Network3D
@@ -455,6 +465,7 @@ export function RunPage() {
               }}
               onRegion={setRegion}
               queryState={queryState}
+              tooltips={tooltips}
             />
           )}
           {sensors.length > 0 && (

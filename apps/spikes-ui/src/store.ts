@@ -40,10 +40,12 @@ export interface Settings {
   theme: ThemeChoice;
   /** Node agents (`host:port`, comma-separated) to spread networks over; empty: the engine alone. */
   nodes: string;
+  /** Show a tooltip for the neuron under the pointer in the 3D view. */
+  tooltips: boolean;
 }
 
 const SETTINGS_KEY = "spikes.settings";
-const DEFAULT_SETTINGS: Settings = { server: "", token: "", theme: "system", nodes: "" };
+const DEFAULT_SETTINGS: Settings = { server: "", token: "", theme: "system", nodes: "", tooltips: true };
 
 export const useSettings = create<Settings>()(() => ({ ...DEFAULT_SETTINGS, ...recall<Partial<Settings>>(SETTINGS_KEY, {}) }));
 useSettings.subscribe((s) => remember(SETTINGS_KEY, s));

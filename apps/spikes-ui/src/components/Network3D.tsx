@@ -194,6 +194,8 @@ interface Props {
   onRegion: (neurons: number[]) => void;
   /** A neuron's current state, for the hover tooltip (none for a replay, whose neurons have no live state). */
   queryState?: (neuron: number) => Promise<NeuronState>;
+  /** Show a tooltip (and a halo) for the neuron under the pointer (default on). */
+  tooltips?: boolean;
 }
 
 /** How often the hovered neuron's state is refreshed, ms. */
@@ -201,7 +203,7 @@ const HOVER_REFRESH_MS = 250;
 
 const fmt = (v: number, digits = 1) => (Number.isFinite(v) ? v.toFixed(digits) : "—");
 
-export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState }: Props) {
+export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState, tooltips = true }: Props) {
   const mode = useThemeMode();
   const mount = useRef<HTMLDivElement>(null);
   const scene = useRef<{
@@ -497,6 +499,14 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
     });
   }, [network, width, height]);
 
+  // Tooltips turned off: nothing is hovered.
+  useEffect(() => {
+    if (!tooltips) {
+      cancelAnimationFrame(hoverFrame.current);
+      setHover(null);
+    }
+  }, [tooltips]);
+
   // Hover: the halo follows the neuron under the pointer.
   useEffect(() => {
     const s = scene.current;
@@ -553,8 +563,9 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
       setBox({ ...box, x1: p.x, y1: p.y });
       return;
     }
-    // While dragging (orbiting), no tooltip; otherwise look for a neuron, at most once per animation frame.
-    if (e.buttons) {
+    // While dragging (orbiting), or with tooltips off, no tooltip; otherwise look for a neuron, at most once per
+    // animation frame.
+    if (e.buttons || !tooltips) {
       if (hover) setHover(null);
       return;
     }
@@ -667,7 +678,7 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Hover a neuron for its state, drag to orbit, scroll to zoom, click a neuron to inspect it, shift-drag to select a region
+        {tooltips ? "Hover a neuron for its state, drag" : "Drag"} to orbit, scroll to zoom, click a neuron to inspect it, shift-drag to select a region
         for the raster.
         {sensors.length > 0 && " Green diamonds are sensors, with lines to the neurons they drive; they light up while their data flows."}
       </p>

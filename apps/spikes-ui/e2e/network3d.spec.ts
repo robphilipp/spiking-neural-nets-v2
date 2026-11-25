@@ -73,4 +73,17 @@ test("hovering a neuron highlights it and shows its name, position and state", a
   // Away from the view: gone.
   await page.mouse.move(b.x + b.width / 2, b.y + b.height + 200);
   await expect(tooltip).toBeHidden();
+
+  // Tooltips off (on by default): hovering shows nothing, until they're on again.
+  const toggle = page.getByTestId("show-tooltips");
+  await expect(toggle).toBeChecked();
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
+  await page.mouse.move(b.x + at.x, b.y + at.y);
+  await page.waitForTimeout(300);
+  await expect(tooltip).toBeHidden();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height + 200);
+  await toggle.click();
+  await page.mouse.move(b.x + at.x, b.y + at.y);
+  await expect(tooltip).toBeVisible();
 });
