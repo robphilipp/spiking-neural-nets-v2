@@ -22,7 +22,18 @@ pub(crate) fn shard_of(partition: Partition, partitions: u32, shards: usize) -> 
 /// # Panics
 /// If `partitions` is zero.
 pub fn spatial_partitions(positions: &[[f64; 3]], partitions: u32) -> Vec<Partition> {
+    spatial_partitions_weighted(positions, &vec![1; positions.len()], partitions)
+}
+
+/// Like [`spatial_partitions`], but cuts the curve into runs of equal total `weight` (an actor's expected work,
+/// e.g. its incoming connections), so partitions, and the shards and nodes that run them, get equal work. With
+/// equal weights it gives exactly what [`spatial_partitions`] gives.
+///
+/// # Panics
+/// If `partitions` is zero, or `weights` isn't as long as `positions`.
+pub fn spatial_partitions_weighted(positions: &[[f64; 3]], weights: &[u64], partitions: u32) -> Vec<Partition> {
     assert!(partitions > 0, "need at least one partition");
+    assert_eq!(weights.len(), positions.len(), "a weight for each position");
     if positions.is_empty() {
         return Vec::new();
     }
@@ -49,10 +60,12 @@ pub fn spatial_partitions(positions: &[[f64; 3]], partitions: u32) -> Vec<Partit
         .map(|(i, p)| (morton3(quantize(p[0], 0), quantize(p[1], 1), quantize(p[2], 2)), i))
         .collect();
     order.sort_unstable();
-    let n = positions.len() as u64;
+    let total: u128 = weights.iter().map(|&w| u128::from(w)).sum::<u128>().max(1);
     let mut result = vec![Partition(0); positions.len()];
-    for (rank, &(_, i)) in order.iter().enumerate() {
-        result[i] = Partition((rank as u64 * u64::from(partitions) / n) as u32);
+    let mut before: u128 = 0;
+    for &(_, i) in &order {
+        result[i] = Partition((before * u128::from(partitions) / total).min(u128::from(partitions - 1)) as u32);
+        before += u128::from(weights[i]);
     }
     result
 }
@@ -104,6 +117,28 @@ mod tests {
                 .map(|(_, p)| *p);
             assert_eq!(same_octant_part, Some(*part));
         }
+    }
+
+    #[test]
+    fn weighted_partitions_balance_the_weight() {
+        // A line of 1000 points; the first 100 weigh 10 each, the rest 1: 1900 in all, so 4 partitions of ~475.
+        let positions: Vec<[f64; 3]> = (0..1000).map(|i| [f64::from(i), 0.0, 0.0]).collect();
+        let weights: Vec<u64> = (0..1000).map(|i| if i < 100 { 10 } else { 1 }).collect();
+        let parts = spatial_partitions_weighted(&positions, &weights, 4);
+        for p in 0..4 {
+            let w: u64 = parts
+                .iter()
+                .zip(&weights)
+                .filter(|(x, _)| x.0 == p)
+                .map(|(_, w)| w)
+                .sum();
+            assert!((465..=485).contains(&w), "partition {p} weighs {w}");
+        }
+        // Equal weights: the plain cut.
+        assert_eq!(
+            spatial_partitions_weighted(&positions, &[3; 1000], 4),
+            spatial_partitions(&positions, 4)
+        );
     }
 
     #[test]

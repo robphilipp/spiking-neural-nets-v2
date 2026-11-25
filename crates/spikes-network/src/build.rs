@@ -7,7 +7,7 @@ use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use spikes_dna::{InDegree, NetworkDescription, WeightSpec};
 use spikes_model::{NeuronParams, Receptor, Sign, Synapse, SynapseParams};
-use tempo_runtime::placement::spatial_partitions;
+use tempo_runtime::placement::spatial_partitions_weighted;
 use tempo_runtime::{ActorId, EdgeIdx, Jitter, RouteEdge, RouteId, SimDuration};
 
 use crate::Runtime;
@@ -210,6 +210,26 @@ impl<T: std::fmt::Debug> Table<T> {
 
 /// A population: dynamics, receptors, and modulator release on spiking.
 type Population = (NeuronParams, Vec<Receptor>, Option<(u16, f64)>);
+
+/// Each neuron's expected work, for placement: 1, plus its expected incoming connections (from the connection list
+/// and the rules; a probability rule with a radius is counted as if the radius took in every sender).
+fn expected_work(description: &NetworkDescription, index: &impl Fn(&str) -> usize) -> Vec<u64> {
+    let mut work = vec![1u64; description.neurons.len()];
+    for c in &description.connections {
+        work[index(&c.post)] += 1;
+    }
+    for rule in &description.rules {
+        let senders = description.members(&rule.pre).map_or(0, |s| s.len() as u64);
+        let each = match rule.in_degree {
+            spikes_dna::InDegree::Fixed(k) => u64::from(k).min(senders),
+            spikes_dna::InDegree::Probability(p) => (p * senders as f64).round() as u64,
+        };
+        for post in description.members(&rule.post).unwrap_or_default() {
+            work[post as usize] += each;
+        }
+    }
+    work
+}
 
 fn draw(spec: WeightSpec, rng: &mut Xoshiro256PlusPlus) -> f64 {
     match spec {
@@ -454,9 +474,10 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         record_weights: options.record_weights,
     });
 
-    // Neurons, placed so that nearby neurons share a partition.
+    // Neurons, placed so that nearby neurons share a partition, and partitions get equal work: a neuron's work is
+    // mostly its incoming connections.
     let locations: Vec<[f64; 3]> = description.neurons.iter().map(|d| d.location_um()).collect();
-    let partitions = spatial_partitions(&locations, rt.partitions());
+    let partitions = spatial_partitions_weighted(&locations, &expected_work(description, &index), rt.partitions());
     let ids: Vec<ActorId> = (0..n)
         .map(|i| {
             let actor = NeuronActor::new(Arc::clone(&params), populations[i], locations[i]);
