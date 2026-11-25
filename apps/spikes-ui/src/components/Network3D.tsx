@@ -1,9 +1,10 @@
-// The network in 3D: neurons at their positions, spikes flashing, connections of the selection; click to inspect a
-// neuron, shift-drag a box to select a region (it becomes the raster's rows). Small networks are instanced spheres;
+// The network in 3D: neurons at their positions, spikes flashing, connections of the selection; hover a neuron for its
+// name, position and current state, click to inspect it, shift-drag a box to select a region (it becomes the raster's
+// rows). Small networks are instanced spheres;
 // big ones are point sprites (one vertex per neuron), so 100k+ neurons are one cheap draw call either way.
 
 import { cssColor, useThemeMode } from "../theme";
-import type { Frame, Network, SensorInfo } from "@spikes/client";
+import type { Frame, Network, NeuronState, SensorInfo } from "@spikes/client";
 import { useEffect, useRef, useState } from "react";
 import type { Observable } from "rxjs";
 import * as THREE from "three";
@@ -191,9 +192,16 @@ interface Props {
   sensors?: SensorInfo[];
   onPick: (neuron: number) => void;
   onRegion: (neurons: number[]) => void;
+  /** A neuron's current state, for the hover tooltip (none for a replay, whose neurons have no live state). */
+  queryState?: (neuron: number) => Promise<NeuronState>;
 }
 
-export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion }: Props) {
+/** How often the hovered neuron's state is refreshed, ms. */
+const HOVER_REFRESH_MS = 250;
+
+const fmt = (v: number, digits = 1) => (Number.isFinite(v) ? v.toFixed(digits) : "—");
+
+export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState }: Props) {
   const mode = useThemeMode();
   const mount = useRef<HTMLDivElement>(null);
   const scene = useRef<{
@@ -214,7 +222,13 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
     radius: number;
     /** The sensors' markers, labels and lines. */
     sensors: THREE.Group;
+    /** Marks the hovered neuron. */
+    halo: THREE.Mesh;
   } | null>(null);
+  /** The neuron under the pointer, and where the pointer is (in the view). */
+  const [hover, setHover] = useState<{ neuron: number; x: number; y: number } | null>(null);
+  const [hoverState, setHoverState] = useState<NeuronState | null>(null);
+  const hoverFrame = useRef(0);
   /** Counts scene builds (a new network or theme), so the selection's lines are redrawn into each. */
   const [built, setBuilt] = useState(0);
   const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -312,7 +326,30 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
     draw();
     const sensorGroup = new THREE.Group();
     world.add(sensorGroup);
-    scene.current = { renderer, camera, neurons, lines, flash, lit: litSet, base, controls, invalidate, bounds, size, radius, sensors: sensorGroup };
+    // The hovered neuron's halo: drawn over everything, so it shows even behind other neurons.
+    const halo = new THREE.Mesh(
+      new THREE.SphereGeometry(radius * 2.2, 20, 14),
+      new THREE.MeshBasicMaterial({ color: cssColor("--highlight"), transparent: true, opacity: 0.45, depthTest: false }),
+    );
+    halo.renderOrder = 10;
+    halo.visible = false;
+    world.add(halo);
+    scene.current = {
+      renderer,
+      camera,
+      neurons,
+      lines,
+      flash,
+      lit: litSet,
+      base,
+      controls,
+      invalidate,
+      bounds,
+      size,
+      radius,
+      sensors: sensorGroup,
+      halo,
+    };
     setBuilt((b) => b + 1); // the selection's lines go into the new scene
     return () => {
       cancelAnimationFrame(frame);
@@ -321,6 +358,8 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
       lines.geometry.dispose();
       allGeometry.dispose();
       disposeGroup(sensorGroup);
+      halo.geometry.dispose();
+      (halo.material as THREE.Material).dispose();
       renderer.dispose();
       renderer.domElement.remove();
       scene.current = null;
@@ -443,6 +482,58 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
     s.invalidate();
   }, [sensors]);
 
+  // For tests and debugging: where a neuron is in the view (px from its top left).
+  useEffect(() => {
+    Object.assign(window, {
+      __spikes3d: {
+        project: (i: number) => {
+          const s = scene.current;
+          const p = network.neurons[i]?.position;
+          if (!s || !p) return null;
+          const v = new THREE.Vector3(...p).project(s.camera);
+          return { x: ((v.x + 1) / 2) * width, y: ((1 - v.y) / 2) * height };
+        },
+      },
+    });
+  }, [network, width, height]);
+
+  // Hover: the halo follows the neuron under the pointer.
+  useEffect(() => {
+    const s = scene.current;
+    if (!s) return;
+    const position = hover ? network.neurons[hover.neuron]?.position : undefined;
+    s.halo.visible = position !== undefined;
+    if (position) s.halo.position.set(...position);
+    s.invalidate();
+  }, [hover?.neuron, network, built]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The hovered neuron's state, refreshed while it's hovered.
+  const hovered = hover?.neuron;
+  useEffect(() => {
+    setHoverState(null);
+    if (hovered === undefined || !queryState) return;
+    let stop = false;
+    const poll = () =>
+      queryState(hovered)
+        .then((state) => !stop && setHoverState(state))
+        .catch(() => {});
+    void poll();
+    const timer = setInterval(poll, HOVER_REFRESH_MS);
+    return () => {
+      stop = true;
+      clearInterval(timer);
+    };
+  }, [hovered, queryState]);
+
+  /** The neuron at a point of the view, if any. */
+  const neuronAt = (x: number, y: number) => {
+    const s = scene.current;
+    if (!s) return undefined;
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2((x / width) * 2 - 1, -(y / height) * 2 + 1), s.camera);
+    return s.neurons.hit(ray);
+  };
+
   // Click: pick the neuron under the pointer. Shift-drag: select the neurons inside the box.
   const pointer = (e: React.PointerEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -457,10 +548,25 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
     (e.currentTarget as HTMLElement).dataset.down = `${p.x},${p.y}`;
   };
   const onPointerMove = (e: React.PointerEvent) => {
+    const p = pointer(e);
     if (box) {
-      const p = pointer(e);
       setBox({ ...box, x1: p.x, y1: p.y });
+      return;
     }
+    // While dragging (orbiting), no tooltip; otherwise look for a neuron, at most once per animation frame.
+    if (e.buttons) {
+      if (hover) setHover(null);
+      return;
+    }
+    cancelAnimationFrame(hoverFrame.current);
+    hoverFrame.current = requestAnimationFrame(() => {
+      const neuron = neuronAt(p.x, p.y);
+      setHover(neuron === undefined ? null : { neuron, x: p.x, y: p.y });
+    });
+  };
+  const onPointerLeave = () => {
+    cancelAnimationFrame(hoverFrame.current);
+    setHover(null);
   };
   const onPointerUp = (e: React.PointerEvent) => {
     const s = scene.current;
@@ -485,11 +591,12 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
       return;
     }
     if (Math.hypot(p.x - dx, p.y - dy) > 4) return; // a drag (orbit), not a click
-    const ray = new THREE.Raycaster();
-    ray.setFromCamera(new THREE.Vector2((p.x / width) * 2 - 1, -(p.y / height) * 2 + 1), s.camera);
-    const hit = s.neurons.hit(ray);
+    const hit = neuronAt(p.x, p.y);
     if (hit !== undefined) callbacks.current.onPick(hit);
   };
+
+  const hoveredNeuron = hover ? network.neurons[hover.neuron] : undefined;
+  const spikedJustNow = hover !== null && scene.current !== null && performance.now() - (scene.current.flash[hover.neuron] ?? 0) < 500;
 
   return (
     <div className="flex flex-col gap-1">
@@ -501,7 +608,51 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerLeave={onPointerLeave}
       >
+        {hover && hoveredNeuron && (
+          <div
+            role="tooltip"
+            data-testid="neuron-tooltip"
+            className="pointer-events-none absolute z-10 min-w-48 rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md"
+            style={{
+              // Beside the pointer, on whichever side has room.
+              left: hover.x + 16 + 220 > width ? undefined : hover.x + 16,
+              right: hover.x + 16 + 220 > width ? width - hover.x + 16 : undefined,
+              top: Math.min(hover.y + 12, height - 150),
+            }}
+          >
+            <div className="mb-1 flex items-center gap-2 text-sm font-medium">
+              <span className="inline-block size-2 rounded-full" style={{ background: hoveredNeuron.inhibitory ? "#d3a6c3" : "#8fb3cf" }} />
+              {hoveredNeuron.name}
+              {spikedJustNow && <span className="rounded bg-[#ff8c00] px-1 text-[10px] text-black">spike</span>}
+            </div>
+            <div className="text-muted-foreground">
+              {hoveredNeuron.kind.replace("_", " ")} · {hoveredNeuron.inhibitory ? "inhibitory" : "excitatory"}
+            </div>
+            <div className="tabular-nums text-muted-foreground">
+              ({hoveredNeuron.position.map((v) => fmt(v)).join(", ")}) µm
+            </div>
+            {queryState && (
+              <div className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 tabular-nums" data-testid="neuron-tooltip-state">
+                <span className="text-muted-foreground">Membrane</span>
+                <span>{hoverState ? `${fmt(hoverState.membraneMv, 2)} mV` : "…"}</span>
+                <span className="text-muted-foreground">Threshold shift</span>
+                <span>{hoverState ? `${fmt(hoverState.intrinsicMv, 2)} mV` : "…"}</span>
+                <span className="text-muted-foreground">Spikes</span>
+                <span>{hoverState ? hoverState.spikes.toLocaleString() : "…"}</span>
+                <span className="text-muted-foreground">Last spike</span>
+                <span>{hoverState ? (hoverState.lastSpikeMs === null ? "—" : `${fmt(hoverState.lastSpikeMs)} ms`) : "…"}</span>
+                {hoverState?.tonic && (
+                  <>
+                    <span className="text-muted-foreground">Firing</span>
+                    <span>tonically</span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {box && (
           <div
             className="pointer-events-none absolute border border-highlight bg-foreground/5"
@@ -516,7 +667,8 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Drag to orbit, scroll to zoom, click a neuron to inspect it, shift-drag to select a region for the raster.
+        Hover a neuron for its state, drag to orbit, scroll to zoom, click a neuron to inspect it, shift-drag to select a region
+        for the raster.
         {sensors.length > 0 && " Green diamonds are sensors, with lines to the neurons they drive; they light up while their data flows."}
       </p>
     </div>

@@ -160,6 +160,11 @@ export function RunPage() {
     if (stats) simTime(stats.simMs);
   }, [stats]);
   const { bufferMs, updateMs, cadence } = useChartSettings();
+  // The 3D view's tooltip asks for a neuron's state (a replay's neurons have none).
+  const queryState = useMemo(
+    () => (client && id !== null && !replay ? (neuron: number) => client.queryNeuron(id, neuron) : undefined),
+    [client, id, replay],
+  );
 
   const act = (f: () => Promise<unknown>) => async () => {
     setError(null);
@@ -449,6 +454,7 @@ export function RunPage() {
                 if (neuron) setPicked([neuron]);
               }}
               onRegion={setRegion}
+              queryState={queryState}
             />
           )}
           {sensors.length > 0 && (

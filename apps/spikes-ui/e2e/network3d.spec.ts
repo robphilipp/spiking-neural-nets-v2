@@ -41,3 +41,36 @@ test("the 3D view draws the network, flashes spikes, and selects a region for th
   await expect(page.getByTestId("region")).toHaveCount(0);
   await page.getByTestId("stop").click();
 });
+
+test("hovering a neuron highlights it and shows its name, position and state", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click();
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "ring", exact: true }).click();
+  await page.getByTestId("apply").click();
+  await expect(page.getByText("Applied.")).toBeVisible();
+  await page.getByTestId("nav-run").click();
+  await page.getByTestId("build").click();
+  await expect(page.getByText("25 neurons")).toBeVisible();
+
+  // The pointer over the first neuron.
+  const view = page.getByTestId("network-3d");
+  const b = (await view.boundingBox())!;
+  const tooltip = page.getByTestId("neuron-tooltip");
+  const at = (await page.evaluate(
+    () => (window as unknown as { __spikes3d: { project: (i: number) => { x: number; y: number } } }).__spikes3d.project(0),
+  ))!;
+  await page.mouse.move(b.x + at.x, b.y + at.y);
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText(/hidden-10\d/); // (or a neighbour in front of it)
+  await expect(tooltip).toContainText("µm");
+  await expect(tooltip).toContainText(/excitatory|inhibitory/);
+  await expect(page.getByTestId("neuron-tooltip-state")).toContainText(/Membrane\s*-?\d+\.\d\d mV/);
+  await expect(page.getByTestId("neuron-tooltip-state")).toContainText(/Spikes\s*\d+/);
+  await page.screenshot({ path: "test-results/neuron-tooltip.png" });
+
+  // Away from the view: gone.
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height + 200);
+  await expect(tooltip).toBeHidden();
+});
