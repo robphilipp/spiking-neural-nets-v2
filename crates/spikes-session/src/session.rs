@@ -827,10 +827,11 @@ impl Session {
         }
     }
 
-    /// The runtime's counters and its lookahead (the synchronization window length), when ready (not running).
-    pub fn runtime_stats(&self) -> Option<(tempo_runtime::Stats, SimDuration)> {
+    /// The runtime's counters, its lookahead (the synchronization window length) and the wall time its shards have
+    /// spent waiting for each other (summed), when ready (not running).
+    pub fn runtime_stats(&self) -> Option<(tempo_runtime::Stats, SimDuration, Duration)> {
         match &self.inner().phase {
-            Stage::Ready(built) => Some((built.rt.stats(), built.rt.lookahead())),
+            Stage::Ready(built) => Some((built.rt.stats(), built.rt.lookahead(), built.rt.sync_wait())),
             _ => None,
         }
     }

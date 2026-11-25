@@ -624,6 +624,12 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
     }
 
     /// How well paced runs kept to the clock.
+    /// Wall time the shards have spent waiting for each other (and for other nodes) at window ends, summed over
+    /// shards: with the run's wall time × shards, how much of the shards' time synchronization takes.
+    pub fn sync_wait(&self) -> std::time::Duration {
+        self.shards.iter().map(|s| s.sync_wait).sum()
+    }
+
     pub fn pacing_stats(&self) -> &PacingStats {
         &self.shards[0].pacing
     }

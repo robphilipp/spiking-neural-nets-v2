@@ -439,6 +439,8 @@ pub(crate) struct Shard<M, E> {
     pub(crate) spatial: SpatialIndex,
     /// Time of the latest delivered event.
     pub(crate) last_event: SimTime,
+    /// Wall time spent waiting for the other shards (and nodes) at window ends.
+    pub(crate) sync_wait: std::time::Duration,
     /// Reused buffer for draining mailboxes.
     spare: Batch<M>,
 }
@@ -550,6 +552,7 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
             groups: Vec::new(),
             spatial: SpatialIndex::new(settings.spatial_cell),
             last_event: SimTime::ZERO,
+            sync_wait: std::time::Duration::ZERO,
             spare: Vec::new(),
         }
     }
@@ -803,6 +806,7 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
                 self.apply_commands(shared.control, shared.world, last_end);
             }
         };
+        let waiting = std::time::Instant::now();
         let decision = shared
             .barrier
             .arrive(next, proposal, &mut idle, |next, lookahead, idle| match shared.link {
@@ -839,6 +843,7 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
                 }
             });
         self.core.outbound_min = SimTime::MAX;
+        self.sync_wait += waiting.elapsed();
         decision
     }
 

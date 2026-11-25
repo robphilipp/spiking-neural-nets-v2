@@ -43,5 +43,11 @@ fn main() {
         })
         .expect("starts");
     assert!(session.wait_for_run(std::time::Duration::from_secs(600)));
-    println!("{shards} shards: {:.2} s wall per simulated second", t.elapsed().as_secs_f64());
+    let wall = t.elapsed().as_secs_f64();
+    let (_, lookahead, wait) = session.runtime_stats().expect("ready");
+    println!(
+        "{shards} shards: {wall:.2} s wall per simulated second; lookahead {:.3} ms; shards waited {:.0}% of their time",
+        lookahead.as_millis_f64(),
+        100.0 * wait.as_secs_f64() / (wall * shards as f64)
+    );
 }
