@@ -49,6 +49,74 @@ export function Field({
   );
 }
 
+/**
+ * A labelled number, typed freely: the text is kept as it's typed (it can be emptied, or be "-" or "0." on the way
+ * to a number), and the value changes only when the text is a valid number within the limits. Until then the field
+ * shows it's invalid; leaving it shows the last valid value again. Changes made elsewhere (e.g. a reset) show too.
+ */
+export function NumberField({
+  label,
+  value,
+  onChange,
+  min = -Infinity,
+  max = Infinity,
+  integer = false,
+  width,
+  help,
+  className,
+  onBlur,
+  title,
+  ...input
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  min?: number;
+  max?: number;
+  /** Whole numbers only. */
+  integer?: boolean;
+  width?: number;
+  help?: ReactNode;
+} & Omit<ComponentProps<typeof Input>, "value" | "onChange" | "type" | "min" | "max">) {
+  const [text, setText] = useState(String(value));
+  // Follow changes made elsewhere, while keeping what's being typed (adjusted during render, not in an effect).
+  const [shown, setShown] = useState(value);
+  if (value !== shown) {
+    setShown(value);
+    if (parse(text) !== value) setText(String(value));
+  }
+  function parse(t: string): number | null {
+    if (t.trim() === "") return null;
+    const v = Number(t);
+    return Number.isFinite(v) && (!integer || Number.isInteger(v)) && v >= min && v <= max ? v : null;
+  }
+  const valid = parse(text) !== null;
+  const limits =
+    min > -Infinity && max < Infinity ? `from ${min} to ${max}` : min > -Infinity ? `at least ${min}` : max < Infinity ? `at most ${max}` : "";
+  return (
+    <Field
+      label={label}
+      width={width}
+      className={className}
+      inputMode={integer && min >= 0 ? "numeric" : "decimal"}
+      value={text}
+      error={!valid}
+      help={help}
+      title={!valid ? `${integer ? "A whole number" : "A number"}${limits ? ` ${limits}` : ""}` : title}
+      onChange={(e) => {
+        setText(e.target.value);
+        const v = parse(e.target.value);
+        if (v !== null) onChange(v);
+      }}
+      onBlur={(e) => {
+        setText(String(value));
+        onBlur?.(e);
+      }}
+      {...input}
+    />
+  );
+}
+
 /** A labelled choice from a list. */
 export function Choice<T extends string | number>({
   label,

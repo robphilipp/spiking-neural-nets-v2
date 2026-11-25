@@ -112,3 +112,32 @@ test("a quiet network explains itself; background input on its inputs brings it 
   await page.screenshot({ path: "test-results/line-sensor.png", fullPage: true });
   await page.getByTestId("stop").click();
 });
+
+test("number fields can be emptied and retyped", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "ring", exact: true }).click();
+  await page.getByTestId("apply").click();
+  await expect(page.getByText("Applied.")).toBeVisible();
+  await page.getByTestId("nav-run").click();
+
+  const rate = page.getByLabel("Hz per neuron", { exact: true });
+  await rate.click();
+  await rate.press("ControlOrMeta+a");
+  await rate.press("Backspace");
+  await expect(rate).toHaveValue(""); // empty, not a minimum like 0.001
+  await expect(rate).toHaveAttribute("aria-invalid", "true");
+  await rate.pressSequentially("0.5");
+  await expect(rate).toHaveValue("0.5");
+  await expect(rate).not.toHaveAttribute("aria-invalid");
+
+  // Emptied and left: the last valid value comes back.
+  const shards = page.getByLabel("Shards", { exact: true });
+  await shards.fill("3");
+  await shards.fill("");
+  await expect(shards).toHaveValue("");
+  await rate.click();
+  await expect(shards).toHaveValue("3");
+  await expect(rate).toHaveValue("0.5");
+});

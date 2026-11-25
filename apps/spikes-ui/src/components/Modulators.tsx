@@ -1,7 +1,7 @@
 import type { ProtocolClient } from "@spikes/client";
 import { FlaskConical } from "lucide-react";
 import { useState } from "react";
-import { Field, Heading, Panel, Row } from "@/components/kit";
+import { Field, Heading, NumberField, Panel, Row } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 
 /** A release button for each of the network's neuromodulators (e.g. a dopamine "reward"). */
@@ -15,7 +15,7 @@ export function Modulators(props: { client: ProtocolClient; session: number; mod
         <Heading className="pb-2">Neuromodulators</Heading>
         {modulators.map((name, i) => (
           <Row key={name} className="gap-2">
-            <Field label="Amount" type="number" width={90} value={amounts[i] ?? 1} onChange={(e) => setAmounts((a) => a.map((x, j) => (j === i ? Number(e.target.value) : x)))} />
+            <NumberField label="Amount" width={90} min={0} value={amounts[i] ?? 1} onChange={(v) => setAmounts((a) => a.map((x, j) => (j === i ? v : x)))} />
             <Button
               variant="outline"
               data-testid={`release-${name}`}

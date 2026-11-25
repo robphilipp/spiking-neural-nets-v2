@@ -2,7 +2,7 @@ import type { Network, Neuron, NeuronState, ProtocolClient } from "@spikes/clien
 import { Link2, Unlink } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { AxisLocation, Chart, ContinuousAxis, defaultLineStyle, ScatterPlot, type SeriesLineStyle } from "stream-charts";
-import { Choice, Field, Heading, NeuronPicker, Notice, Panel, Row, Stat } from "@/components/kit";
+import { Choice, Field, Heading, NeuronPicker, Notice, NumberField, Panel, Row, Stat } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -227,7 +227,7 @@ export function Inspector(props: {
               <Row>
                 <span className="pb-2 text-sm">Connect to {first.name} from</span>
                 <NeuronPicker label="Sender" width={220} options={network.neurons} value={from ? [from] : []} max={1} onChange={(v) => setFrom(v[0] ?? null)} />
-                <Field label="Weight" type="number" width={100} value={weight} onChange={(e) => setWeight(Number(e.target.value))} />
+                <NumberField label="Weight" width={100} value={weight} onChange={setWeight} />
                 <Choice
                   label="Learning"
                   width={150}

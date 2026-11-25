@@ -11,7 +11,7 @@ import {
   ScatterPlot,
   type SeriesLineStyle,
 } from "stream-charts";
-import { Choice, Field, Heading, Notice, Panel, Row, Stat, StateBadge, Toggle } from "@/components/kit";
+import { Choice, Field, Heading, Notice, NumberField, Panel, Row, Stat, StateBadge, Toggle } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
@@ -200,8 +200,8 @@ export function RunPage() {
     <div className="flex flex-col gap-3">
       <Panel>
         <Row className="items-end">
-          <Field label="Shards" type="number" width={90} value={shards} onChange={(e) => runSettingsChanged({ shards: Math.max(1, Math.round(Number(e.target.value)) || 1) })} />
-          <Field label="Seed" type="number" width={90} value={seed} onChange={(e) => runSettingsChanged({ seed: Math.round(Number(e.target.value)) || 0 })} />
+          <NumberField label="Shards" width={90} integer min={1} max={256} value={shards} onChange={(v) => runSettingsChanged({ shards: v })} />
+          <NumberField label="Seed" width={90} integer min={0} value={seed} onChange={(v) => runSettingsChanged({ seed: v })} />
           <Button
             variant={needsRebuild && !running ? "default" : "outline"}
             className={needsRebuild && !running ? "bg-warning text-black hover:bg-warning/80" : undefined}
@@ -363,7 +363,7 @@ export function RunPage() {
         {!replay && (
           <Row>
             <Field label="Stimulate neurons starting with" width={240} value={stimulus.prefix} onChange={(e) => setStimulus({ ...stimulus, prefix: e.target.value })} />
-            <Field label="mV" type="number" width={80} value={stimulus.mv} onChange={(e) => setStimulus({ ...stimulus, mv: Number(e.target.value) })} />
+            <NumberField label="mV" width={80} value={stimulus.mv} onChange={(mv) => setStimulus({ ...stimulus, mv })} />
             <Button
               variant="outline"
               disabled={!network}
@@ -386,8 +386,8 @@ export function RunPage() {
               title="Poisson input, applied when the network is built"
             />
             <Field label="Neurons starting with" width={170} placeholder="all" value={backgroundDraft.prefix} onChange={(e) => setBackground({ ...backgroundDraft, prefix: e.target.value })} />
-            <Field label="Hz per neuron" type="number" width={120} value={backgroundDraft.rateHz} onChange={(e) => setBackground({ ...backgroundDraft, rateHz: Math.max(0.001, Number(e.target.value)) })} />
-            <Field label="mV" type="number" width={80} value={backgroundDraft.mv} onChange={(e) => setBackground({ ...backgroundDraft, mv: Number(e.target.value) })} />
+            <NumberField label="Hz per neuron" width={120} min={0.001} value={backgroundDraft.rateHz} onChange={(rateHz) => setBackground({ ...backgroundDraft, rateHz })} />
+            <NumberField label="mV" width={80} value={backgroundDraft.mv} onChange={(mv) => setBackground({ ...backgroundDraft, mv })} />
           </Row>
         )}
         {needsRebuild && !replay && (

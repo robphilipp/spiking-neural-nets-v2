@@ -1,50 +1,7 @@
 import { RotateCcw } from "lucide-react";
-import { useState } from "react";
-import { Choice, Field, Row, Toggle } from "@/components/kit";
+import { Choice, NumberField, Row, Toggle } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { KEEP_CHOICES, useChartSettings } from "../chartSettings";
-
-/** A whole number of milliseconds, typed freely: the setting changes once the text is a valid value. */
-function MillisField({
-  label,
-  value,
-  onChange,
-  min,
-  help,
-  testId,
-}: {
-  label: string;
-  value: number;
-  onChange: (ms: number) => void;
-  min: number;
-  help: string;
-  testId: string;
-}) {
-  const [text, setText] = useState(String(value));
-  // Follow changes made elsewhere (e.g. a reset), while keeping what's being typed.
-  const [shown, setShown] = useState(value);
-  if (value !== shown) {
-    setShown(value);
-    setText(String(value));
-  }
-  const valid = (t: string) => Number.isInteger(Number(t)) && Number(t) >= min && t.trim() !== "";
-  return (
-    <Field
-      label={label}
-      width={110}
-      inputMode="numeric"
-      value={text}
-      title={help}
-      error={!valid(text)}
-      data-testid={testId}
-      onChange={(e) => {
-        setText(e.target.value);
-        if (valid(e.target.value)) onChange(Number(e.target.value));
-      }}
-      onBlur={() => setText(String(value))}
-    />
-  );
-}
 
 /**
  * How the live charts take in and keep data (as in stream-charts' examples): buffering (how long a chart gathers
@@ -55,21 +12,25 @@ export function ChartControls() {
   const { bufferMs, updateMs, cadence, keepMs, setBufferMs, setUpdateMs, setCadence, setKeepMs, reset } = useChartSettings();
   return (
     <Row data-testid="chart-controls">
-      <MillisField
+      <NumberField
         label="Buffering (ms)"
-        value={bufferMs}
+        width={110}
+        integer
         min={1}
+        value={bufferMs}
         onChange={setBufferMs}
-        help="How long a chart gathers incoming data before drawing it"
-        testId="buffering"
+        title="How long a chart gathers incoming data before drawing it"
+        data-testid="buffering"
       />
-      <MillisField
+      <NumberField
         label="Update rate (ms)"
-        value={updateMs}
+        width={110}
+        integer
         min={10}
+        value={updateMs}
         onChange={setUpdateMs}
-        help="How often the engine sends the charts' data"
-        testId="update-rate"
+        title="How often the engine sends the charts' data"
+        data-testid="update-rate"
       />
       <Choice
         label="Keep"

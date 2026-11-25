@@ -16,7 +16,7 @@ import {
 import { useConnection } from "../connection";
 import { startInput, stopInput, useActiveInput } from "../inputStreams";
 import { compile, sample, type Signal, SignalError } from "../signal";
-import { Choice, Field, Heading, Notice, Panel, Row } from "@/components/kit";
+import { Choice, Field, Heading, Notice, NumberField, Panel, Row } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { useChartColors } from "../theme";
 import { useSession } from "../store";
@@ -162,8 +162,8 @@ export function InputsPage() {
               { value: "threshold", label: "threshold (delta)" },
             ]}
           />
-          <Field label={kind === "rate" ? "Hz at 1" : kind === "current" ? "mV per unit" : "Change per event"} type="number" width={130} value={a} onChange={(e) => setA(Number(e.target.value))} />
-          {kind !== "current" && <Field label="mV per event" type="number" width={120} value={b} onChange={(e) => setB(Number(e.target.value))} />}
+          <NumberField label={kind === "rate" ? "Hz at 1" : kind === "current" ? "mV per unit" : "Change per event"} width={130} value={a} onChange={setA} />
+          {kind !== "current" && <NumberField label="mV per event" width={120} value={b} onChange={setB} />}
         </Row>
         <Field
           label="Value of channel c at time t (ms); n channels"
@@ -191,7 +191,7 @@ export function InputsPage() {
 
       <Panel>
         <Row>
-          <Field label="Seconds" type="number" width={100} value={seconds} onChange={(e) => setSeconds(Math.max(0.01, Number(e.target.value)))} />
+          <NumberField label="Seconds" width={100} min={0.01} value={seconds} onChange={setSeconds} />
           <Button
             disabled={!client || !ready || !channels || !("signal" in compiled)}
             data-testid="inject"
