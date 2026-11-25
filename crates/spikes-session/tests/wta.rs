@@ -1,5 +1,5 @@
 //! The winner-takes-all example learns: driven one input at a time (as the Inputs page does), out-1 comes to follow
-//! in-1 and out-2 in-2.
+//! in-1 and out-2 in-2, which they don't do at first.
 
 use std::path::Path;
 use std::time::Duration;
@@ -29,7 +29,7 @@ fn each_output_learns_to_follow_its_input() {
     spec.ingress_delay = SimDuration::from_millis(1);
     let sensor = session.connect_sensor(spec).unwrap();
     let active = |t: f64| ((((t / 300.0).floor() * 12.9898).sin() * 43758.5453).abs().floor() as usize) % 2;
-    let values: Vec<f32> = (0..20_000)
+    let values: Vec<f32> = (0..60_000)
         .flat_map(|t| (0..2).map(move |c| if active(f64::from(t)) == c { 1.0 } else { 0.0 }))
         .collect();
     sensor
@@ -39,15 +39,27 @@ fn each_output_learns_to_follow_its_input() {
             values,
         })
         .unwrap();
-    session
-        .start(RunSettings {
-            speed: Speed::AsFastAsPossible,
-            duration: Some(SimDuration::from_secs(20)),
-            record: None,
-        })
-        .unwrap();
-    assert!(session.wait_for_run(Duration::from_secs(60)));
+    let run = |seconds: u64| {
+        session
+            .start(RunSettings {
+                speed: Speed::AsFastAsPossible,
+                duration: Some(SimDuration::from_secs(seconds)),
+                record: None,
+            })
+            .unwrap();
+        assert!(session.wait_for_run(Duration::from_secs(60)));
+    };
+    let spikes = |n: u32| session.query_neuron(n).unwrap().spikes;
 
+    // Untrained, the outputs answer only a few of their inputs' spikes.
+    run(3);
+    let (first_in, first_out) = (spikes(in1) + spikes(in2), spikes(out1) + spikes(out2));
+    assert!(
+        first_out * 3 < first_in,
+        "it follows before learning: {first_out} of {first_in}"
+    );
+
+    run(57);
     let weight = |post: u32, pre: u32| {
         session
             .query_neuron(post)

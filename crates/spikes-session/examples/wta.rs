@@ -66,6 +66,7 @@ fn main() {
     let spikes = |o: u32| session.query_neuron(o).expect("query").spikes;
     let mut before: Vec<u64> = outputs.iter().map(|&o| spikes(o)).collect();
     let mut before_in: Vec<u64> = inputs.iter().map(|&i| spikes(i)).collect();
+    let mut window = vec![(0u64, 0u64); n];
     for b in 0..blocks {
         session
             .start(RunSettings {
@@ -83,6 +84,30 @@ fn main() {
                 counts[on][o] += now[o] - before[o];
             }
             driven[on] += now_in[on] - before_in[on];
+        }
+        // Over time: the share of each input's spikes its own output answered (out-k follows in-k), per 2 s.
+        let on = active(b as f64 * block_ms, block_ms, n);
+        if on < outputs.len() {
+            window[on].0 += now_in[on] - before_in[on];
+            window[on].1 += now[on] - before[on];
+        }
+        if ((b + 1) as f64 * block_ms) % 2000.0 < block_ms {
+            let share: Vec<String> = window
+                .iter()
+                .map(|&(i, o)| {
+                    if i == 0 {
+                        "  -  ".into()
+                    } else {
+                        format!("{:4.0}%", 100.0 * o as f64 / i as f64)
+                    }
+                })
+                .collect();
+            println!(
+                "  t={:5.1} s  followed: {}",
+                (b + 1) as f64 * block_ms / 1e3,
+                share.join(" ")
+            );
+            window = vec![(0, 0); n];
         }
         before = now;
         before_in = now_in;
