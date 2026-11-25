@@ -177,6 +177,7 @@ impl Reach {
         self.elsewhere.push(AtomicU32::new(u32::MAX));
     }
 
+    #[cfg_attr(not(feature = "serde"), allow(dead_code))] // (for restoring snapshots)
     pub(crate) fn clear(&mut self) {
         for bits in self.slices.iter_mut().chain(&mut self.nodes) {
             *bits.get_mut() = 0;

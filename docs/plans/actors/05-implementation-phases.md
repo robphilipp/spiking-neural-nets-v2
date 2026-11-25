@@ -355,9 +355,13 @@ Routes kept with their targets (2026-11-25):
   events the coordinator sends to other nodes 16.5 M → 1.4 M per simulated second (11.4×); run 8.86 → 7.91 s per
   simulated second; heap while running 3.34 → 2.55 GB; build 1.99 → 1.82 s. In one process (8 shards): run speed
   unchanged (5.8 s per simulated second), build 2.65 → 3.1 s and 70 MB more heap (a slice per route per shard).
-- Found, not caused by this (the previous commit does the same): under heavy CPU load (ten busy processes), the
-  session's cluster tests sometimes see a cluster run differ from one process. Unloaded they pass every time. To
-  look into: something in the cluster path depends on timing.
+- Found and fixed (it predates this): under heavy CPU load (ten busy processes), exact cluster runs sometimes
+  differed from one process: a node received an event a window late (by a few µs). A node started a window once
+  its *total* received count reached the total sent to it, but a fast node's events for the next window could
+  arrive before a slow node's for this one and fill the total. The coordinator now tells each node how many events
+  to expect from each node, and it waits for each (one node's frames arrive in order). Under the same load the
+  strict and session cluster tests now pass; before, four of six runs failed. (Tests that pace by the wall clock,
+  and the best-effort test, can still miss their timing on a loaded machine; a pacing test's bound was loosened.)
 
 Next: the 10⁹-synapse network on a cluster (needs the machines).
 

@@ -123,15 +123,16 @@ pub(crate) enum Frame<M> {
         stop: bool,
         sent: Vec<u64>,
     },
-    /// The coordinator's decision for a round, with how many events the receiver must have received before it
-    /// starts the window.
+    /// The coordinator's decision for a round, with how many events the receiver must have received from each node
+    /// (in node order) before it starts the window. Per node: frames from one node arrive in order, but a fast node's
+    /// events for the next window can overtake a slow node's for this one, so a total could be reached too soon.
     Go {
         round: u64,
         start: u64,
         end: u64,
         lookahead: u64,
         stop: bool,
-        expected: u64,
+        expected: Vec<u64>,
     },
     /// Application data (emitted events, control) for the receiver's application handler.
     App(Vec<u8>),
@@ -148,7 +149,7 @@ impl<M> Frame<M> {
         }
     }
 
-    pub(crate) fn go(round: u64, d: WindowDecision, expected: u64) -> Self {
+    pub(crate) fn go(round: u64, d: WindowDecision, expected: Vec<u64>) -> Self {
         Frame::Go {
             round,
             start: d.start.as_nanos(),

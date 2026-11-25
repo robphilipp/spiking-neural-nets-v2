@@ -3,8 +3,8 @@
 //! Each window, every node's last shard to reach its barrier calls [`Link::decide`]. A node sends the coordinator
 //! (node 0) its report (earliest pending event, proposed lookahead, stop) together with how many events it has sent
 //! to each node so far. The coordinator reduces the reports, decides the next window with its own clock, and tells
-//! every node the decision and how many events it should have received by then. A node starts the window only once
-//! they have all arrived. So every node processes the same windows, no event is ever late, and a run gives exactly
+//! every node the decision and how many events it should have received from each node by then. A node starts the
+//! window only once they have all arrived. So every node processes the same windows, no event is ever late, and a run gives exactly
 //! the results of a single process.
 
 use std::collections::HashMap;
@@ -104,7 +104,8 @@ struct Inner<M> {
     inbound: Vec<Inbound<M>>,
     sent: Vec<AtomicU64>,
     bytes_sent: Vec<AtomicU64>,
-    received: AtomicU64,
+    /// Events received from each node.
+    received: Vec<AtomicU64>,
     round: AtomicU64,
     waited_ns: AtomicU64,
     closing: AtomicBool,
@@ -120,7 +121,7 @@ struct State {
     /// Coordinator: reports per round, per node (with each node's sent counts).
     reports: HashMap<u64, Reports>,
     /// Other nodes: the coordinator's decision per round, with the events expected by then.
-    gos: HashMap<u64, (WindowDecision, u64)>,
+    gos: HashMap<u64, (WindowDecision, Vec<u64>)>,
     failure: Option<String>,
 }
 
@@ -155,7 +156,7 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> StrictLink<M> {
                 inbound: (0..shards).map(|_| Mutex::new(Vec::new())).collect(),
                 sent: (0..nodes).map(|_| AtomicU64::new(0)).collect(),
                 bytes_sent: (0..nodes).map(|_| AtomicU64::new(0)).collect(),
-                received: AtomicU64::new(0),
+                received: (0..nodes).map(|_| AtomicU64::new(0)).collect(),
                 round: AtomicU64::new(0),
                 waited_ns: AtomicU64::new(0),
                 closing: AtomicBool::new(false),
@@ -207,7 +208,7 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> StrictLink<M> {
         let i = &self.inner;
         LinkStats {
             sent: i.sent.iter().map(|c| c.load(Ordering::Relaxed)).collect(),
-            received: i.received.load(Ordering::Relaxed),
+            received: i.received.iter().map(|r| r.load(Ordering::Relaxed)).sum(),
             bytes_sent: i.bytes_sent.iter().map(|c| c.load(Ordering::Relaxed)).collect(),
             rounds: i.round.load(Ordering::Relaxed),
             waited: Duration::from_nanos(i.waited_ns.load(Ordering::Relaxed)),
@@ -291,10 +292,15 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> StrictLink<M> {
         ok
     }
 
-    /// Waits until every event this node should have by now has arrived.
-    fn wait_for_events(&self, expected: u64, idle: &mut dyn FnMut()) -> bool {
+    /// Waits until every event this node should have by now has arrived: from each node, as many as it has sent.
+    fn wait_for_events(&self, expected: &[u64], idle: &mut dyn FnMut()) -> bool {
         let received = &self.inner.received;
-        self.wait(idle, |_| received.load(Ordering::Acquire) >= expected)
+        self.wait(idle, |_| {
+            expected
+                .iter()
+                .zip(received)
+                .all(|(&e, r)| r.load(Ordering::Acquire) >= e)
+        })
     }
 }
 
@@ -364,7 +370,7 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> Link<M> for Stric
                 return WindowDecision::STOP;
             }
             let (decision, expected) = go.expect("waited for it");
-            if !self.wait_for_events(expected, idle) {
+            if !self.wait_for_events(&expected, idle) {
                 return WindowDecision::STOP;
             }
             return decision;
@@ -388,7 +394,7 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> Link<M> for Stric
         }) {
             // Tell whoever is still there to stop too.
             for node in 1..inner.nodes {
-                self.send_frame(node, &Frame::go(round, WindowDecision::STOP, 0));
+                self.send_frame(node, &Frame::go(round, WindowDecision::STOP, Vec::new()));
             }
             return WindowDecision::STOP;
         }
@@ -405,11 +411,12 @@ impl<M: Clone + Send + Serialize + DeserializeOwned + 'static> Link<M> for Stric
             },
         );
         let decision = decide(reduced);
-        let expected = |to: usize| all.iter().map(|(_, sent)| sent[to]).sum::<u64>();
+        // (`all` is in node order.)
+        let expected = |to: usize| all.iter().map(|(_, sent)| sent[to]).collect::<Vec<u64>>();
         for node in 1..nodes {
             self.send_frame(node as u32, &Frame::go(round, decision, expected(node)));
         }
-        if !self.wait_for_events(expected(0), idle) {
+        if !self.wait_for_events(&expected(0), idle) {
             return WindowDecision::STOP;
         }
         decision
@@ -457,7 +464,9 @@ impl<M: Clone + Send + DeserializeOwned + 'static> FrameSink for Sink<M> {
                 }
                 // Under the lock, so a waiter can't miss the change between checking the count and waiting.
                 let state = inner.lock();
-                inner.received.fetch_add(count, Ordering::AcqRel);
+                if let Some(r) = inner.received.get(from as usize) {
+                    r.fetch_add(count, Ordering::AcqRel);
+                }
                 drop(state);
                 inner.changed.notify_all();
             }

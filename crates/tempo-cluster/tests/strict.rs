@@ -214,8 +214,9 @@ fn the_coordinators_clock_paces_and_stops_the_whole_cluster() {
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
+    // (Paced at real time for 30 ms: on a loaded machine the cluster may get through much less than that.)
     assert!(
-        nows[0] > ms(5) && nows[0] < ms(200),
+        nows[0] > SimTime::ZERO && nows[0] < ms(200),
         "stopped after about 30 ms: {:?}",
         nows[0]
     );
