@@ -182,6 +182,13 @@ fn main() {
             stats.windows as f64 / seconds,
             100.0 * wait.as_secs_f64() / (wall * shards as f64)
         );
+        if stats.node_sends > 0 {
+            println!(
+                "  this process sent {:.0} events per simulated second to other nodes ({} in all)",
+                stats.node_sends as f64 / seconds,
+                stats.node_sends
+            );
+        }
     }
     let spikes: u64 = (0..n as u32)
         .step_by(n / 1000)

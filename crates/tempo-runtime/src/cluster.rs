@@ -107,6 +107,23 @@ pub enum RemoteItem<M> {
         /// The change.
         op: TopologyOp,
     },
+    /// A send along a route, for the receiving node's slices of it (sent to [`ALL_SHARDS`]; the shards holding a
+    /// slice deliver its edges). The key's sender and sequence number are the send's.
+    Fanout {
+        /// The route.
+        route: RouteId,
+        /// The send's time: each edge is delivered at this plus its delay.
+        base: SimTime,
+        /// The message.
+        msg: M,
+    },
+    /// A change to the receiving shard's slice of a route (forwarded by the route owner's node).
+    Slice {
+        /// The route.
+        route: RouteId,
+        /// The change.
+        op: TopologyOp,
+    },
 }
 
 /// The `shard` of a [`Remote`] that every shard of the receiving node gets (broadcasts and field updates).

@@ -117,14 +117,15 @@ impl Actor<u64, ()> for Spiker {
 }
 
 #[test]
-fn fanout_delivers_each_edge_after_its_own_delay_in_edge_order() {
+fn fanout_delivers_each_edge_after_its_own_delay_in_the_receivers_edge_order() {
     for queue in QUEUES {
         let mut rt = Runtime::new(config(queue));
         let x = rt.spawn(Recorder::default());
         let y = rt.spawn(Recorder::default());
         let spiker = rt.spawn(Spiker::default());
         let us = SimDuration::from_micros;
-        // Two synapses onto x with the same delay: they must arrive in edge order.
+        // Two synapses onto x with the same delay: they arrive in the receiver's edge order (whichever order the
+        // route lists them in, and wherever its edges are kept).
         let edges = vec![
             RouteEdge {
                 target: x,
@@ -150,7 +151,7 @@ fn fanout_delivers_each_edge_after_its_own_delay_in_edge_order() {
         assert_eq!(rt.actor::<Recorder>(y).unwrap().routed, [(t(10), EdgeIdx(0), 42)]);
         assert_eq!(
             rt.actor::<Recorder>(x).unwrap().routed,
-            [(t(20), EdgeIdx(5), 42), (t(20), EdgeIdx(3), 42)]
+            [(t(20), EdgeIdx(3), 42), (t(20), EdgeIdx(5), 42)]
         );
         assert_eq!(rt.stats().routed_sends, 3);
         assert_eq!(rt.stats().routed_delivered, 3);

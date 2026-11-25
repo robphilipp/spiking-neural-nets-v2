@@ -82,7 +82,7 @@ pub struct Network {
     /// Each neuron's outgoing route (every neuron has one, possibly empty, so connections can be added during a
     /// run).
     pub routes: Vec<RouteId>,
-    /// Connections in all (on every node, not only this one's).
+    /// Connections onto this node's neurons (on a cluster each node builds only those; without one, all of them).
     pub synapse_count: u64,
     /// What new connections need: positions, delays, signs and synapse parameter sets.
     wiring: Arc<Wiring>,
@@ -486,9 +486,10 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         })
         .collect();
 
-    // Connections: synapses on the receiver, route edges on the sender. On a node of a cluster only this node's
-    // neurons are stored, so only their synapses and routes are kept; but every connection is numbered on its
-    // receiver (its edge index) the same way on every node.
+    // Connections: synapses on the receiver, route edges with them (the runtime keeps a route's edges with their
+    // targets). On a node of a cluster only the connections onto this node's neurons are made: each receiver's
+    // come from its own random stream, so they're the same whichever node makes them, and the work is shared out.
+    // The senders' nodes learn where their routes reach afterwards (`Runtime::reached_from_elsewhere`).
     let local: Vec<bool> = ids.iter().map(|&id| rt.is_local(id)).collect();
     let mut synapses: Vec<Vec<Synapse>> = vec![Vec::new(); n];
     let mut pre: Vec<Vec<ActorId>> = vec![Vec::new(); n];
@@ -505,25 +506,21 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
     let mut add = |from: usize, to: usize, synapse: Synapse, synaptic_delay_ms: f64| {
         let edge = EdgeIdx(incoming[to]);
         incoming[to] = incoming[to].checked_add(1).expect("fewer than 2³² synapses per neuron");
-        if local[to] {
-            synapses[to].push(synapse);
-            pre[to].push(ids[from]);
-        }
-        if local[from] {
-            // Synaptic delay plus conduction along the axon.
-            let neuron = &kinds[neuron_kinds[from] as usize];
-            let synaptic = SimDuration::from_millis_f64(synaptic_delay_ms);
-            let conduction = SimDuration::from_micros_f64(distance(from, to) / neuron.conduction_m_per_s); // µm/µs
-            edges[from].push(RouteEdge {
-                target: ids[to],
-                delay: (synaptic + conduction).max(options.min_delay),
-                edge,
-            });
-        }
+        synapses[to].push(synapse);
+        pre[to].push(ids[from]);
+        // Synaptic delay plus conduction along the axon.
+        let neuron = &kinds[neuron_kinds[from] as usize];
+        let synaptic = SimDuration::from_millis_f64(synaptic_delay_ms);
+        let conduction = SimDuration::from_micros_f64(distance(from, to) / neuron.conduction_m_per_s); // µm/µs
+        edges[from].push(RouteEdge {
+            target: ids[to],
+            delay: (synaptic + conduction).max(options.min_delay),
+            edge,
+        });
     };
 
     // Each connection receiving neuron by receiving neuron, each with its own random stream (for weights and
-    // random patterns): the same connections on every node, whichever neurons it keeps.
+    // random patterns): the same connections whichever node makes them.
     let mut chosen: Vec<u32> = Vec::new();
     let mut candidates: Vec<u32> = Vec::new();
     for (c, (connection, &params)) in description.connections.iter().zip(&connection_params).enumerate() {
@@ -540,6 +537,9 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         };
         for (k, &post) in connection.to.iter().enumerate() {
             let to = post as usize;
+            if !local[to] {
+                continue; // made by its own node
+            }
             let mut rng = Xoshiro256PlusPlus::seed_from_u64(mix(options.seed, c as u64, u64::from(post)));
             chosen.clear();
             match connection.pattern {
@@ -591,9 +591,12 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
         }
     }
     let synapse_count: u64 = incoming.iter().map(|&k| u64::from(k)).sum();
+    // On a cluster, a neuron's targets may all be on other nodes: every neuron sends along its route (an empty
+    // one costs a lookup per spike). Alone, only the neurons with targets do.
+    let clustered = rt.placement().nodes() > 1;
     let mut routes = Vec::with_capacity(n);
     for (i, ((synapses, pre), edges)) in synapses.into_iter().zip(pre).zip(edges).enumerate() {
-        let connected = !edges.is_empty();
+        let connected = clustered || !edges.is_empty();
         let route = rt.add_route(ids[i], edges, options.jitter);
         routes.push(route);
         // On a node of a cluster, only this node's neurons are stored here.

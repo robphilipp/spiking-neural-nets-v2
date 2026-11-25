@@ -10,6 +10,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -25,7 +26,7 @@ use crate::ctx::ActorMeta;
 use crate::events::EventOut;
 use crate::field::AnyField;
 use crate::metrics::{PacingStats, Stats};
-use crate::route::Route;
+use crate::route::{Edge, Jitter};
 use crate::system::{SystemBus, SystemEvent};
 use crate::{Actor, Ctx, EdgeIdx, RouteId};
 
@@ -51,8 +52,10 @@ pub struct TraceEntry {
     pub kind: DeliveryKind,
 }
 
-/// The routes owned by a shard's actors.
-pub(crate) type Routes = HashMap<RouteId, Route>;
+/// A shard's slices of routes: for each route that reaches actors on this shard, the edges to them. A route's edges
+/// live with their targets, so a send crosses to another shard or node once, not once per edge (see
+/// [`crate::Ctx::fanout`]).
+pub(crate) type Routes = HashMap<RouteId, Vec<Edge>>;
 
 /// Deliveries in transit between shards.
 pub(crate) type Batch<M> = Vec<(OrderKey, Item<M>)>;
@@ -69,6 +72,11 @@ pub(crate) enum Item<M> {
     Field { field: u16, update: Box<dyn Any + Send> },
     /// A change to a route, applied on the route owner's shard. (Boxed, like broadcasts.)
     Topology { route: RouteId, op: Box<TopologyOp> },
+    /// A send along a route, for the slice of it on the receiving shard: each of its edges is delivered at `base`
+    /// plus the edge's delay. The key's sender and sequence number are the send's.
+    Fanout { route: RouteId, base: SimTime, msg: M },
+    /// A change to a route's slice on the receiving shard (forwarded by the route owner's shard).
+    Slice { route: RouteId, op: Box<TopologyOp> },
 }
 
 // Every pending event is one of these, so keep them small: rare variants are boxed.
@@ -137,8 +145,107 @@ pub(crate) struct Directory {
     /// This node.
     pub(crate) node: u32,
     pub(crate) blocks: Vec<Option<BlockEntry>>,
-    /// The node and shard that own each route.
-    pub(crate) route_homes: Vec<(u32, u16)>,
+    /// Each route's owner, where it lives, and the route's jitter.
+    pub(crate) routes: Vec<RouteHome>,
+}
+
+/// A route's owner and where it lives (the same on every node).
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct RouteHome {
+    pub(crate) node: u32,
+    pub(crate) shard: u16,
+    pub(crate) owner: ActorId,
+    pub(crate) jitter: Jitter,
+}
+
+/// Where each route reaches, as this node knows it: the shards here with a slice of it, and (for routes owned here)
+/// the other nodes with one, and the shortest delay of its edges away from the owner's shard. These only ever grow
+/// (or, the delay, shrink) while running, with a new connection, so they're atomics in the otherwise read-only world.
+/// At most 64 shards per node and 64 nodes.
+#[derive(Debug, Default)]
+pub(crate) struct Reach {
+    slices: Vec<AtomicU64>,
+    nodes: Vec<AtomicU64>,
+    /// In ns (`u32::MAX`: none, or longer than a route edge can be).
+    elsewhere: Vec<AtomicU32>,
+}
+
+impl Reach {
+    pub(crate) fn push(&mut self) {
+        self.slices.push(AtomicU64::new(0));
+        self.nodes.push(AtomicU64::new(0));
+        self.elsewhere.push(AtomicU32::new(u32::MAX));
+    }
+
+    pub(crate) fn clear(&mut self) {
+        for bits in self.slices.iter_mut().chain(&mut self.nodes) {
+            *bits.get_mut() = 0;
+        }
+        for delay in &mut self.elsewhere {
+            *delay.get_mut() = u32::MAX;
+        }
+    }
+
+    /// The shortest delay of the route's edges away from its owner's shard: no event of a send reaches another
+    /// shard or node sooner.
+    #[inline(always)]
+    pub(crate) fn elsewhere(&self, route: RouteId) -> SimDuration {
+        SimDuration::from_nanos(u64::from(
+            self.elsewhere
+                .get(route.0 as usize)
+                .map_or(0, |d| d.load(Ordering::Relaxed)),
+        ))
+    }
+
+    pub(crate) fn add_elsewhere(&self, route: RouteId, delay: SimDuration) {
+        if let Some(d) = self.elsewhere.get(route.0 as usize) {
+            d.fetch_min(u32::try_from(delay.as_nanos()).unwrap_or(u32::MAX), Ordering::Relaxed);
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn slices(&self, route: RouteId) -> u64 {
+        self.slices
+            .get(route.0 as usize)
+            .map_or(0, |b| b.load(Ordering::Relaxed))
+    }
+
+    #[inline(always)]
+    pub(crate) fn nodes(&self, route: RouteId) -> u64 {
+        self.nodes
+            .get(route.0 as usize)
+            .map_or(0, |b| b.load(Ordering::Relaxed))
+    }
+
+    pub(crate) fn add_slice(&self, route: RouteId, shard: u16) {
+        if let Some(b) = self.slices.get(route.0 as usize) {
+            b.fetch_or(1 << shard, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn add_node(&self, route: RouteId, node: u32) {
+        if let Some(b) = self.nodes.get(route.0 as usize) {
+            b.fetch_or(1 << node, Ordering::Relaxed);
+        }
+    }
+}
+
+/// The set bits of `bits`, lowest first.
+pub(crate) fn bits(mut bits: u64) -> impl Iterator<Item = u32> {
+    std::iter::from_fn(move || {
+        (bits != 0).then(|| {
+            let i = bits.trailing_zeros();
+            bits &= bits - 1;
+            i
+        })
+    })
+}
+
+/// Where a route change goes after its owner's shard has noted it: the shard holding the slice it changes.
+pub(crate) struct Forward {
+    pub(crate) node: u32,
+    pub(crate) shard: u16,
+    pub(crate) op: TopologyOp,
 }
 
 impl Directory {
@@ -164,10 +271,10 @@ impl Directory {
 
     /// The shard owning a route, if it's on this node.
     pub(crate) fn route_shard(&self, route: RouteId) -> Option<u16> {
-        self.route_homes
+        self.routes
             .get(route.0 as usize)
-            .filter(|(node, _)| *node == self.node)
-            .map(|&(_, shard)| shard)
+            .filter(|home| home.node == self.node)
+            .map(|home| home.shard)
     }
 }
 
@@ -181,6 +288,8 @@ pub(crate) struct World {
     /// Nodes in the cluster (1 without one).
     pub(crate) nodes: u32,
     pub(crate) seed: u64,
+    /// Where each route reaches.
+    pub(crate) reach: Reach,
 }
 
 impl World {
@@ -222,8 +331,10 @@ impl<M, E> Core<M, E> {
     pub(crate) fn send(&mut self, world: &World, key: OrderKey, item: Item<M>) {
         let home = match &item {
             Item::Message { dst, .. } | Item::Routed { dst, .. } => world.dir.home(*dst),
-            Item::Topology { route, .. } => world.dir.route_homes.get(route.0 as usize).copied(),
-            Item::Broadcast { .. } | Item::Field { .. } => unreachable!("broadcasts are sent to each shard"),
+            Item::Topology { route, .. } => world.dir.routes.get(route.0 as usize).map(|h| (h.node, h.shard)),
+            Item::Broadcast { .. } | Item::Field { .. } | Item::Fanout { .. } | Item::Slice { .. } => {
+                unreachable!("sent to a chosen shard")
+            }
         };
         match home {
             Some((node, shard)) if node == self.node => self.send_to_shard(shard, key, item),
@@ -247,7 +358,7 @@ impl<M, E> Core<M, E> {
     pub(crate) fn send_to_node(&mut self, node: u32, shard: u16, mut key: OrderKey, item: Item<M>) {
         if key.at < self.window_end {
             // As for cross-shard messages: the receiver may be past this time already.
-            if !matches!(item, Item::Topology { .. }) && key.src != ActorId::WORLD {
+            if !matches!(item, Item::Topology { .. } | Item::Slice { .. }) && key.src != ActorId::WORLD {
                 let error = self.window_end - key.at;
                 self.stats.lookahead_violations += 1;
                 self.stats.max_lookahead_violation = self.stats.max_lookahead_violation.max(error);
@@ -260,6 +371,8 @@ impl<M, E> Core<M, E> {
             Item::Broadcast { target, msg } => RemoteItem::Broadcast { target: *target, msg },
             Item::Field { field, update } => RemoteItem::Field { field, update },
             Item::Topology { route, op } => RemoteItem::Topology { route, op: *op },
+            Item::Fanout { route, base, msg } => RemoteItem::Fanout { route, base, msg },
+            Item::Slice { route, op } => RemoteItem::Slice { route, op: *op },
         };
         self.outbound_min = self.outbound_min.min(key.at);
         self.stats.remote_sends += 1;
@@ -277,7 +390,7 @@ impl<M, E> Core<M, E> {
         if key.at < self.window_end {
             // Shorter than the lookahead: the receiver may already be past this time. Deliver at the next window
             // start instead (deterministically). Route changes aren't timing-critical, so they aren't counted.
-            if !matches!(item, Item::Topology { .. }) {
+            if !matches!(item, Item::Topology { .. } | Item::Slice { .. }) {
                 let error = self.window_end - key.at;
                 self.stats.lookahead_violations += 1;
                 self.stats.max_lookahead_violation = self.stats.max_lookahead_violation.max(error);
@@ -580,30 +693,61 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
         }
     }
 
-    /// Applies a route change. Returns `true` if the route exists (and, for a prune, the edge was found).
-    pub(crate) fn apply_topology(&mut self, world: &World, route: RouteId, op: TopologyOp) -> bool {
+    /// Notes a route change on the route owner's shard: where the route now reaches. Returns whether the route is
+    /// owned here (and its target exists), and where the change itself goes: the slice of the target's shard.
+    pub(crate) fn note_topology(&mut self, world: &World, route: RouteId, op: TopologyOp) -> (bool, Option<Forward>) {
+        let me = (world.dir.node, self.core.shard);
+        let owned = world
+            .dir
+            .routes
+            .get(route.0 as usize)
+            .is_some_and(|h| (h.node, h.shard) == me);
+        let target = match &op {
+            TopologyOp::Connect(edge) => edge.target,
+            TopologyOp::Prune { target, .. } => *target,
+        };
+        let (Some((node, shard)), true) = (world.dir.home(target), owned) else {
+            return (false, None);
+        };
+        if let TopologyOp::Connect(edge) = &op {
+            if node == world.dir.node {
+                world.reach.add_slice(route, shard);
+            } else {
+                world.reach.add_node(route, node);
+            }
+            if (node, shard) != me {
+                world.reach.add_elsewhere(route, edge.delay);
+            }
+        }
+        (true, Some(Forward { node, shard, op }))
+    }
+
+    /// Applies a route change to this shard's slice of the route. Returns `true` if it was applied (for a prune:
+    /// the edge was found).
+    pub(crate) fn apply_slice(&mut self, world: &World, route: RouteId, op: TopologyOp) -> bool {
         let shard = self.core.shard;
-        let Some(r) = self.routes.get_mut(&route) else {
+        let Some(home) = world.dir.routes.get(route.0 as usize) else {
             return false;
         };
         match op {
             TopologyOp::Connect(edge) => {
-                if world
-                    .dir
-                    .home(edge.target)
-                    .is_some_and(|home| home != (world.dir.node, shard))
-                {
-                    let delay = edge.delay.saturating_sub(r.jitter.max_reduction());
+                if (home.node, home.shard) != (world.dir.node, shard) {
+                    // From another shard: the edge crosses shards, and may shorten the lookahead.
+                    let delay = edge.delay.saturating_sub(home.jitter.max_reduction());
                     self.core.lookahead_proposal = self.core.lookahead_proposal.min(delay.max(SimDuration::NANOSECOND));
                 }
-                r.edges.push(crate::route::Edge::new(edge));
+                world.reach.add_slice(route, shard);
+                self.routes.entry(route).or_default().push(Edge::new(edge));
                 self.core.topology_added += 1;
                 true
             }
             TopologyOp::Prune { target, edge } => {
-                match r.edges.iter().position(|e| e.target == target && e.edge == edge) {
+                let Some(edges) = self.routes.get_mut(&route) else {
+                    return false;
+                };
+                match edges.iter().position(|e| e.target == target && e.edge == edge) {
                     Some(position) => {
-                        r.edges.remove(position);
+                        edges.remove(position);
                         self.core.topology_pruned += 1;
                         true
                     }
@@ -611,6 +755,69 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
                 }
             }
         }
+    }
+
+    /// A route change on the owner's shard, during a run: noted here, then applied to the target's slice (here, or
+    /// sent on to its shard). Returns whether the route is owned here (and, if the slice is here too, whether the
+    /// change applied).
+    pub(crate) fn change_route_now(&mut self, world: &World, key: OrderKey, route: RouteId, op: TopologyOp) -> bool {
+        let (owned, forward) = self.note_topology(world, route, op);
+        match forward {
+            Some(f) if f.node == world.dir.node && f.shard == self.core.shard => self.apply_slice(world, route, f.op),
+            Some(f) => {
+                let item = Item::Slice {
+                    route,
+                    op: Box::new(f.op),
+                };
+                if f.node == world.dir.node {
+                    self.core.send_to_shard(f.shard, key, item);
+                } else {
+                    self.core.send_to_node(f.node, f.shard, key, item);
+                }
+                owned
+            }
+            None => owned,
+        }
+    }
+
+    /// Delivers a send along a route to this shard's slice of it: each edge's event, at `base` plus the edge's
+    /// delay (with jitter), keyed by the send's sender and sequence number and the receiver's edge index, exactly as
+    /// if the sender had queued them itself.
+    fn expand(&mut self, world: &World, key: OrderKey, route: RouteId, base: SimTime, msg: &M) {
+        let Some(edges) = self.routes.get(&route) else {
+            return; // (sent to every shard of this node: not all have a slice)
+        };
+        let jitter = world
+            .dir
+            .routes
+            .get(route.0 as usize)
+            .map_or(Jitter::None, |h| h.jitter);
+        for e in edges {
+            let delay = jitter.apply(e.delay(), world.seed, key.src, key.seq, e.target, e.edge.0);
+            let mut at = base + delay;
+            if at < key.at {
+                // Shorter than the window it was sent in (a connection added during a run, or jitter beyond its
+                // allowance): as for any cross-shard message, delivered as soon as it can be, and counted.
+                self.core.stats.lookahead_violations += 1;
+                self.core.stats.max_lookahead_violation = self.core.stats.max_lookahead_violation.max(key.at - at);
+                at = key.at;
+            }
+            let event = OrderKey {
+                at,
+                src: key.src,
+                seq: key.seq,
+                sub: e.edge.0,
+            };
+            self.core.queue.push(
+                event,
+                Item::Routed {
+                    dst: e.target,
+                    edge: e.edge,
+                    msg: msg.clone(),
+                },
+            );
+        }
+        self.core.stats.routed_sends += edges.len() as u64;
     }
 
     pub(crate) fn run_starts(&mut self, world: &World, now: SimTime) {
@@ -665,7 +872,11 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
             },
             Item::Field { field, update } => self.core.fields[usize::from(field)].apply_any(key.at, update),
             Item::Topology { route, op } => {
-                self.apply_topology(world, route, *op);
+                self.change_route_now(world, key, route, *op);
+            }
+            Item::Fanout { route, base, msg } => self.expand(world, key, route, base, &msg),
+            Item::Slice { route, op } => {
+                self.apply_slice(world, route, *op);
             }
         }
     }
@@ -742,6 +953,11 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
                     },
                     RemoteItem::Field { field, update } => Item::Field { field, update },
                     RemoteItem::Topology { route, op } => Item::Topology {
+                        route,
+                        op: Box::new(op),
+                    },
+                    RemoteItem::Fanout { route, base, msg } => Item::Fanout { route, base, msg },
+                    RemoteItem::Slice { route, op } => Item::Slice {
                         route,
                         op: Box::new(op),
                     },

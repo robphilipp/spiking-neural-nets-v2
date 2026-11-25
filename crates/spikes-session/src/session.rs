@@ -444,8 +444,19 @@ impl Session {
             }
             None => None,
         };
+        let (mut rt, mut net) = (rt, net);
         let mut network = network;
         if let Some((coordinator, _)) = &cluster {
+            // Each node made the connections onto its own neurons: the senders' nodes learn where their routes
+            // reach, and the counts add up.
+            match coordinator.exchange_reach(&mut rt) {
+                Ok(others) => net.synapse_count += others,
+                Err(e) => {
+                    coordinator.close();
+                    inner.phase = Stage::Loaded;
+                    return Err(e);
+                }
+            }
             // The other nodes' neurons have their synapses there (listed only for networks of listable size).
             let rows = if net.synapse_count <= crate::network::SYNAPSE_LIST_LIMIT {
                 coordinator
@@ -1403,6 +1414,42 @@ impl Session {
         self.change_route(route, op)
     }
 
+    /// On a node of a cluster, once built: how many synapses this node made (the ones onto its neurons), and the
+    /// routes owned on other nodes that reach its neurons, by owner node, each with its shortest edge (ns).
+    pub(crate) fn reach_here(&self) -> Result<(u64, Vec<(u32, RouteReach)>), SessionError> {
+        let inner = self.inner();
+        match &inner.phase {
+            Stage::Ready(built) => Ok((
+                built.net.as_ref().map_or(0, |n| n.synapse_count),
+                built
+                    .rt
+                    .reached_from_elsewhere()
+                    .into_iter()
+                    .map(|(node, routes)| (node, routes.into_iter().map(|(r, d)| (r.0, d.as_nanos())).collect()))
+                    .collect(),
+            )),
+            other => Err(SessionError::State {
+                state: state_of_phase(other),
+                action: "exchange the routes of",
+            }),
+        }
+    }
+
+    /// On a node of a cluster: node `from` holds edges of these routes (owned here).
+    pub(crate) fn add_route_nodes_here(&self, from: u32, routes: &[(u32, u64)]) -> Result<(), SessionError> {
+        let mut inner = self.inner();
+        match &mut inner.phase {
+            Stage::Ready(built) => {
+                built.rt.add_route_nodes(from, &route_reach(routes));
+                Ok(())
+            }
+            other => Err(SessionError::State {
+                state: state_of_phase(other),
+                action: "exchange the routes of",
+            }),
+        }
+    }
+
     /// The synapses of the neurons stored here (on a node of a cluster: its own).
     pub(crate) fn synapses_here(&self) -> Result<Vec<spikes_record::SynapseRow>, SessionError> {
         let inner = self.inner();
@@ -1952,4 +1999,15 @@ fn expect_not_running(inner: &Inner) -> Result<(), SessionError> {
         }),
         _ => Ok(()),
     }
+}
+
+/// Routes with their shortest edges, as sent between nodes: (route id, ns).
+pub(crate) type RouteReach = Vec<(u32, u64)>;
+
+/// Routes and their shortest edges as sent between nodes (route ids, ns).
+pub(crate) fn route_reach(routes: &[(u32, u64)]) -> Vec<(tempo_runtime::RouteId, SimDuration)> {
+    routes
+        .iter()
+        .map(|&(r, d)| (tempo_runtime::RouteId(r), SimDuration::from_nanos(d)))
+        .collect()
 }

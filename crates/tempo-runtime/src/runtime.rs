@@ -23,10 +23,10 @@ use crate::events::{Emitted, EventOut};
 use crate::field::Field;
 use crate::metrics::{PacingStats, Stats};
 use crate::placement::Partition;
-use crate::route::{Route, splitmix};
+use crate::route::splitmix;
 use crate::shard::{
-    Arena, BlockEntry, Directory, Item, Queue, RunPlan, RunShared, Shard, ShardOutcome, ShardSettings, TraceEntry,
-    World,
+    Arena, BlockEntry, Directory, Item, Queue, Reach, RouteHome, RunPlan, RunShared, Shard, ShardOutcome,
+    ShardSettings, TraceEntry, World,
 };
 use crate::subscribe::{EventFilter, EventStream, Subscribers};
 use crate::system::{SystemBus, SystemEvents, SystemNotice};
@@ -141,6 +141,8 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
     /// If `shards` is zero or more than `partitions`.
     pub fn new(config: RuntimeConfig) -> Self {
         assert!(config.shards >= 1, "need at least one shard");
+        // (Which shards and nodes a route reaches are bit sets.)
+        assert!(config.shards <= 64, "at most 64 shards per node");
         assert!(
             config.partitions as usize >= config.shards,
             "need at least as many partitions ({}) as shards ({})",
@@ -197,6 +199,7 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             shards: config.shards,
             nodes: placement.nodes(),
             seed: config.seed,
+            reach: Reach::default(),
         };
         let clock = ClockHandle::new(config.pacing);
         let control = Arc::new(ControlShared::new(
@@ -483,38 +486,126 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
 
     /// Adds a fan-out route owned by `owner`, which can then send along it with [`crate::Ctx::fanout`].
     ///
+    /// On a node of a cluster, the edges to actors on other nodes are kept by those nodes: give each node the edges
+    /// to its own actors (or all of them). Every node adds every route, in the same order. If a node isn't given the
+    /// edges that other nodes keep, the owner's node learns which nodes those are with
+    /// [`Self::reached_from_elsewhere`] and [`Self::add_route_nodes`].
+    ///
     /// # Panics
     /// If `owner` doesn't exist.
     pub fn add_route(&mut self, owner: ActorId, edges: Vec<RouteEdge>, jitter: Jitter) -> RouteId {
         let (node, shard) = self.world.dir.home(owner).expect("route owner exists");
         let dir = Arc::make_mut(&mut self.world.dir);
-        let id = RouteId(u32::try_from(dir.route_homes.len()).expect("too many routes"));
-        dir.route_homes.push((node, shard));
-        if node == self.placement.node {
-            self.shards[usize::from(shard)].routes.insert(
-                id,
-                Route {
-                    owner,
-                    edges: {
-                        // (Collected in place, the 24-byte edges' buffer would be kept: trim it.)
-                        let mut compact: Vec<crate::route::Edge> =
-                            edges.into_iter().map(crate::route::Edge::new).collect();
-                        compact.shrink_to_fit();
-                        compact
-                    },
-                    jitter,
-                },
-            );
-        }
+        let id = RouteId(u32::try_from(dir.routes.len()).expect("too many routes"));
+        dir.routes.push(RouteHome {
+            node,
+            shard,
+            owner,
+            jitter,
+        });
+        self.world.reach.push();
+        self.place_edges(id, edges);
         id
     }
 
+    /// Puts route edges with their targets: the ones to actors on this node into their shards' slices; for routes
+    /// owned here, the other nodes reached are noted.
+    pub(crate) fn place_edges(&mut self, route: RouteId, edges: Vec<RouteEdge>) {
+        let me = self.placement.node;
+        let owner = self.world.dir.routes[route.0 as usize];
+        let owned_here = owner.node == me;
+        let mut placed: Vec<(u16, crate::route::Edge)> = Vec::with_capacity(edges.len());
+        for e in edges {
+            let home = self.world.dir.home(e.target);
+            if owned_here && home.is_some_and(|h| h != (owner.node, owner.shard)) {
+                self.world.reach.add_elsewhere(route, e.delay);
+            }
+            match home {
+                Some((node, shard)) if node == me => placed.push((shard, crate::route::Edge::new(e))),
+                Some((node, _)) if owned_here => self.world.reach.add_node(route, node),
+                _ => {}
+            }
+        }
+        placed.sort_by_key(|&(shard, _)| shard); // stable: each slice keeps the edges' order
+        for chunk in placed.chunk_by(|a, b| a.0 == b.0) {
+            let shard = chunk[0].0;
+            self.world.reach.add_slice(route, shard);
+            let slice = self.shards[usize::from(shard)].routes.entry(route).or_default();
+            slice.extend(chunk.iter().map(|&(_, e)| e));
+            slice.shrink_to_fit();
+        }
+    }
+
+    /// The routes owned on other nodes that reach actors here, by the owner's node, each with its shortest edge
+    /// here: for a build where each node only knows the edges to its own actors, tell each owner's node (with
+    /// [`Self::add_route_nodes`]).
+    pub fn reached_from_elsewhere(&self) -> Vec<(u32, Vec<(RouteId, SimDuration)>)> {
+        let me = self.placement.node;
+        let mut shortest: HashMap<RouteId, SimDuration> = HashMap::new();
+        for shard in &self.shards {
+            for (&route, edges) in &shard.routes {
+                if self.world.dir.routes[route.0 as usize].node != me
+                    && let Some(d) = edges.iter().map(|e| e.delay()).min()
+                {
+                    let s = shortest.entry(route).or_insert(d);
+                    *s = (*s).min(d);
+                }
+            }
+        }
+        let mut by_node: Vec<Vec<(RouteId, SimDuration)>> = vec![Vec::new(); self.placement.nodes() as usize];
+        for (route, d) in shortest {
+            by_node[self.world.dir.routes[route.0 as usize].node as usize].push((route, d));
+        }
+        for routes in &mut by_node {
+            routes.sort_unstable_by_key(|r| r.0);
+        }
+        by_node
+            .into_iter()
+            .enumerate()
+            .filter(|(_, routes)| !routes.is_empty())
+            .map(|(node, routes)| (node as u32, routes))
+            .collect()
+    }
+
+    /// Notes that `node` holds edges of these routes (owned here), the shortest of them with this delay: sends along
+    /// them reach it.
+    pub fn add_route_nodes(&mut self, node: u32, routes: &[(RouteId, SimDuration)]) {
+        for &(route, delay) in routes {
+            self.world.reach.add_node(route, node);
+            self.world.reach.add_elsewhere(route, delay);
+        }
+    }
+
     /// Adds or prunes a route edge now (between runs; while running use [`Control::change_route`] or
-    /// [`crate::Ctx::change_route`]). Returns `true` if the route existed (and, for a prune, the edge was found).
+    /// [`crate::Ctx::change_route`]). On a cluster, call it on the route owner's node: a change to an edge to an
+    /// actor on another node is sent there, and made at the start of the next run. Returns `true` if the route is
+    /// owned here and the target exists (and, for a change made here: it was made; for a prune, the edge was found).
     pub fn change_route(&mut self, route: RouteId, op: TopologyOp) -> bool {
-        match self.world.dir.route_shard(route) {
-            Some(shard) => self.shards[usize::from(shard)].apply_topology(&self.world, route, op),
-            None => false,
+        let Some(shard) = self.world.dir.route_shard(route) else {
+            return false;
+        };
+        let (owned, forward) = self.shards[usize::from(shard)].note_topology(&self.world, route, op);
+        match forward {
+            Some(f) if f.node == self.placement.node => {
+                self.shards[usize::from(f.shard)].apply_slice(&self.world, route, f.op)
+            }
+            Some(f) => {
+                let key = OrderKey {
+                    at: self.now,
+                    src: ActorId::WORLD,
+                    seq: 0,
+                    sub: 0,
+                };
+                let item = Item::Slice {
+                    route,
+                    op: Box::new(f.op),
+                };
+                self.shards[usize::from(shard)]
+                    .core
+                    .send_to_node(f.node, f.shard, key, item);
+                owned
+            }
+            None => owned,
         }
     }
 
@@ -593,18 +684,16 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
         }
         let mut lookahead = self.config.min_remote_delay.unwrap_or(SimDuration::MAX);
         let node = self.placement.node;
+        // A slice on a shard other than its route owner's holds edges that cross shards (or nodes).
         for (index, shard) in self.shards.iter().enumerate() {
-            for route in shard.routes.values() {
-                let reduction = route.jitter.max_reduction();
-                for edge in &route.edges {
-                    if self
-                        .world
-                        .dir
-                        .home(edge.target)
-                        .is_some_and(|home| home != (node, index as u16))
-                    {
-                        lookahead = lookahead.min(edge.delay().saturating_sub(reduction));
-                    }
+            for (route, edges) in &shard.routes {
+                let home = &self.world.dir.routes[route.0 as usize];
+                if (home.node, home.shard) == (node, index as u16) {
+                    continue;
+                }
+                let reduction = home.jitter.max_reduction();
+                for edge in edges {
+                    lookahead = lookahead.min(edge.delay().saturating_sub(reduction));
                 }
             }
         }
@@ -691,9 +780,12 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
             .shards
             .iter()
             .flat_map(|s| s.routes.values())
-            .map(|r| size_of::<Route>() + r.edges.capacity() * size_of::<crate::route::Edge>())
+            .map(|edges| {
+                size_of::<(RouteId, Vec<crate::route::Edge>)>() + edges.capacity() * size_of::<crate::route::Edge>()
+            })
             .sum();
-        actors + directory + routes
+        let route_homes = self.world.dir.routes.capacity() * size_of::<RouteHome>() + self.world.dir.routes.len() * 16;
+        actors + directory + routes + route_homes
     }
 
     // ----- running -----

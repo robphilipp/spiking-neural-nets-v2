@@ -340,10 +340,12 @@ where
                 });
             }
         }
-        for (route, r) in &self.routes {
+        // This shard's slices (a route's edges are spread over the shards of its targets; restoring puts them back
+        // with their targets, however the network is placed then).
+        for (route, edges) in &self.routes {
             part.routes.push((
                 route.0,
-                r.edges
+                edges
                     .iter()
                     .map(|e| (e.target.raw(), e.delay().as_nanos(), e.edge.0))
                     .collect(),
@@ -383,10 +385,35 @@ where
                         None
                     }
                 },
-                Item::Topology { route, op } => Some(EventItem::Topology {
+                // A change to a slice is saved as the change: restoring sends it from the route owner again.
+                Item::Topology { route, op } | Item::Slice { route, op } => Some(EventItem::Topology {
                     route: route.0,
                     op: encode_op(op),
                 }),
+                // A send along a route not yet delivered to this shard's slice: saved as the events it becomes (the
+                // slice may be elsewhere after restoring).
+                Item::Fanout { route, base, msg } => {
+                    let jitter = world
+                        .dir
+                        .routes
+                        .get(route.0 as usize)
+                        .map_or(crate::Jitter::None, |h| h.jitter);
+                    for e in self.routes.get(route).into_iter().flatten() {
+                        let delay = jitter.apply(e.delay(), world.seed, key.src, key.seq, e.target, e.edge.0);
+                        part.events.push(EventRecord {
+                            at: (*base + delay).max(key.at).as_nanos(),
+                            src: key.src.raw(),
+                            seq: key.seq,
+                            sub: e.edge.0,
+                            item: EventItem::Routed {
+                                dst: e.target.raw(),
+                                edge: e.edge.0,
+                                msg: encode(msg),
+                            },
+                        });
+                    }
+                    None
+                }
                 Item::Broadcast { .. } | Item::Field { .. } => None,
             };
             if let Some(item) = saved {
@@ -482,20 +509,22 @@ where
             meta.observed = a.observed;
             meta.failed = a.failed;
         }
+        // Routes: the saved slices (every node's, merged) replace the built ones, each edge with its target.
+        for shard in &mut self.shards {
+            shard.routes.clear();
+        }
+        self.world.reach.clear();
         for (route, edges) in &snapshot.routes {
-            if let Some(shard) = self.world.dir.route_shard(RouteId(*route))
-                && let Some(r) = self.shards[usize::from(shard)].routes.get_mut(&RouteId(*route))
-            {
-                r.edges = edges
+            if (*route as usize) < self.world.dir.routes.len() {
+                let edges = edges
                     .iter()
-                    .map(|&(target, delay, edge)| {
-                        crate::route::Edge::new(RouteEdge {
-                            target: ActorId::from_raw(target),
-                            delay: tempo_core::SimDuration::from_nanos(delay),
-                            edge: EdgeIdx(edge),
-                        })
+                    .map(|&(target, delay, edge)| RouteEdge {
+                        target: ActorId::from_raw(target),
+                        delay: tempo_core::SimDuration::from_nanos(delay),
+                        edge: EdgeIdx(edge),
                     })
                     .collect();
+                self.place_edges(RouteId(*route), edges);
             }
         }
         for shard in &mut self.shards {

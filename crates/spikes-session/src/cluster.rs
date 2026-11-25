@@ -137,6 +137,13 @@ enum Request {
     },
     /// The node's neurons' synapses, as they are now.
     Synapses,
+    /// After building: how many synapses the node made, and which routes owned elsewhere reach its neurons.
+    Reach,
+    /// Node `from` holds edges of these routes (owned on this node), each with its shortest edge: (route, ns).
+    AddRouteNodes {
+        from: u32,
+        routes: Vec<(u32, u64)>,
+    },
     /// The node's part of a snapshot of the run (see `tempo_runtime::Snapshot::merge`).
     SaveState,
     /// Restore a whole run's snapshot (the node takes its part).
@@ -152,6 +159,11 @@ enum Response {
     Snapshot(NeuronSnapshot),
     Index(Option<u32>),
     Synapses(Vec<spikes_record::SynapseRow>),
+    /// The node's synapse count, and the routes owned on other nodes that reach it, by owner node.
+    Reach {
+        synapses: u64,
+        reached: Vec<(u32, Vec<(u32, u64)>)>,
+    },
     State(Box<tempo_runtime::Snapshot>),
     Err(String),
 }
@@ -643,6 +655,35 @@ impl Coordinator {
         self.clients[node].ok(&Request::SetOut { pre })
     }
 
+    /// After building (each node made only the connections onto its own neurons): every route's owner learns which
+    /// nodes its route reaches, so a spike goes to each of them once. Returns how many synapses the other nodes
+    /// made.
+    pub(crate) fn exchange_reach(&self, rt: &mut spikes_network::Runtime) -> Result<u64, SessionError> {
+        let mut others = 0;
+        // (from node, owner node, routes)
+        let mut deliveries: Vec<(u32, u32, crate::session::RouteReach)> = Vec::new();
+        for (i, client) in self.clients.iter().enumerate() {
+            match client.call(&Request::Reach)? {
+                Response::Reach { synapses, reached } => {
+                    others += synapses;
+                    deliveries.extend(reached.into_iter().map(|(owner, routes)| (i as u32 + 1, owner, routes)));
+                }
+                other => return Err(SessionError::Invalid(format!("unexpected reply {other:?}"))),
+            }
+        }
+        for (owner, routes) in rt.reached_from_elsewhere() {
+            deliveries.push((0, owner, routes.into_iter().map(|(r, d)| (r.0, d.as_nanos())).collect()));
+        }
+        for (from, owner, routes) in deliveries {
+            if owner == 0 {
+                rt.add_route_nodes(from, &crate::session::route_reach(&routes));
+            } else {
+                self.clients[owner as usize - 1].ok(&Request::AddRouteNodes { from, routes })?;
+            }
+        }
+        Ok(others)
+    }
+
     /// Every other node's synapses, as they are now.
     pub(crate) fn synapses(&self) -> Result<Vec<spikes_record::SynapseRow>, SessionError> {
         let mut all = Vec::new();
@@ -941,6 +982,14 @@ fn handle(
         Request::PruneSynapse { pre, post } => Response::Index(built(session)?.prune_synapse_here(pre, post)?),
         Request::ChangeRoute { pre, change } => {
             built(session)?.change_route_here(pre, change)?;
+            Response::Ok
+        }
+        Request::Reach => {
+            let (synapses, reached) = built(session)?.reach_here()?;
+            Response::Reach { synapses, reached }
+        }
+        Request::AddRouteNodes { from, routes } => {
+            built(session)?.add_route_nodes_here(from, &routes)?;
             Response::Ok
         }
         Request::SetOut { pre } => {

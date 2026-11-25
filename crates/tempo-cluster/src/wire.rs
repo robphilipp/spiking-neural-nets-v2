@@ -97,6 +97,8 @@ pub(crate) enum WireItem<M> {
     Broadcast { target: WireTarget, msg: M },
     Field { field: u16, update: Vec<u8> },
     Topology { route: u32, op: WireOp },
+    Fanout { route: u32, base: u64, msg: M },
+    Slice { route: u32, op: WireOp },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -189,17 +191,16 @@ pub(crate) fn encode_event<M: Serialize>(event: Remote<M>, fields: &[FieldCodec]
         }
         RemoteItem::Topology { route, op } => WireItem::Topology {
             route: route.0,
-            op: match op {
-                TopologyOp::Connect(e) => WireOp::Connect {
-                    target: e.target.raw(),
-                    delay: e.delay.as_nanos(),
-                    edge: e.edge.0,
-                },
-                TopologyOp::Prune { target, edge } => WireOp::Prune {
-                    target: target.raw(),
-                    edge: edge.0,
-                },
-            },
+            op: encode_op(op),
+        },
+        RemoteItem::Fanout { route, base, msg } => WireItem::Fanout {
+            route: route.0,
+            base: base.as_nanos(),
+            msg,
+        },
+        RemoteItem::Slice { route, op } => WireItem::Slice {
+            route: route.0,
+            op: encode_op(op),
         },
     };
     WireEvent {
@@ -244,17 +245,44 @@ pub(crate) fn decode_item<M: Clone>(item: &WireItem<M>, fields: &[FieldCodec]) -
         },
         WireItem::Topology { route, op } => RemoteItem::Topology {
             route: RouteId(*route),
-            op: match *op {
-                WireOp::Connect { target, delay, edge } => TopologyOp::Connect(RouteEdge {
-                    target: ActorId::from_raw(target),
-                    delay: SimDuration::from_nanos(delay),
-                    edge: EdgeIdx(edge),
-                }),
-                WireOp::Prune { target, edge } => TopologyOp::Prune {
-                    target: ActorId::from_raw(target),
-                    edge: EdgeIdx(edge),
-                },
-            },
+            op: decode_op(op),
+        },
+        WireItem::Fanout { route, base, msg } => RemoteItem::Fanout {
+            route: RouteId(*route),
+            base: SimTime::from_nanos(*base),
+            msg: msg.clone(),
+        },
+        WireItem::Slice { route, op } => RemoteItem::Slice {
+            route: RouteId(*route),
+            op: decode_op(op),
         },
     })
+}
+
+fn encode_op(op: TopologyOp) -> WireOp {
+    match op {
+        TopologyOp::Connect(e) => WireOp::Connect {
+            target: e.target.raw(),
+            delay: e.delay.as_nanos(),
+            edge: e.edge.0,
+        },
+        TopologyOp::Prune { target, edge } => WireOp::Prune {
+            target: target.raw(),
+            edge: edge.0,
+        },
+    }
+}
+
+fn decode_op(op: &WireOp) -> TopologyOp {
+    match *op {
+        WireOp::Connect { target, delay, edge } => TopologyOp::Connect(RouteEdge {
+            target: ActorId::from_raw(target),
+            delay: SimDuration::from_nanos(delay),
+            edge: EdgeIdx(edge),
+        }),
+        WireOp::Prune { target, edge } => TopologyOp::Prune {
+            target: ActorId::from_raw(target),
+            edge: EdgeIdx(edge),
+        },
+    }
 }

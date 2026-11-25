@@ -5,8 +5,9 @@ use std::any::TypeId;
 use tempo_core::{ActorId, OrderKey, SeqCounter, SimDuration, SimTime};
 
 use crate::broadcast::{GroupId, SpatialBroadcast, Target};
+use crate::cluster::ALL_SHARDS;
 use crate::control::TopologyOp;
-use crate::shard::{Core, Item, Routes, World};
+use crate::shard::{Core, Item, Routes, World, bits};
 use crate::{ActorRng, Emitted, Field, RouteId};
 
 /// Per-actor framework state, stored next to the actor.
@@ -177,34 +178,85 @@ impl<M: Clone, E> Ctx<'_, M, E> {
     /// Sends `msg` along every edge of `route`, each delivered at `base` plus that edge's delay. Useful when the
     /// send itself is delayed, e.g. by a neuron's rise time.
     ///
+    /// A route's edges live with their targets: the edges to actors on this shard are delivered from here, and every
+    /// other shard (or node) holding some of the route's edges gets the message once and delivers them there. The
+    /// events are the same either way: each is keyed by this send and the receiver's edge index.
+    ///
     /// # Panics
     /// If `base` is earlier than [`Self::now`], or the route doesn't exist or isn't owned by this actor.
     pub fn fanout_at(&mut self, route: RouteId, base: SimTime, msg: M) {
         assert!(base >= self.now, "cannot send into the past: {base} < {}", self.now);
         let seq = self.meta.seq.next_seq();
         let world = self.world;
-        let r = self
+        let home = world
+            .dir
             .routes
-            .get(&route)
-            .unwrap_or_else(|| panic!("unknown route {route:?} (or not on this actor's shard)"));
-        assert_eq!(r.owner, self.me, "{route:?} belongs to {}, not {}", r.owner, self.me);
-        for (sub, edge) in r.edges.iter().enumerate() {
-            let sub = sub as u32;
-            let delay = r.jitter.apply(edge.delay(), world.seed, self.me, seq, sub);
-            let key = OrderKey {
-                at: base + delay,
-                src: self.me,
-                seq,
-                sub,
-            };
-            let item = Item::Routed {
-                dst: edge.target,
-                edge: edge.edge,
-                msg: msg.clone(),
-            };
-            self.core.send(world, key, item);
+            .get(route.0 as usize)
+            .unwrap_or_else(|| panic!("unknown route {route:?}"));
+        assert_eq!(
+            home.owner, self.me,
+            "{route:?} belongs to {}, not {}",
+            home.owner, self.me
+        );
+        let shard = self.core.shard;
+        // This shard's slice.
+        if let Some(edges) = self.routes.get(&route) {
+            for e in edges {
+                let delay = home
+                    .jitter
+                    .apply(e.delay(), world.seed, self.me, seq, e.target, e.edge.0);
+                let key = OrderKey {
+                    at: base + delay,
+                    src: self.me,
+                    seq,
+                    sub: e.edge.0,
+                };
+                let item = Item::Routed {
+                    dst: e.target,
+                    edge: e.edge,
+                    msg: msg.clone(),
+                };
+                self.core.send_to_shard(shard, key, item);
+            }
+            self.core.stats.routed_sends += edges.len() as u64;
         }
-        self.core.stats.routed_sends += r.edges.len() as u64;
+        // Every other shard and node with a slice: once each, timed by the route's shortest edge away from here
+        // (the slices' events are all at or after it; arriving no earlier than needed leaves other nodes slack).
+        let others = world.reach.slices(route) & !(1 << shard);
+        let nodes = world.reach.nodes(route);
+        if others | nodes == 0 {
+            return;
+        }
+        let soonest = world.reach.elsewhere(route).saturating_sub(home.jitter.max_reduction());
+        let key = OrderKey {
+            at: (base + soonest).max(self.core.window_end),
+            src: self.me,
+            seq,
+            sub: 0,
+        };
+        for to in bits(others) {
+            self.core.send_to_shard(
+                to as u16,
+                key,
+                Item::Fanout {
+                    route,
+                    base,
+                    msg: msg.clone(),
+                },
+            );
+        }
+        for node in bits(nodes) {
+            self.core.send_to_node(
+                node,
+                ALL_SHARDS,
+                key,
+                Item::Fanout {
+                    route,
+                    base,
+                    msg: msg.clone(),
+                },
+            );
+        }
     }
 
     /// Sends `msg` to every member of `group` (see [`crate::Runtime::add_group`]), delivered `delay` from now.

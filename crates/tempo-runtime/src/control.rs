@@ -323,14 +323,25 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Control<M, E> {
         self.inject(to, now.saturating_add(self.shared.ingress_delay), msg)
     }
 
-    /// Changes a route: adds or prunes an edge. Applied at the next window boundary on the route owner's shard.
-    /// Replies `true` if the route existed (and, for a prune, the edge was found).
+    /// Changes a route: adds or prunes an edge. Noted at the next window boundary on the route owner's shard, and
+    /// made where the edge's target lives (at once if that's the owner's shard, else with that window's messages).
+    /// Replies `true` if the route is owned on this node and the target exists (and, when the target is on the
+    /// owner's shard: the change was made; for a prune, the edge was found).
     pub fn change_route(&self, route: RouteId, op: TopologyOp) -> Reply<bool> {
         let (tx, rx) = reply();
         match self.shared.shard_of_route(route) {
             Some(shard) => self.shared.submit(
                 shard,
-                Box::new(move |shard, world, _| tx.send(shard.apply_topology(world, route, op))),
+                Box::new(move |shard, world, start| {
+                    // (Forwarded to the slice's shard at once, or with the window's messages.)
+                    let key = tempo_core::OrderKey {
+                        at: start,
+                        src: ActorId::WORLD,
+                        seq: 0,
+                        sub: 0,
+                    };
+                    tx.send(shard.change_route_now(world, key, route, op));
+                }),
             ),
             None => tx.send(false),
         }

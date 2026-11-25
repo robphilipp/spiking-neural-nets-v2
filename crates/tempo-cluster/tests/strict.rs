@@ -39,8 +39,9 @@ fn finish(mut rt: Runtime<LifMsg, LifEvent>) -> Outcome {
     let spikes = rt.take_events().into_iter().map(|e| (e.at, e.src)).collect();
     let stats = rt.stats();
     if rt.placement().nodes() > 1 {
+        // (A spike crosses to a node once, however many of its synapses are there.)
         assert!(
-            stats.node_sends > 1000 && stats.node_receives > 1000,
+            stats.node_sends > 300 && stats.node_receives > 300,
             "events should cross nodes: {stats:?}"
         );
     }

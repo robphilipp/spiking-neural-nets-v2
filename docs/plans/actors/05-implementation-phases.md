@@ -221,8 +221,8 @@ Exactness, pacing, stopping and lateness are tested (`crates/tempo-cluster/tests
 cluster.rs`).
 
 Not yet: run-ahead by `L_in`; clock-offset estimation (best effort assumes NTP/PTP); per-node links only to peers
-that exchange spikes (the mesh is full); partitioned checkpoint/restore; distributed procedural construction (every
-node builds the whole description and keeps its share); the 10⁸-neuron synthetic test; the LAN acceptance runs.
+that exchange spikes (the mesh is full); partitioned checkpoint/restore; the 10⁸-neuron synthetic test; the LAN
+acceptance runs. (Distributed construction: done in phase 6, with routes kept by their targets' nodes.)
 
 ## Phase 5: strict mode and validation (2 weeks)
 
@@ -331,6 +331,33 @@ Cluster and recording work while waiting for machines (2026-11-24):
 - Saving while paused (see snapshots above).
 - Recordings: event tables larger than 4M rows export as partitioned Parquet datasets (`spikes/part-*.parquet`,
   one per span of simulated time, each sorted), converted as a stream in bounded memory.
+
+Routes kept with their targets (2026-11-25):
+- A spike crossed to another node once per synapse there (~50 bytes each): for 10⁹ synapses at ~5 Hz on 4 nodes,
+  ~190 GB per simulated second with random wiring, ~25 GB with 10% of synapses crossing; minutes per simulated
+  second on 1 Gb/s, more than the computation.
+- Now a route's edges live on their targets' shards (slices). A send expands the sender's own shard's slice, and
+  goes once to each other shard and node holding a slice (`Fanout`), which expands it there. Events are keyed by
+  the send and the receiver's edge index, and jitter depends on (sender, sequence, target, edge index), so the
+  events are the same wherever the edges are: a cluster still runs exactly like one process (the strict tests and
+  the session's cluster tests). The one visible change: synapses from one sender onto one target with the same
+  delay arrive in the receiver's edge order, not the order the route lists them.
+- A `Fanout` is timed by the route's shortest edge away from the owner's shard (kept per route, lowered by new
+  connections), not the window end: other nodes keep their slack in best-effort runs.
+- Route changes go to the owner's shard (which notes where the route reaches) and on to the target's slice.
+  Snapshots save slices, and pending `Fanout`s as the events they become; restoring places every edge with its
+  target, however the network is placed then.
+- Construction: each node makes only the connections onto its own neurons (each receiver has its own random
+  stream, so they're the same whichever node makes them); afterwards every node tells the routes' owners which
+  routes reach it (`Runtime::reached_from_elsewhere`, `add_route_nodes`), and the coordinator adds up the synapse
+  counts. Builders that give every node every edge still work.
+- Measured (`scale`, 200k × 100 synapses, 2 shards on each of 4 local nodes and the coordinator, random wiring):
+  events the coordinator sends to other nodes 16.5 M → 1.4 M per simulated second (11.4×); run 8.86 → 7.91 s per
+  simulated second; heap while running 3.34 → 2.55 GB; build 1.99 → 1.82 s. In one process (8 shards): run speed
+  unchanged (5.8 s per simulated second), build 2.65 → 3.1 s and 70 MB more heap (a slice per route per shard).
+- Found, not caused by this (the previous commit does the same): under heavy CPU load (ten busy processes), the
+  session's cluster tests sometimes see a cluster run differ from one process. Unloaded they pass every time. To
+  look into: something in the cluster path depends on timing.
 
 Next: the 10⁹-synapse network on a cluster (needs the machines).
 

@@ -17,8 +17,9 @@ pub struct RouteEdge {
 
 /// Optional random variation added to every edge delay of a route (intentional timing noise).
 ///
-/// The variation is a deterministic function of `(seed, sender, sequence number, edge position)`, so it is
-/// reproducible and does not depend on where the route is expanded. Delays never go below zero.
+/// The variation is a deterministic function of `(seed, sender, sequence number, target, the target's edge index)`,
+/// so it is reproducible and does not depend on where (on which shard or node) the route is expanded. Delays never
+/// go below zero.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Jitter {
@@ -72,13 +73,6 @@ impl Edge {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct Route {
-    pub(crate) owner: ActorId,
-    pub(crate) edges: Vec<Edge>,
-    pub(crate) jitter: Jitter,
-}
-
 impl Jitter {
     /// How much the jitter can shorten a delay, for computing the lookahead. Normal jitter is unbounded, so this
     /// uses 5σ; the rare larger reductions are counted as lookahead violations.
@@ -90,18 +84,33 @@ impl Jitter {
         }
     }
 
-    /// Applies the jitter to `delay` for edge position `sub` of message `(src, seq)`.
-    pub(crate) fn apply(self, delay: SimDuration, seed: u64, src: ActorId, seq: u64, sub: u32) -> SimDuration {
+    /// Applies the jitter to `delay` for the edge to `target` (its edge index `edge`) of message `(src, seq)`.
+    pub(crate) fn apply(
+        self,
+        delay: SimDuration,
+        seed: u64,
+        src: ActorId,
+        seq: u64,
+        target: ActorId,
+        edge: u32,
+    ) -> SimDuration {
+        let at = Edgewise {
+            seed,
+            src,
+            seq,
+            target,
+            edge,
+        };
         let offset_ns = match self {
             Self::None => return delay,
             Self::Uniform { half_width } => {
-                let u = unit_f64(mix(seed, src, seq, sub, 0));
+                let u = unit_f64(at.mix(0));
                 (2.0 * u - 1.0) * half_width.as_nanos() as f64
             }
             Self::Normal { sigma } => {
                 // Box–Muller transform from two independent uniforms; 1 - u keeps the log argument in (0, 1].
-                let u1 = 1.0 - unit_f64(mix(seed, src, seq, sub, 1));
-                let u2 = unit_f64(mix(seed, src, seq, sub, 2));
+                let u1 = 1.0 - unit_f64(at.mix(1));
+                let u2 = unit_f64(at.mix(2));
                 let z = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
                 z * sigma.as_nanos() as f64
             }
@@ -119,10 +128,22 @@ pub(crate) fn splitmix(mut z: u64) -> u64 {
     z ^ (z >> 31)
 }
 
-fn mix(seed: u64, src: ActorId, seq: u64, sub: u32, stream: u64) -> u64 {
-    let h = splitmix(seed ^ splitmix(src.raw()));
-    let h = splitmix(h ^ seq);
-    splitmix(h ^ (u64::from(sub) << 2 | stream))
+/// What one edge's jitter depends on.
+struct Edgewise {
+    seed: u64,
+    src: ActorId,
+    seq: u64,
+    target: ActorId,
+    edge: u32,
+}
+
+impl Edgewise {
+    fn mix(&self, stream: u64) -> u64 {
+        let h = splitmix(self.seed ^ splitmix(self.src.raw()));
+        let h = splitmix(h ^ self.seq);
+        let h = splitmix(h ^ self.target.raw());
+        splitmix(h ^ (u64::from(self.edge) << 2 | stream))
+    }
 }
 
 /// A uniform value in `[0, 1)` from 53 random bits.
@@ -140,8 +161,12 @@ mod tests {
             sigma: SimDuration::from_micros(50),
         };
         let d = SimDuration::from_micros(20);
-        let a: Vec<_> = (0..1000).map(|i| j.apply(d, 7, ActorId::from_raw(3), i, 0)).collect();
-        let b: Vec<_> = (0..1000).map(|i| j.apply(d, 7, ActorId::from_raw(3), i, 0)).collect();
+        let a: Vec<_> = (0..1000)
+            .map(|i| j.apply(d, 7, ActorId::from_raw(3), i, ActorId::from_raw(4), 0))
+            .collect();
+        let b: Vec<_> = (0..1000)
+            .map(|i| j.apply(d, 7, ActorId::from_raw(3), i, ActorId::from_raw(4), 0))
+            .collect();
         assert_eq!(a, b);
         assert!(
             a.contains(&SimDuration::ZERO),
@@ -158,7 +183,11 @@ mod tests {
         let base = SimDuration::from_millis(1);
         let n = 20_000;
         let samples: Vec<f64> = (0..n)
-            .map(|i| j.apply(base, 1, ActorId::from_raw(0), i, 0).as_nanos() as f64 - base.as_nanos() as f64)
+            .map(|i| {
+                j.apply(base, 1, ActorId::from_raw(0), i, ActorId::from_raw(5), 0)
+                    .as_nanos() as f64
+                    - base.as_nanos() as f64
+            })
             .collect();
         let mean = samples.iter().sum::<f64>() / n as f64;
         let sd = (samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64).sqrt();
@@ -172,7 +201,7 @@ mod tests {
         let j = Jitter::Uniform { half_width: half };
         let base = SimDuration::from_micros(100);
         for i in 0..5_000 {
-            let d = j.apply(base, 9, ActorId::from_raw(1), i, 3);
+            let d = j.apply(base, 9, ActorId::from_raw(1), i, ActorId::from_raw(6), 3);
             assert!(d >= base - half && d <= base + half);
         }
     }

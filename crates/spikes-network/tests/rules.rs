@@ -107,16 +107,20 @@ fn every_node_builds_its_share_of_the_same_network() {
     let net = build(&mut alone, &d, &BuildOptions::default());
     let whole = synapses(&alone, &net);
     let mut union = BTreeMap::new();
+    let mut counted = 0;
     for node in 0..3 {
         let mut rt = runtime(Some(NodePlacement {
             node,
             shards_per_node: vec![1, 1, 1],
         }));
         let part = build(&mut rt, &d, &BuildOptions::default());
-        assert_eq!(part.synapse_count, net.synapse_count);
         let mine = synapses(&rt, &part);
+        // Each node makes (and counts) only the connections onto its own neurons.
+        assert_eq!(part.synapse_count, mine.len() as u64);
+        counted += part.synapse_count;
         assert!(mine.len() < whole.len(), "a node keeps only its share");
         union.extend(mine);
     }
     assert_eq!(union, whole);
+    assert_eq!(counted, net.synapse_count);
 }
