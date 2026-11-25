@@ -276,8 +276,12 @@ export function RunPage() {
           {!replay && (
             <Button
               variant="outline"
-              disabled={!network || state !== "ready" || building}
-              title="Save the run so far, to continue it later (from the Recordings page). Stop the run first."
+              disabled={!network || building || !(state === "ready" || (state === "paused" && builtNodes.length === 0))}
+              title={
+                builtNodes.length > 0
+                  ? "Save the run so far, to continue it later (from the Recordings page). On a cluster, stop the run first."
+                  : "Save the run so far, to continue it later (from the Recordings page). Pause or stop the run first."
+              }
               data-testid="save-run"
               onClick={act(async () => {
                 const saved = await client!.saveRun(id, session.name);

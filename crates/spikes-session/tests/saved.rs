@@ -106,3 +106,62 @@ fn saving_needs_a_ready_session_and_loading_checks_the_file() {
     assert!(err.to_string().contains("damaged"), "{err}");
     session.load_saved(&saved, 1).unwrap();
 }
+
+#[test]
+fn a_paused_run_is_saved_where_it_waits_and_keeps_running_after() {
+    let engine = Engine::new();
+    let reference = engine.create("reference", NET).unwrap();
+    reference
+        .build(BuildSettings {
+            seed: 4,
+            shards: 2,
+            ..BuildSettings::default()
+        })
+        .unwrap();
+    let input = InputSpec::Poisson {
+        targets: (0..120).collect(),
+        rate_hz: 3_000.0,
+        mv: 12.0,
+        duration: None,
+    };
+    reference.add_input(input.clone()).unwrap();
+    run_for(&reference, ms(300));
+    let expected = neurons(&reference);
+
+    // The same run, paused at 100 ms (paced, so it waits for its clock), saved while paused.
+    let session = engine.create("paused", NET).unwrap();
+    session
+        .build(BuildSettings {
+            seed: 4,
+            shards: 2,
+            ..BuildSettings::default()
+        })
+        .unwrap();
+    session.add_input(input).unwrap();
+    run_for(&session, ms(100));
+    session
+        .start(RunSettings {
+            speed: Speed::Factor(1.0),
+            duration: Some(ms(200)),
+            record: None,
+        })
+        .unwrap();
+    session.pause().unwrap();
+    // Running and not paused: refused.
+    session.resume().unwrap();
+    assert!(matches!(session.save(), Err(SessionError::State { .. })));
+    session.pause().unwrap();
+    let saved = session.save().unwrap();
+    assert_eq!(session.state(), spikes_session::State::Paused, "still paused");
+    session.stop().unwrap();
+
+    let restored = engine.create("restored", "(NRN=[])").unwrap();
+    restored.load_saved(&saved, 3).unwrap();
+    let at = restored.sim_time();
+    assert!(
+        at >= SimTime::from_start(ms(100)) && at < SimTime::from_start(ms(300)),
+        "{at}"
+    );
+    run_for(&restored, SimTime::from_start(ms(300)) - at);
+    assert_eq!(neurons(&restored), expected);
+}

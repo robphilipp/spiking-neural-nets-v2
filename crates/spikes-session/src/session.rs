@@ -1031,13 +1031,46 @@ impl Session {
     }
 
     /// Saves the run so far: the description, how it was built, the inputs added and every neuron's, synapse's and
-    /// pending event's state (on a cluster, every node's). Allowed when ready (built, or stopped);
-    /// [`Self::load_saved`] continues from it, also on another number of shards or nodes.
+    /// pending event's state (on a cluster, every node's). Allowed when ready (built, or stopped), or paused (in one
+    /// process: the run stays paused); [`Self::load_saved`] continues from it, also on another number of shards or
+    /// nodes.
     ///
     /// # Errors
-    /// Unless ready; for a replay.
+    /// While running (pause first), or paused on a cluster (stop first); before a build; for a replay.
     pub fn save(&self) -> Result<Vec<u8>, SessionError> {
+        self.save_timed().map(|(bytes, _)| bytes)
+    }
+
+    /// Like [`Self::save`], with the simulated time it was saved at.
+    pub fn save_timed(&self) -> Result<(Vec<u8>, SimTime), SessionError> {
         self.not_replay("save")?;
+        // A paused run (in one process) is saved where it waits; otherwise, between runs.
+        let paused = {
+            let inner = self.inner();
+            match &inner.phase {
+                Stage::Running { control, clock } => {
+                    if !clock.is_paused() {
+                        return Err(SessionError::State {
+                            state: State::Running,
+                            action: "save (pause it first)",
+                        });
+                    }
+                    if inner.cluster.is_some() {
+                        return Err(SessionError::Invalid(
+                            "a run on a cluster can't be saved while paused: stop it first".into(),
+                        ));
+                    }
+                    Some(control.clone())
+                }
+                _ => None,
+            }
+        };
+        if let Some(control) = paused {
+            let snapshot = self
+                .await_reply(control.snapshot(Arc::new(spikes_network::snapshot_codec())))?
+                .map_err(|e| SessionError::Invalid(format!("couldn't save: {e}")))?;
+            return self.saved_run(snapshot);
+        }
         let here = self.snapshot_here()?;
         let cluster = self.coordinator();
         let snapshot = match &cluster {
@@ -1048,6 +1081,12 @@ impl Session {
             }
             None => here,
         };
+        self.saved_run(snapshot)
+    }
+
+    /// A saved run's bytes, with this session's description, settings and inputs.
+    fn saved_run(&self, snapshot: tempo_runtime::Snapshot) -> Result<(Vec<u8>, SimTime), SessionError> {
+        let at = SimTime::from_nanos(snapshot.now);
         let inner = self.inner();
         let saved = SavedRun {
             description: inner.text.clone(),
@@ -1061,7 +1100,7 @@ impl Session {
         drop(inner);
         let mut bytes = SAVED_MAGIC.to_vec();
         bytes.extend(postcard::to_stdvec(&saved).map_err(|e| SessionError::Invalid(e.to_string()))?);
-        Ok(bytes)
+        Ok((bytes, at))
     }
 
     /// Continues a saved run (see [`Self::save`]): takes its description, builds it on `shards` shards (on the

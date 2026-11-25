@@ -302,7 +302,8 @@ Snapshots (2026-11-24):
   snapshot on every node, each taking its own actors and events. Inputs carry their start time to every node. A run
   saved on 2 nodes or in one process continues exactly in one process, on 2 nodes or on 3 (`openSave` takes `nodes`;
   the UI uses the Settings page's nodes).
-- Not yet: saving while paused (stop first).
+- Saving while paused (one process): `Control::snapshot` has every shard save its part at the window start it
+  waits at (a consistent cut: all of them wait at the same one); the run stays paused. On a cluster, stop first.
 
 Milestone 3, preparing for 10⁹ synapses on a cluster (2026-11-24):
 - `scale` builds on a cluster too (`… [shards per node] local:N` for N agents in this process, or addresses).

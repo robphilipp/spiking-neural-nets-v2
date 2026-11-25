@@ -20,14 +20,17 @@ test("save a run, then continue it from the Recordings page", async ({ page }) =
   await expect(page.getByText("3 neurons")).toBeVisible();
   await expect(page.getByTestId("save-run")).toBeEnabled();
   await page.getByTestId("start").click();
-  await expect(page.getByTestId("save-run")).toBeDisabled(); // stop first
+  await expect(page.getByTestId("save-run")).toBeDisabled(); // pause (or stop) first
   await page.waitForTimeout(1000);
-  await page.getByTestId("stop").click();
-  await expect(page.getByTestId("state")).toHaveText("ready");
-  await page.getByTestId("save-run").click();
+  await page.getByTestId("pause").click();
+  await expect(page.getByTestId("state")).toHaveText("paused");
+  await page.getByTestId("save-run").click(); // saved where it waits; it stays paused
+  await expect(page.getByTestId("state")).toHaveText("paused");
   await expect(page.getByTestId("saved-note")).toContainText(/Saved at \d+\.\d\d s/);
   const savedAt = Number((await page.getByTestId("saved-note").textContent())!.match(/Saved at (\d+\.\d\d)/)![1]);
   expect(savedAt).toBeGreaterThan(0.3);
+  await page.getByTestId("stop").click();
+  await expect(page.getByTestId("state")).toHaveText("ready");
 
   // It's listed with the recordings; continue it: a new session, ready at the saved time.
   await page.getByTestId("nav-recordings").click();

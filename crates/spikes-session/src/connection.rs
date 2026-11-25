@@ -520,8 +520,8 @@ impl Connection {
                 .map_err(api_error),
             Request::SaveRun { session, name } => {
                 let session = self.session(session)?;
-                let bytes = session.save().map_err(api_error)?;
-                let at_ms = session.sim_time().since_start().as_millis_f64();
+                let (bytes, at) = session.save_timed().map_err(api_error)?;
+                let at_ms = at.since_start().as_millis_f64();
                 let dir = self.recordings.join(SAVES_DIR);
                 std::fs::create_dir_all(&dir).map_err(|e| error(ErrorCode::Io, e.to_string()))?;
                 let stamp = SystemTime::now()

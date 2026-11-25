@@ -337,3 +337,72 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Control<M, E> {
         rx
     }
 }
+
+#[cfg(feature = "serde")]
+impl<M, E> Control<M, E>
+where
+    M: Clone + Send + serde::Serialize + serde::de::DeserializeOwned + 'static,
+    E: Clone + Send + 'static,
+{
+    /// The run's state, taken during a run: every shard saves its part at the start of a window, and the parts are
+    /// one consistent state if every shard did so at the same window. While the clock is paused they always do
+    /// (every shard waits at the same window start); while it runs they may not, and the reply is then an error
+    /// (try again, or pause first). Not on a cluster (its nodes don't wait at the same point): stop the run instead.
+    pub fn snapshot(
+        &self,
+        codec: Arc<crate::SnapshotCodec<M, E>>,
+    ) -> Reply<Result<crate::Snapshot, crate::SnapshotError>> {
+        type Part = (u16, SimTime, Result<crate::Snapshot, crate::SnapshotError>);
+        let (tx, rx) = reply();
+        let shards = self.shared.inboxes.len();
+        let parts: Arc<Mutex<Vec<Part>>> = Arc::new(Mutex::new(Vec::with_capacity(shards)));
+        let tx = Arc::new(Mutex::new(Some(tx)));
+        for shard in 0..shards {
+            let (parts, tx, codec, control) = (
+                Arc::clone(&parts),
+                Arc::clone(&tx),
+                Arc::clone(&codec),
+                Arc::clone(&self.shared),
+            );
+            self.shared.submit(
+                shard as u16,
+                Box::new(move |shard, world, window_start| {
+                    let part = if world.nodes > 1 {
+                        Err(crate::SnapshotError(
+                            "a cluster's run can't be saved while it runs or is paused: stop it first".into(),
+                        ))
+                    } else {
+                        shard.snapshot_part(world, &codec)
+                    };
+                    let mut all = lock(&parts);
+                    all.push((shard.core.shard, window_start, part));
+                    if all.len() < shards {
+                        return;
+                    }
+                    let mut all = std::mem::take(&mut *all);
+                    all.sort_by_key(|p| p.0);
+                    let start = all[0].1;
+                    let result = if all.iter().any(|p| p.1 != start) {
+                        Err(crate::SnapshotError(
+                            "the shards were at different points of the run: pause it, then save".into(),
+                        ))
+                    } else {
+                        all.into_iter()
+                            .map(|p| p.2)
+                            .collect::<Result<Vec<_>, _>>()
+                            .map(|parts| {
+                                let mut snapshot = crate::Snapshot::merge(parts);
+                                snapshot.now = start.as_nanos();
+                                snapshot.world_seq = control.world_seq.load(Ordering::Acquire);
+                                snapshot
+                            })
+                    };
+                    if let Some(tx) = lock(&tx).take() {
+                        tx.send(result);
+                    }
+                }),
+            );
+        }
+        rx
+    }
+}

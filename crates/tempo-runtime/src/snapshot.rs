@@ -24,7 +24,7 @@ use tempo_queue::TimeQueue;
 
 use crate::broadcast::Target;
 use crate::field::Field;
-use crate::shard::{Arena, Item};
+use crate::shard::{Arena, Item, Shard, World};
 use crate::{Actor, ActorRng, EdgeIdx, RouteEdge, RouteId, Runtime, TopologyOp};
 
 /// An actor whose state can be saved and restored.
@@ -107,7 +107,7 @@ type SavedEdge = (u64, u64, u32);
 pub struct Snapshot {
     /// Simulation time: everything before it was processed.
     pub now: u64,
-    world_seq: u64,
+    pub(crate) world_seq: u64,
     /// Every actor.
     pub actors: Vec<ActorRecord>,
     /// Every pending event.
@@ -268,64 +268,68 @@ impl<M: 'static, E: 'static> SnapshotCodec<M, E> {
     }
 }
 
+/// The codec of each of the runtime's fields, in its order.
+fn field_codecs<'c, M, E>(world: &World, codec: &'c SnapshotCodec<M, E>) -> Result<Vec<&'c FieldCodec>, SnapshotError> {
+    world
+        .field_types
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            codec
+                .fields
+                .get(t)
+                .ok_or_else(|| err(format!("field #{i} has no snapshot codec")))
+        })
+        .collect()
+}
+
 impl<M, E> Runtime<M, E> {
-    /// The codec of each of the runtime's fields, in its order.
     fn field_codecs<'c>(&self, codec: &'c SnapshotCodec<M, E>) -> Result<Vec<&'c FieldCodec>, SnapshotError> {
-        self.world
-            .field_types
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                codec
-                    .fields
-                    .get(t)
-                    .ok_or_else(|| err(format!("field #{i} has no snapshot codec")))
-            })
-            .collect()
+        field_codecs(&self.world, codec)
     }
 }
 
-impl<M, E> Runtime<M, E>
+impl<M, E> Shard<M, E>
 where
     M: Clone + Send + Serialize + DeserializeOwned + 'static,
     E: Clone + Send + 'static,
 {
-    /// The runtime's state (between runs). On a node of a cluster, the part it holds: merge every node's with
-    /// [`Snapshot::merge`].
-    ///
-    /// # Errors
-    /// If an actor kind or field has no codec.
-    pub fn snapshot(&mut self, codec: &SnapshotCodec<M, E>) -> Result<Snapshot, SnapshotError> {
-        let fields = self.field_codecs(codec)?;
-        let node = self.world.dir.node;
-        let mut snapshot = Snapshot {
-            now: self.now.as_nanos(),
-            world_seq: self.control.world_seq.load(std::sync::atomic::Ordering::Acquire),
-            ..Snapshot::default()
-        };
+    /// This shard's part of a snapshot: its actors, routes and pending events, and (for the node's first shard)
+    /// the fields. Broadcasts and field updates are in every shard's queue (and every node's): the first shard of
+    /// the first node keeps them. Every other shard must be at the same point (between runs, or waiting at the
+    /// same window start).
+    pub(crate) fn snapshot_part(
+        &mut self,
+        world: &World,
+        codec: &SnapshotCodec<M, E>,
+    ) -> Result<Snapshot, SnapshotError> {
+        let fields = field_codecs(world, codec)?;
+        let node = world.dir.node;
+        let me = self.core.shard;
+        let first = me == 0;
+        let mut part = Snapshot::default();
         // Actors, block by block.
-        for (block, entry) in self.world.dir.blocks.iter().enumerate() {
+        for (block, entry) in world.dir.blocks.iter().enumerate() {
             let Some(entry) = entry else { continue };
-            if entry.node != node {
+            if entry.node != node || entry.shard != me {
                 continue;
             }
-            let type_id = self.world.kind_types[usize::from(entry.kind)];
+            let type_id = world.kind_types[usize::from(entry.kind)];
             let kind = codec
                 .kinds
                 .get(&type_id)
                 .ok_or_else(|| err(format!("actor kind #{} has no snapshot codec", entry.kind)))?;
-            let shard = &mut self.shards[usize::from(entry.shard)];
             for index in 0..entry.count {
                 let id = ActorId::from_parts(
                     tempo_core::BlockId::new(block as u64),
                     u16::try_from(index).expect("block index"),
                 );
-                let store = &shard.stores[entry.store as usize];
+                let store = &self.stores[entry.store as usize];
                 let state = (kind.save)(store.as_any(), index).ok_or_else(|| err(format!("actor {id} is missing")))?;
-                let meta = shard.stores[entry.store as usize]
+                let meta = self.stores[entry.store as usize]
                     .meta_mut(index)
                     .ok_or_else(|| err(format!("actor {id} has no metadata")))?;
-                snapshot.actors.push(ActorRecord {
+                part.actors.push(ActorRecord {
                     id: id.raw(),
                     kind: kind.name.clone(),
                     state,
@@ -336,75 +340,95 @@ where
                 });
             }
         }
-        // Routes owned here.
-        for shard in &self.shards {
-            for (route, r) in &shard.routes {
-                snapshot.routes.push((
-                    route.0,
-                    r.edges
-                        .iter()
-                        .map(|e| (e.target.raw(), e.delay().as_nanos(), e.edge.0))
-                        .collect(),
-                ));
+        for (route, r) in &self.routes {
+            part.routes.push((
+                route.0,
+                r.edges
+                    .iter()
+                    .map(|e| (e.target.raw(), e.delay().as_nanos(), e.edge.0))
+                    .collect(),
+            ));
+        }
+        if first {
+            for (field, c) in self.core.fields.iter().zip(&fields) {
+                part.fields.push((c.save)(field.as_any()));
             }
         }
-        snapshot.routes.sort_by_key(|r| r.0);
-        // Fields: every shard has the same copy.
-        if let Some(shard) = self.shards.first() {
-            for (field, c) in shard.core.fields.iter().zip(&fields) {
-                snapshot.fields.push((c.save)(field.as_any()));
-            }
-        }
-        // Pending events: taken out and put back. Broadcasts and field updates are in every shard's queue (and
-        // every node's): keep one copy.
-        for (i, shard) in self.shards.iter_mut().enumerate() {
-            let mut items = Vec::with_capacity(shard.core.queue.len());
-            while let Some((key, item)) = shard.core.queue.pop() {
-                let once = i == 0 && node == 0;
-                let saved = match &item {
-                    Item::Message { dst, msg } => Some(EventItem::Message {
-                        dst: dst.raw(),
-                        msg: encode(msg),
+        // Pending events: taken out and put back (all of them, even if one can't be saved).
+        let once = first && node == 0;
+        let mut items = Vec::with_capacity(self.core.queue.len());
+        let mut failure = None;
+        while let Some((key, item)) = self.core.queue.pop() {
+            let saved = match &item {
+                Item::Message { dst, msg } => Some(EventItem::Message {
+                    dst: dst.raw(),
+                    msg: encode(msg),
+                }),
+                Item::Routed { dst, edge, msg } => Some(EventItem::Routed {
+                    dst: dst.raw(),
+                    edge: edge.0,
+                    msg: encode(msg),
+                }),
+                Item::Broadcast { target, msg } if once => Some(EventItem::Broadcast {
+                    target: encode_target(target),
+                    msg: encode(msg),
+                }),
+                Item::Field { field, update } if once => match fields.get(usize::from(*field)) {
+                    Some(c) => Some(EventItem::Field {
+                        field: *field,
+                        update: (c.encode_update)(update.as_ref()),
                     }),
-                    Item::Routed { dst, edge, msg } => Some(EventItem::Routed {
-                        dst: dst.raw(),
-                        edge: edge.0,
-                        msg: encode(msg),
-                    }),
-                    Item::Broadcast { target, msg } if once => Some(EventItem::Broadcast {
-                        target: encode_target(target),
-                        msg: encode(msg),
-                    }),
-                    Item::Field { field, update } if once => {
-                        let c = fields
-                            .get(usize::from(*field))
-                            .ok_or_else(|| err(format!("field {field} has no codec")))?;
-                        Some(EventItem::Field {
-                            field: *field,
-                            update: (c.encode_update)(update.as_ref()),
-                        })
+                    None => {
+                        failure = Some(err(format!("field {field} has no codec")));
+                        None
                     }
-                    Item::Topology { route, op } => Some(EventItem::Topology {
-                        route: route.0,
-                        op: encode_op(op),
-                    }),
-                    Item::Broadcast { .. } | Item::Field { .. } => None,
-                };
-                if let Some(item) = saved {
-                    snapshot.events.push(EventRecord {
-                        at: key.at.as_nanos(),
-                        src: key.src.raw(),
-                        seq: key.seq,
-                        sub: key.sub,
-                        item,
-                    });
-                }
-                items.push((key, item));
+                },
+                Item::Topology { route, op } => Some(EventItem::Topology {
+                    route: route.0,
+                    op: encode_op(op),
+                }),
+                Item::Broadcast { .. } | Item::Field { .. } => None,
+            };
+            if let Some(item) = saved {
+                part.events.push(EventRecord {
+                    at: key.at.as_nanos(),
+                    src: key.src.raw(),
+                    seq: key.seq,
+                    sub: key.sub,
+                    item,
+                });
             }
-            for (key, item) in items {
-                shard.core.queue.push(key, item);
-            }
+            items.push((key, item));
         }
+        for (key, item) in items {
+            self.core.queue.push(key, item);
+        }
+        match failure {
+            Some(e) => Err(e),
+            None => Ok(part),
+        }
+    }
+}
+
+impl<M, E> Runtime<M, E>
+where
+    M: Clone + Send + Serialize + DeserializeOwned + 'static,
+    E: Clone + Send + 'static,
+{
+    /// The runtime's state (between runs; while paused, see [`crate::Control::snapshot`]). On a node of a cluster,
+    /// the part it holds: merge every node's with [`Snapshot::merge`].
+    ///
+    /// # Errors
+    /// If an actor kind or field has no codec.
+    pub fn snapshot(&mut self, codec: &SnapshotCodec<M, E>) -> Result<Snapshot, SnapshotError> {
+        let parts = self
+            .shards
+            .iter_mut()
+            .map(|shard| shard.snapshot_part(&self.world, codec))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut snapshot = Snapshot::merge(parts);
+        snapshot.now = self.now.as_nanos();
+        snapshot.world_seq = self.control.world_seq.load(std::sync::atomic::Ordering::Acquire);
         Ok(snapshot)
     }
 

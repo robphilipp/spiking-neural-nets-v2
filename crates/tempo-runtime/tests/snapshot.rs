@@ -255,3 +255,41 @@ fn postcard_roundtrip(s: &Snapshot) -> Snapshot {
     let bytes = postcard::to_stdvec(s).expect("encodes");
     postcard::from_bytes(&bytes).expect("decodes")
 }
+
+#[test]
+fn a_paused_run_can_be_saved_through_the_control_plane() {
+    // The reference.
+    let mut reference = build(1);
+    reference.run_until(at(500));
+    let expected = values(&reference);
+
+    // Run to 100 ms, then a paced run that starts paused: save it through the control plane, then stop it.
+    let mut rt = build(3);
+    rt.run_until(at(100));
+    let clock = rt.clock();
+    clock.set_time_factor(1.0);
+    clock.pause();
+    let control = rt.control();
+    let run = std::thread::spawn(move || {
+        rt.run_until(at(500));
+        rt
+    });
+    let snapshot = control
+        .snapshot(Arc::new(codec()))
+        .wait_timeout(std::time::Duration::from_secs(10))
+        .expect("an answer")
+        .expect("not cancelled")
+        .expect("a snapshot");
+    assert_eq!(snapshot.now, at(100).as_nanos());
+    clock.stop();
+    let rt = run.join().unwrap();
+    assert!(rt.now() <= at(500));
+
+    // Continued elsewhere: exactly the reference.
+    for shards in [1, 2] {
+        let mut restored = build(shards);
+        restored.restore(&codec(), &snapshot).expect("restore");
+        restored.run_until(at(500));
+        assert_eq!(values(&restored), expected, "{shards} shard(s)");
+    }
+}
