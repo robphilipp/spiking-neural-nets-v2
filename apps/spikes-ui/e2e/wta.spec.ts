@@ -38,6 +38,8 @@ test("the winner-takes-all example learns from the Inputs page's signal", async 
   await expect
     .poll(async () => (await client.listSessions()).find((s) => s.id === session), { timeout: 30_000 })
     .toMatchObject({ state: "ready", simMs: 60_000 });
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: "test-results/wta-run.png", fullPage: true });
 
   // out-1 (index 2) follows in-1 (0); out-2 (3) follows in-2 (1).
   const weights = async (post: number) =>

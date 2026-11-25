@@ -29,6 +29,6 @@ export class TauriClient extends ProtocolClient {
   }
 
   protected sendBinary(data: ArrayBuffer): void {
-    invoke("engine_send_binary", new Uint8Array(data), { headers: { connection: String(this.id) } }).catch((e: unknown) => console.error("engine_send_binary failed", e));
+    invoke("engine_send_binary", new Uint8Array(data), { headers: { "spikes-connection": String(this.id) } }).catch((e: unknown) => console.error("engine_send_binary failed", e));
   }
 }

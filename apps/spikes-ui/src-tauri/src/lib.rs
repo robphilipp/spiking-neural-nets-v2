@@ -93,10 +93,10 @@ fn engine_send(state: State<'_, Desktop>, connection: u32, text: String) -> Resu
 fn engine_send_binary(state: State<'_, Desktop>, request: Request<'_>) -> Result<(), String> {
     let connection = request
         .headers()
-        .get("connection")
+        .get("spikes-connection")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse().ok())
-        .ok_or("the connection header is missing")?;
+        .ok_or("the spikes-connection header is missing")?;
     match request.body() {
         InvokeBody::Raw(bytes) => state.send(connection, Incoming::Binary(bytes.clone())),
         InvokeBody::Json(_) => Err("send sensor batches as raw bytes".into()),

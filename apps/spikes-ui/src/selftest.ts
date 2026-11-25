@@ -1,5 +1,6 @@
 // Desktop self-test (SPIKES_SELFTEST=1): runs the ring network through the built-in engine over Tauri IPC and
-// reports to the app, which prints the result and exits. Checks JSON requests, notices and raw-byte frames.
+// reports to the app, which prints the result and exits. Checks JSON requests, notices, raw-byte frames, and sensor
+// samples sent as raw bytes (the Inputs page's path).
 
 import { type Frame, spikeCount } from "@spikes/client";
 import { invoke } from "@tauri-apps/api/core";
@@ -46,8 +47,46 @@ export async function selftest(): Promise<void> {
     const rasterPoints = live.raster.value.seriesList().reduce((n, s) => n + s.length(), 0);
     const ratePoints = live.rate.seriesList().reduce((n, s) => n + s.length(), 0);
     await live.dispose();
-    const ok = rasterPoints === 25 && ratePoints > 0 && projectOk && ended && spikes === 25 && network.neurons.length === 25;
-    await report(ok, `raster=${rasterPoints} rate=${ratePoints} project=${projectOk} neurons=${network.neurons.length} frames=${frames.length} spikes=${spikes} runEnded=${ended}`);
+
+    // Sensor input over the binary IPC path, as the Inputs page injects it: wta-learning, its inputs driven.
+    const wta = examples.find((e) => e.name === "wta-learning")!.text;
+    const { id: w } = await client.createSession("selftest-wta", wta);
+    await client.build(w, { shards: 1 });
+    const wtaNet = await client.getNetwork(w);
+    const inputs = wtaNet.neurons.filter((n) => n.name.startsWith("in-")).map((n) => [n.index]);
+    const sensor = await client.connectSensor(w, {
+      name: "designed signal",
+      targets: inputs,
+      encoding: { type: "rate", maxHz: 100, mv: 10 },
+      bufferWhilePaused: true,
+      ingressDelayMs: 1,
+    });
+    const errors: string[] = [];
+    const consoleError = console.error;
+    console.error = (...a: unknown[]) => errors.push(a.map(String).join(" "));
+    const steps = 2000;
+    const values = new Float32Array(steps * 2);
+    for (let t = 0; t < steps; t++) values[t * 2 + (Math.floor(t / 300) % 2)] = 1;
+    sensor.sendSamples(0n, 1e6, 2, values);
+    await new Promise((r) => setTimeout(r, 300));
+    let wtaEnded = false;
+    client.onNotice((s, n) => {
+      if (s === w && n.type === "runEnded") wtaEnded = true;
+    });
+    await client.start(w, { durationMs: 2000 });
+    const wtaDeadline = performance.now() + 5000;
+    while (!wtaEnded && performance.now() < wtaDeadline) await new Promise((r) => setTimeout(r, 20));
+    let inputSpikes = 0;
+    for (const [i] of inputs) inputSpikes += (await client.queryNeuron(w, i!)).spikes;
+    console.error = consoleError;
+    const sensorsOk = inputSpikes > 50 && errors.length === 0;
+
+    const ok =
+      rasterPoints === 25 && ratePoints > 0 && projectOk && ended && spikes === 25 && network.neurons.length === 25 && sensorsOk;
+    await report(
+      ok,
+      `raster=${rasterPoints} rate=${ratePoints} project=${projectOk} neurons=${network.neurons.length} frames=${frames.length} spikes=${spikes} runEnded=${ended} sensorInputSpikes=${inputSpikes} errors=${errors.join(" | ")}`,
+    );
   } catch (e) {
     await report(false, `error: ${e instanceof Error ? e.message : String(e)}`);
   }
