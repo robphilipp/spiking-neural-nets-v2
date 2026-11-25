@@ -1,16 +1,16 @@
-//! A description's neurons, compactly: neurons listed one by one (`NRN`) as they are, and each population (`POP`)
-//! as one template and its neurons' positions. A population of millions costs 24 bytes a neuron, not a full
-//! description each, and every node of a cluster holds a copy.
+//! A description's neurons, compactly: neurons listed one by one (`neurons`) as they are, and each population
+//! (`populations`) as one template and its neurons' positions. A population of millions costs 24 bytes a neuron, not
+//! a full description each, and every node of a cluster holds a copy.
 //!
 //! Neurons are numbered densely: listed ones first, in file order, then each population's in turn. A population's
-//! neurons are named `<population>-<i>`.
+//! neurons are named `<population>-<i>`, unless they were named one by one.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 
 use spikes_model::{NeuronParams, Receptor};
 
-use crate::{NeuronDescription, Span, SynapseDefaults};
+use crate::{NeuronDescription, Span};
 
 /// The neurons of a network (see the module documentation).
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -26,32 +26,37 @@ struct PopulationNeurons {
     /// Everything but the name and position (its `id` and `location_um` are unused).
     template: NeuronDescription,
     locations: Vec<[f64; 3]>,
+    /// The neurons' names, when named one by one (else `<name>-<i>`).
+    #[serde(default)]
+    names: Option<Vec<String>>,
 }
 
 /// One neuron, as a view into [`Neurons`].
 #[derive(Copy, Clone, Debug)]
 pub struct NeuronView<'a> {
     template: &'a NeuronDescription,
-    /// For a population's neuron: the population's name and its index in it.
+    /// For a population's neuron: the population's name and its index in it, and its own name if it has one.
     member: Option<(&'a str, u32)>,
+    own_name: Option<&'a str>,
     location: [f64; 3],
 }
 
 impl<'a> NeuronView<'a> {
     /// Its name (`nid`, or `<population>-<i>`).
     pub fn id(&self) -> Cow<'a, str> {
-        match self.member {
-            Some((population, i)) => Cow::Owned(format!("{population}-{i}")),
-            None => Cow::Borrowed(&self.template.id),
+        match (self.own_name, self.member) {
+            (Some(name), _) => Cow::Borrowed(name),
+            (None, Some((population, i))) => Cow::Owned(format!("{population}-{i}")),
+            (None, None) => Cow::Borrowed(&self.template.id),
         }
     }
     /// Soma position in µm.
     pub fn location_um(&self) -> [f64; 3] {
         self.location
     }
-    /// Execution group (`grp`).
-    pub fn group(&self) -> &'a str {
-        &self.template.group
+    /// The node it's pinned to, if any.
+    pub fn node(&self) -> Option<&'a str> {
+        self.template.node.as_deref()
     }
     /// Default sign of its outgoing connections.
     pub fn inhibitory(&self) -> bool {
@@ -64,14 +69,6 @@ impl<'a> NeuronView<'a> {
     /// Axon conduction speed in m/s.
     pub fn conduction_m_per_s(&self) -> f64 {
         self.template.conduction_m_per_s
-    }
-    /// Synaptic delay of its outgoing connections in ms.
-    pub fn synaptic_delay_ms(&self) -> f64 {
-        self.template.synaptic_delay_ms
-    }
-    /// Settings for its incoming synapses.
-    pub fn synapses(&self) -> &'a SynapseDefaults {
-        &self.template.synapses
     }
     /// Neuromodulator receptors.
     pub fn receptors(&self) -> &'a [Receptor] {
@@ -121,13 +118,21 @@ impl Neurons {
         self.len += 1;
     }
 
-    /// Adds a population: `locations.len()` neurons like `template`, named `<name>-<i>`.
-    pub fn push_population(&mut self, name: String, template: NeuronDescription, locations: Vec<[f64; 3]>) {
+    /// Adds a population: `locations.len()` neurons like `template`, named `names` (as many) or `<name>-<i>`.
+    pub fn push_population(
+        &mut self,
+        name: String,
+        template: NeuronDescription,
+        locations: Vec<[f64; 3]>,
+        names: Option<Vec<String>>,
+    ) {
+        debug_assert!(names.as_ref().is_none_or(|n| n.len() == locations.len()));
         self.len += locations.len();
         self.populations.push(PopulationNeurons {
             name,
             template,
             locations,
+            names,
         });
     }
 
@@ -147,6 +152,7 @@ impl Neurons {
             return Some(NeuronView {
                 template: n,
                 member: None,
+                own_name: None,
                 location: n.location_um,
             });
         }
@@ -156,6 +162,7 @@ impl Neurons {
                 return Some(NeuronView {
                     template: &p.template,
                     member: Some((&p.name, i as u32)),
+                    own_name: p.names.as_ref().map(|n| n[i].as_str()),
                     location,
                 });
             }
@@ -169,12 +176,14 @@ impl Neurons {
         let listed = self.listed.iter().map(|n| NeuronView {
             template: n,
             member: None,
+            own_name: None,
             location: n.location_um,
         });
         let members = self.populations.iter().flat_map(|p| {
             p.locations.iter().zip(0u32..).map(move |(&location, i)| NeuronView {
                 template: &p.template,
                 member: Some((&p.name, i)),
+                own_name: p.names.as_ref().map(|n| n[i as usize].as_str()),
                 location,
             })
         });
@@ -192,18 +201,23 @@ impl Neurons {
     /// Finding neurons by name, and naming them, without a string per neuron.
     pub fn names(&self) -> NeuronNames {
         let mut start = self.listed.len() as u32;
+        let mut index: HashMap<String, u32> = self.listed.iter().zip(0u32..).map(|(n, i)| (n.id.clone(), i)).collect();
+        let populations = self
+            .populations
+            .iter()
+            .map(|p| {
+                let first = start;
+                start += p.locations.len() as u32;
+                if let Some(names) = &p.names {
+                    index.extend(names.iter().cloned().zip(first..));
+                }
+                (p.name.clone(), first, p.locations.len() as u32, p.names.clone())
+            })
+            .collect();
         NeuronNames {
-            listed_index: self.listed.iter().zip(0u32..).map(|(n, i)| (n.id.clone(), i)).collect(),
+            listed_index: index,
             listed: self.listed.iter().map(|n| n.id.clone()).collect(),
-            populations: self
-                .populations
-                .iter()
-                .map(|p| {
-                    let first = start;
-                    start += p.locations.len() as u32;
-                    (p.name.clone(), first, p.locations.len() as u32)
-                })
-                .collect(),
+            populations,
         }
     }
 }
@@ -240,13 +254,15 @@ impl<I: Iterator> Iterator for Counted<I> {
 
 impl<I: Iterator> ExactSizeIterator for Counted<I> {}
 
-/// Neuron names and indices (see [`Neurons::names`]): a string for each listed neuron, none for population members.
+/// Neuron names and indices (see [`Neurons::names`]): a string for each neuron named one by one, none for the
+/// others (`<population>-<i>`).
 #[derive(Clone, Debug, Default)]
 pub struct NeuronNames {
     listed: Vec<String>,
+    /// Every neuron named one by one (listed ones, and named population members).
     listed_index: HashMap<String, u32>,
-    /// (name, first index, count).
-    populations: Vec<(String, u32, u32)>,
+    /// (name, first index, count, the members' own names if named one by one).
+    populations: Vec<(String, u32, u32, Option<Vec<String>>)>,
 }
 
 impl NeuronNames {
@@ -257,8 +273,11 @@ impl NeuronNames {
         }
         self.populations
             .iter()
-            .find(|&&(_, first, count)| (first..first + count).contains(&i))
-            .map(|(name, first, _)| Cow::Owned(format!("{name}-{}", i - first)))
+            .find(|(_, first, count, _)| (*first..first + count).contains(&i))
+            .map(|(name, first, _, names)| match names {
+                Some(names) => Cow::Borrowed(names[(i - first) as usize].as_str()),
+                None => Cow::Owned(format!("{name}-{}", i - first)),
+            })
     }
 
     /// The index of the neuron with this name.
@@ -274,8 +293,8 @@ impl NeuronNames {
         let k: u32 = k.parse().ok()?;
         self.populations
             .iter()
-            .find(|(p, _, count)| p == population && k < *count)
-            .map(|(_, first, _)| first + k)
+            .find(|(p, _, count, names)| p == population && k < *count && names.is_none())
+            .map(|(_, first, _, _)| first + k)
     }
 
     /// How many neurons.

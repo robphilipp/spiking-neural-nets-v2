@@ -7,7 +7,7 @@ fn main() {
     let file = &args[1];
     let prefix = &args[2];
     let ms: u64 = args[3].parse().unwrap();
-    let path = format!("{}/../../test-data/v1/{file}", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{}/../../test-data/networks/{file}", env!("CARGO_MANIFEST_DIR"));
     let description = spikes_dna::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut rt = Runtime::new(RuntimeConfig {
         seed: 1,

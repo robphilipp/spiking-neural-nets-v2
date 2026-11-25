@@ -13,7 +13,7 @@ fn ms(v: f64) -> SimTime {
 
 fn v1(name: &str) -> NetworkDescription {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../test-data/v1")
+        .join("../../test-data/networks")
         .join(name);
     spikes_dna::parse(&std::fs::read_to_string(path).unwrap()).unwrap()
 }
@@ -105,11 +105,16 @@ fn stdp_potentiates_the_early_input_and_depresses_the_late_one() {
 }
 
 const BISTABLE: &str = "(
-NRN=[
-    (nid=tonic, nty=bi, lct=15 mV, rst=10 mV, tfr=50 Hz, mpd=250 ms, mpn=0 mV, LOC=(cst=ct, px1=0, px2=0, px3=0)),
-    (nid=listener, mst=100 mV, mpn=0 mV, LOC=(cst=ct, px1=100, px2=0, px3=0)),
+synapse_types=[
+    (name=fixed, decay=(time=1500 ms), release=()),
 ],
-CON=[(prn=tonic, psn=listener, cnw=1)],
+neurons=[
+    (name=tonic, dynamics=bistable_integrator, tonic_on_threshold=15 mV, tonic_off_threshold=10 mV, tonic_rate=50 Hz, decay_time=250 ms, membrane_noise=0 mV, position=[0, 0, 0]),
+    (name=listener, threshold=100 mV, membrane_noise=0 mV, position=[100, 0, 0]),
+],
+connections=[
+    (from=tonic, to=listener, type=fixed, weight=1),
+],
 )";
 
 #[test]
@@ -142,9 +147,11 @@ fn bistable_neurons_fire_tonically_through_runtime_wakeups() {
 /// One neuron connected to 20 others with random weights in [0, 1).
 fn random_weights_description() -> String {
     let targets: String = (1..=20)
-        .map(|i| format!("(nid=b{i}, LOC=(cst=ct, px1=10, px2=0, px3=0)),\n"))
+        .map(|i| format!("(name=b{i}, position=[10, 0, 0]),\n"))
         .collect();
-    format!("(NRN=[(nid=a, LOC=(cst=ct, px1=0, px2=0, px3=0)),\n{targets}], CON=[(prn=a, psn=b{{1:20:1}}, cnw=r0:1)])")
+    format!(
+        "(neurons=[(name=a, position=[0, 0, 0]),\n{targets}], connections=[(from=a, to=b{{1:20:1}}, weight=uniform(0, 1))])"
+    )
 }
 
 #[test]

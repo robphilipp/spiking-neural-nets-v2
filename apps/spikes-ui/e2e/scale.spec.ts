@@ -7,11 +7,11 @@ test("100k neurons at real time: the charts keep up", async ({ page, baseURL }) 
   test.setTimeout(180_000);
   const n = 100_000;
   const client = await WebSocketClient.connect(baseURL!);
-  const neurons = Array.from(
-    { length: n },
-    (_, i) => `(nid=n${i}, mst=10 mV, mpn=0 mV, LOC=(cst=ct, px1=${(i % 100) * 10}, px2=${(Math.floor(i / 100) % 100) * 10}, px3=${Math.floor(i / 10_000) * 10}))`,
-  ).join(",\n");
-  const { id } = await client.createSession("scale-100k", `(NRN=[${neurons}])`);
+  // A 100 × 100 × 10 grid, 10 µm apart.
+  const { id } = await client.createSession(
+    "scale-100k",
+    "(populations=[(name=n, threshold=10 mV, membrane_noise=0 mV, grid=(spacing=[10, 10, 10], shape=[100, 100, 10]))])",
+  );
   await client.build(id, { shards: 4 });
   const all = Array.from({ length: n }, (_, i) => i);
   await client.addInput(id, { type: "poisson", targets: all, rateHz: 5 * n, mv: 12, durationMs: null });

@@ -12,7 +12,7 @@ use spikes_api::protocol::{Notice, Outcome, Response, ServerMessage};
 use spikes_session::{Connection, Engine, Outgoing};
 
 fn ring() -> String {
-    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-data/v1/ring.boo")).unwrap()
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-data/networks/ring.boo")).unwrap()
 }
 
 struct Client {
@@ -153,7 +153,7 @@ fn a_session_through_the_protocol() {
 
     // Errors carry codes (and spans for parse errors).
     let Outcome::Error(e) =
-        c.call(json!({"type": "createSession", "name": "bad", "description": "(NRN=[(nid=a, mst=1 parsec)])"}))
+        c.call(json!({"type": "createSession", "name": "bad", "description": "(neurons=[(name=a, threshold=1 parsec, position=[0, 0, 0])])"}))
     else {
         panic!()
     };

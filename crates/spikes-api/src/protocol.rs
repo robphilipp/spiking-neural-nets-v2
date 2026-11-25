@@ -729,8 +729,8 @@ pub struct Neuron {
     pub index: u32,
     /// Name.
     pub name: String,
-    /// Group.
-    pub group: String,
+    /// Its population (empty for a neuron listed on its own).
+    pub population: String,
     /// Dynamics class.
     pub kind: String,
     /// Position in µm.

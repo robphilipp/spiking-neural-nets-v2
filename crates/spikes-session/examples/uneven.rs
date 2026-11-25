@@ -9,12 +9,17 @@ use tempo_runtime::SimDuration;
 
 fn main() {
     let shards: usize = std::env::args().nth(1).map_or(8, |s| s.parse().expect("shards"));
-    let neuron = "mst=10 mV, mpn=0 mV, mpd=20 ms, rfp=4 ms, spp=1 mV, csp=1 m/s";
-    let text = format!(
-        "(POP=[(nam=busy, cnt=40000, {neuron}, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=800, sx2=800, sx3=800)),
-               (nam=calm, cnt=40000, {neuron}, REG=(cst=bx, px1=2000, px2=0, px3=0, sx1=800, sx2=800, sx3=800), sed=2)],
-          RUL=[(prp=busy, psp=busy, cnt=200, cnw=0.1), (prp=calm, psp=calm, cnt=20, cnw=1)])"
-    );
+    let text = "(
+neuron_types=[(name=cell, threshold=10 mV, membrane_noise=0 mV, decay_time=20 ms, refractory_period=4 ms, conduction_speed=1 m/s)],
+populations=[
+    (name=busy, type=cell, count=40000, random=(box=(corner=[0, 0, 0], size=[800, 800, 800]))),
+    (name=calm, type=cell, count=40000, random=(box=(corner=[2000, 0, 0], size=[800, 800, 800])), seed=2),
+],
+connections=[
+    (from=busy, to=busy, pattern=fan_in, count=200, weight=0.1),
+    (from=calm, to=calm, pattern=fan_in, count=20, weight=1),
+],
+)";
     let engine = Engine::new();
     let session = engine.create("uneven", text).expect("parses");
     session

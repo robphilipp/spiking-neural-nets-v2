@@ -12,7 +12,7 @@ use tempo_runtime::{Emitted, RuntimeConfig, SimDuration, SimTime};
 const SEED: u64 = 7;
 
 fn source() -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-data/v1/stdp-test.boo");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-data/networks/stdp-test.boo");
     std::fs::read_to_string(path).unwrap()
 }
 

@@ -6,16 +6,22 @@ use spikes_session::{BuildSettings, Engine, InputSpec, NeuronSnapshot, RunSettin
 use tempo_runtime::{SimDuration, SimTime};
 
 const NET: &str = "(
-POP=[
-    (nam=exc, cnt=120, csp=1 m/s, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=300 µm, sx2=300 µm, sx3=300 µm)),
-    (nam=inh, cnt=30, inh=t, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=300 µm, sx2=300 µm, sx3=300 µm)),
+synapse_types=[
+    (name=stdp_hard, decay=(time=1500 ms), release=(), learning=stdp_hard),
+    (name=fixed, decay=(time=1500 ms), release=()),
 ],
-RUL=[
-    (prp=exc, psp=exc, cnt=15, cnw=r0.5:1.5, lrn=stdp_hard),
-    (prp=inh, psp=exc, prb=0.2, cnw=1),
-    (prp=exc, psp=inh, cnt=8, cnw=1),
+populations=[
+    (name=exc, conduction_speed=1 m/s, count=120, random=(box=(corner=[0, 0, 0], size=[300 µm, 300 µm, 300 µm]))),
+    (name=inh, inhibitory=true, count=30, random=(box=(corner=[0, 0, 0], size=[300 µm, 300 µm, 300 µm]))),
 ],
-LRN=[(fnc=stdp_hard, ina=0.01, inp=10 ms, exa=0.02, exp=10 ms)],
+connections=[
+    (from=exc, to=exc, pattern=fan_in, count=15, type=stdp_hard, weight=uniform(0.5, 1.5)),
+    (from=inh, to=exc, pattern=random, probability=0.2, type=fixed, weight=1),
+    (from=exc, to=inh, pattern=fan_in, count=8, type=fixed, weight=1),
+],
+learning_rules=[
+    (name=stdp_hard, rule=stdp_hard, depression=0.01, depression_time=10 ms, potentiation=0.02, potentiation_time=10 ms),
+],
 )";
 
 fn ms(v: u64) -> SimDuration {
@@ -80,7 +86,9 @@ fn a_saved_run_continues_exactly_in_another_session_on_other_shards() {
     );
 
     for shards in [1, 3] {
-        let restored = engine.create("restored", "(NRN=[])").unwrap();
+        let restored = engine
+            .create("restored", "(neurons=[(name=placeholder, position=[0, 0, 0])])")
+            .unwrap();
         let network = restored.load_saved(&saved, shards).unwrap();
         assert_eq!(
             network.synapse_count, synapses,
@@ -155,7 +163,9 @@ fn a_paused_run_is_saved_where_it_waits_and_keeps_running_after() {
     assert_eq!(session.state(), spikes_session::State::Paused, "still paused");
     session.stop().unwrap();
 
-    let restored = engine.create("restored", "(NRN=[])").unwrap();
+    let restored = engine
+        .create("restored", "(neurons=[(name=placeholder, position=[0, 0, 0])])")
+        .unwrap();
     restored.load_saved(&saved, 3).unwrap();
     let at = restored.sim_time();
     assert!(

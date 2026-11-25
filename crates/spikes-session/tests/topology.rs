@@ -7,11 +7,13 @@ use tempo_runtime::SimDuration;
 
 /// Two unconnected neurons 1 mm apart, no noise; `b` fires on 10 mV through a weight-10 synapse (spp = 1 mV).
 const PAIR: &str = "(
-NRN=[
-    (nid=a, mst=5 mV, mpn=0 mV, csp=10 m/s, LOC=(cst=ct, px1=0, px2=0, px3=0)),
-    (nid=b, mst=5 mV, mpn=0 mV, csp=10 m/s, rfp=1 ms, LOC=(cst=ct, px1=1000, px2=0, px3=0)),
+neurons=[
+    (name=a, threshold=5 mV, membrane_noise=0 mV, conduction_speed=10 m/s, position=[0, 0, 0]),
+    (name=b, threshold=5 mV, membrane_noise=0 mV, conduction_speed=10 m/s, refractory_period=1 ms, position=[1000, 0, 0]),
 ],
-LRN=[(fnc=stdp_hard, nam=fast, ina=0.01, inp=10 ms, exa=0.02, exp=10 ms)],
+learning_rules=[
+    (name=fast, rule=stdp_hard, depression=0.01, depression_time=10 ms, potentiation=0.02, potentiation_time=10 ms),
+],
 )";
 
 fn ms(v: f64) -> SimDuration {

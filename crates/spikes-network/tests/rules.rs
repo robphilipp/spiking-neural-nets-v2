@@ -6,14 +6,17 @@ use spikes_network::{BuildOptions, Network, NeuronActor, Runtime, build};
 use tempo_runtime::{ActorId, NodePlacement, RuntimeConfig};
 
 const NET: &str = "(
-POP=[
-    (nam=exc, cnt=400, csp=1 m/s, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=400 µm, sx2=400 µm, sx3=400 µm)),
-    (nam=inh, cnt=100, inh=t, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=400 µm, sx2=400 µm, sx3=400 µm)),
+synapse_types=[
+    (name=fixed, decay=(time=1500 ms), release=()),
 ],
-RUL=[
-    (prp=exc, psp=exc, cnt=30, cnw=r0.5:1.5),
-    (prp=inh, psp=exc, prb=0.2, cnw=1),
-    (prp=exc, psp=inh, cnt=10, rad=120 µm, cnw=1),
+populations=[
+    (name=exc, conduction_speed=1 m/s, count=400, random=(box=(corner=[0, 0, 0], size=[400 µm, 400 µm, 400 µm]))),
+    (name=inh, inhibitory=true, count=100, random=(box=(corner=[0, 0, 0], size=[400 µm, 400 µm, 400 µm]))),
+],
+connections=[
+    (from=exc, to=exc, pattern=fan_in, count=30, type=fixed, weight=uniform(0.5, 1.5)),
+    (from=inh, to=exc, pattern=random, probability=0.2, type=fixed, weight=1),
+    (from=exc, to=inh, pattern=fan_in, count=10, within=120 µm, type=fixed, weight=1),
 ],
 )";
 

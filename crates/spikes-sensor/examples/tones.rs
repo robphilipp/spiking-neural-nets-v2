@@ -21,12 +21,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let neurons: Vec<String> = (0..CHANNELS)
         .map(|i| {
             format!(
-                "(nid=cochlea-{i}, mst=1 mV, mpn=0 mV, LOC=(cst=ct, px1={}, px2=0, px3=0))",
+                "(name=cochlea-{i}, threshold=1 mV, membrane_noise=0 mV, position=[{}, 0, 0])",
                 i * 10
             )
         })
         .collect();
-    let description = format!("(NRN=[{}])", neurons.join(", "));
+    let description = format!("(neurons=[{}])", neurons.join(", "));
     let mut client = SensorClient::connect(server, None)?;
     let Response::Session { session } = client.request(Request::CreateSession {
         name: "tones".into(),

@@ -115,15 +115,18 @@ fn main() {
     );
 
     let t = Instant::now();
-    // Populations and a rule: nothing is listed connection by connection.
+    // Populations and a connection pattern: nothing is listed connection by connection.
     let side = 1000.0 * (n as f64 / 100_000.0).cbrt(); // constant density
     let (exc, inh) = (n - n / 5, n / 5);
     let w = 20.0 / k as f64; // keeps the total input per neuron about constant
-    let neuron = "mst=10 mV, mpn=0 mV, mpd=20 ms, rfp=4 ms, spp=1 mV, csp=1 m/s";
-    let region = format!("REG=(cst=bx, px1=0, px2=0, px3=0, sx1={side}, sx2={side}, sx3={side})");
+    let place = format!("random=(box=(corner=[0, 0, 0], size=[{side}, {side}, {side}]))");
     let text = format!(
-        "(POP=[(nam=exc, cnt={exc}, {neuron}, {region}), (nam=inh, cnt={inh}, inh=t, {neuron}, {region}, sed=2)],\n \
-         RUL=[(prp=default, psp=default, cnt={k}, cnw={w})])"
+        "(neuron_types=[(name=cell, threshold=10 mV, membrane_noise=0 mV, decay_time=20 ms, refractory_period=4 ms, \
+         conduction_speed=1 m/s)],\n \
+         populations=[(name=exc, type=cell, count={exc}, {place}), \
+         (name=inh, type=cell, inhibitory=true, count={inh}, {place}, seed=2)],\n \
+         sets=[(name=all, members=[exc, inh])],\n \
+         connections=[(from=all, to=all, pattern=fan_in, count={k}, weight={w})])"
     );
     let d = spikes_dna::parse(&text).expect("description parses");
     stage("description generated", t);

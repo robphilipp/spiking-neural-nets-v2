@@ -1,5 +1,5 @@
-//! From the syntax tree to a [`NetworkDescription`]: keys, units, defaults, expansion and reference checks.
-//! Every problem found is reported, not just the first.
+//! From the syntax tree to a [`NetworkDescription`]: keys, units, defaults, types and overrides, placements, and
+//! reference checks. Every problem found is reported, not just the first.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -10,8 +10,8 @@ use spikes_model::{
 
 use crate::Neurons;
 use crate::description::{
-    ConnectionDescription, ConnectionRule, GroupDescription, InDegree, ModulatorDescription, NetworkDescription,
-    NeuronDescription, PopulationDescription, Region, SynapseDefaults, WeightSpec,
+    ConnectionDescription, DEFAULT_RELEASE, ModulatorDescription, NetworkDescription, NeuronDescription, Pattern,
+    PopulationDescription, SetDescription, SynapseSpec, WeightSpec,
 };
 use crate::schema;
 use crate::syntax::{Field, Node, ParseError, Span, Value};
@@ -30,9 +30,10 @@ impl Errors {
     }
 }
 
-/// A record (`(k=v, …)`) being read.
+/// A record (`(k=v, …)`) being read: its own fields, or a type's merged with an instance's.
+#[derive(Clone)]
 struct Rec<'a> {
-    fields: &'a [Field],
+    fields: Vec<&'a Field>,
     span: Span,
     /// What it is, for messages: "neuron", "connection", …
     what: &'static str,
@@ -42,7 +43,7 @@ impl<'a> Rec<'a> {
     fn of(node: &'a Node, what: &'static str, errors: &mut Errors) -> Option<Self> {
         match &node.value {
             Value::Record(fields) => Some(Self {
-                fields,
+                fields: fields.iter().collect(),
                 span: node.span,
                 what,
             }),
@@ -53,10 +54,18 @@ impl<'a> Rec<'a> {
         }
     }
 
+    fn empty(&self) -> Rec<'a> {
+        Rec {
+            fields: Vec::new(),
+            span: self.span,
+            what: self.what,
+        }
+    }
+
     /// Reports keys that aren't allowed here, and keys given twice.
     fn check_keys(&self, allowed: &[&str], errors: &mut Errors) {
         let mut seen = HashSet::new();
-        for field in self.fields {
+        for field in &self.fields {
             if !allowed.contains(&field.key.as_str()) {
                 errors.add(
                     field.span,
@@ -73,8 +82,34 @@ impl<'a> Rec<'a> {
         }
     }
 
+    /// This record's fields over `base`'s: a key given here replaces the base's (a nested record whole). Keys in
+    /// `own_only` (the record's own, like `name`) aren't settings: they're neither taken from `base` nor kept.
+    fn over(&self, base: &Rec<'a>, own_only: &[&str]) -> Rec<'a> {
+        let mut fields: Vec<&'a Field> = base
+            .fields
+            .iter()
+            .copied()
+            .filter(|f| !own_only.contains(&f.key.as_str()) && !self.fields.iter().any(|g| g.key == f.key))
+            .collect();
+        fields.extend(
+            self.fields
+                .iter()
+                .copied()
+                .filter(|f| !own_only.contains(&f.key.as_str())),
+        );
+        Rec {
+            fields,
+            span: self.span,
+            what: self.what,
+        }
+    }
+
     fn get(&self, key: &str) -> Option<&'a Node> {
         self.fields.iter().find(|f| f.key == key).map(|f| &f.value)
+    }
+
+    fn span_of(&self, key: &str) -> Span {
+        self.get(key).map_or(self.span, |n| n.span)
     }
 
     fn missing(&self, key: &str, errors: &mut Errors) {
@@ -89,33 +124,12 @@ impl<'a> Rec<'a> {
             }
             return default.unwrap_or(0.0);
         };
-        match &node.value {
-            Value::Number { value, unit: None } => *value,
-            Value::Number {
-                value,
-                unit: Some(unit),
-            } => match quantity.factor(unit) {
-                Some(factor) if quantity != Quantity::Dimensionless => value * factor,
-                _ => {
-                    errors.add(
-                        node.span,
-                        if quantity == Quantity::Dimensionless {
-                            format!("'{key}' takes a plain number, without a unit (got '{unit}')")
-                        } else {
-                            format!(
-                                "'{unit}' is not a unit for '{key}' (base unit {})",
-                                quantity.base_unit()
-                            )
-                        },
-                    );
-                    0.0
-                }
-            },
-            _ => {
-                errors.add(node.span, format!("'{key}' must be a number"));
-                0.0
-            }
-        }
+        number(node, key, quantity, errors)
+    }
+
+    /// A number if the key is there.
+    fn optional(&self, key: &str, quantity: Quantity, errors: &mut Errors) -> Option<f64> {
+        self.get(key).map(|node| number(node, key, quantity, errors))
     }
 
     /// A single word; `default` if absent. Checked against `allowed` when it isn't empty.
@@ -144,37 +158,23 @@ impl<'a> Rec<'a> {
         }
     }
 
-    fn boolean(&self, key: &str, default: bool, errors: &mut Errors) -> bool {
-        match self
-            .word(key, Some(if default { "t" } else { "f" }), &[], errors)
-            .as_str()
-        {
-            "t" | "true" => true,
-            "f" | "false" => false,
-            other => {
-                errors.add(
-                    self.get(key).map_or(self.span, |n| n.span),
-                    format!("'{key}' must be t or f, got '{other}'"),
-                );
-                default
-            }
-        }
+    fn optional_word(&self, key: &str, allowed: &[&str], errors: &mut Errors) -> Option<String> {
+        self.get(key).map(|_| self.word(key, None, allowed, errors))
     }
 
-    /// The names an id expression expands to.
-    fn ids(&self, key: &str, errors: &mut Errors) -> Vec<String> {
-        match self.get(key).map(|n| (&n.value, n.span)) {
-            Some((Value::Ids(ids), _)) => ids.clone(),
-            Some((_, span)) => {
+    fn boolean(&self, key: &str, default: bool, errors: &mut Errors) -> bool {
+        if self.get(key).is_none() {
+            return default;
+        }
+        match self.word(key, None, &[], errors).as_str() {
+            "true" => true,
+            "false" => false,
+            other => {
                 errors.add(
-                    span,
-                    format!("'{key}' must be a neuron ID or an ID set such as in-{{1:4:1}}"),
+                    self.span_of(key),
+                    format!("'{key}' must be true or false, got '{other}'"),
                 );
-                Vec::new()
-            }
-            None => {
-                self.missing(key, errors);
-                Vec::new()
+                default
             }
         }
     }
@@ -183,11 +183,41 @@ impl<'a> Rec<'a> {
         let node = self.get(key)?;
         match &node.value {
             Value::Number { value, unit: None } => Some(WeightSpec::Fixed(*value)),
-            Value::Random { low, high } => Some(WeightSpec::Random { low: *low, high: *high }),
+            Value::Call { name, args } if name == "uniform" || name == "normal" => {
+                let numbers: Vec<f64> = args
+                    .iter()
+                    .map(|a| number(a, key, Quantity::Dimensionless, errors))
+                    .collect();
+                let [a, b] = numbers[..] else {
+                    errors.add(node.span, format!("{name}(…) takes two numbers"));
+                    return None;
+                };
+                if name == "uniform" {
+                    if a > b {
+                        errors.add(
+                            node.span,
+                            format!("uniform({a}, {b}): the low end is above the high end"),
+                        );
+                    }
+                    Some(WeightSpec::Uniform { low: a, high: b })
+                } else {
+                    if b < 0.0 {
+                        errors.add(node.span, "normal(mean, sd): the standard deviation can't be negative");
+                    }
+                    Some(WeightSpec::Normal { mean: a, sd: b })
+                }
+            }
+            Value::Random { low, high } => {
+                errors.add(
+                    node.span,
+                    format!("write uniform({low}, {high}) instead of r{low}:{high}"),
+                );
+                None
+            }
             _ => {
                 errors.add(
                     node.span,
-                    format!("'{key}' must be a number or a random range such as r0:1"),
+                    format!("'{key}' must be a number, uniform(low, high) or normal(mean, sd)"),
                 );
                 None
             }
@@ -197,9 +227,100 @@ impl<'a> Rec<'a> {
     fn record(&self, key: &str, what: &'static str, errors: &mut Errors) -> Option<Rec<'a>> {
         self.get(key).and_then(|node| Rec::of(node, what, errors))
     }
+
+    /// A point (µm, cartesian).
+    fn point(&self, key: &str, errors: &mut Errors) -> Option<[f64; 3]> {
+        self.get(key).map(|node| point(node, errors))
+    }
+
+    /// Three plain numbers `[a, b, c]` (counts, or sizes in µm).
+    fn triple(&self, key: &str, quantity: Quantity, errors: &mut Errors) -> Option<[f64; 3]> {
+        let node = self.get(key)?;
+        match &node.value {
+            Value::List(items) if items.len() == 3 => {
+                Some(std::array::from_fn(|i| number(&items[i], key, quantity, errors)))
+            }
+            _ => {
+                errors.add(node.span, format!("'{key}' must be three numbers: [a, b, c]"));
+                None
+            }
+        }
+    }
 }
 
-/// The items of a top-level list such as `NRN=[…]`.
+fn number(node: &Node, key: &str, quantity: Quantity, errors: &mut Errors) -> f64 {
+    match &node.value {
+        Value::Number { value, unit: None } => *value,
+        Value::Number {
+            value,
+            unit: Some(unit),
+        } => match quantity.factor(unit) {
+            Some(factor) if quantity != Quantity::Dimensionless => value * factor,
+            _ => {
+                errors.add(
+                    node.span,
+                    if quantity == Quantity::Dimensionless {
+                        format!("'{key}' takes a plain number, without a unit (got '{unit}')")
+                    } else {
+                        format!(
+                            "'{unit}' is not a unit for '{key}' (base unit {})",
+                            quantity.base_unit()
+                        )
+                    },
+                );
+                0.0
+            }
+        },
+        _ => {
+            errors.add(node.span, format!("'{key}' must be a number"));
+            0.0
+        }
+    }
+}
+
+/// A point: `[x, y, z]`, `(x=…, y=…, z=…)`, `(r=…, phi=…, z=…)` (cylindrical) or `(r=…, theta=…, phi=…)`
+/// (spherical: polar angle θ from +z, azimuth φ), in µm, cartesian.
+fn point(node: &Node, errors: &mut Errors) -> [f64; 3] {
+    match &node.value {
+        Value::List(items) if items.len() == 3 => {
+            std::array::from_fn(|i| number(&items[i], "point", Quantity::Length, errors))
+        }
+        Value::Record(fields) => {
+            let rec = Rec {
+                fields: fields.iter().collect(),
+                span: node.span,
+                what: "point",
+            };
+            let length = |k, errors: &mut Errors| rec.quantity(k, Quantity::Length, None, errors);
+            let angle = |k, errors: &mut Errors| rec.quantity(k, Quantity::Angle, None, errors);
+            if rec.get("theta").is_some() {
+                rec.check_keys(&["r", "theta", "phi"], errors);
+                let (r, theta, phi) = (length("r", errors), angle("theta", errors), angle("phi", errors));
+                [
+                    r * phi.cos() * theta.sin(),
+                    r * phi.sin() * theta.sin(),
+                    r * theta.cos(),
+                ]
+            } else if rec.get("r").is_some() {
+                rec.check_keys(&["r", "phi", "z"], errors);
+                let (r, phi, z) = (length("r", errors), angle("phi", errors), length("z", errors));
+                [r * phi.cos(), r * phi.sin(), z]
+            } else {
+                rec.check_keys(&["x", "y", "z"], errors);
+                [length("x", errors), length("y", errors), length("z", errors)]
+            }
+        }
+        _ => {
+            errors.add(
+                node.span,
+                "a point is [x, y, z], (r=…, phi=…, z=…) or (r=…, theta=…, phi=…)",
+            );
+            [0.0; 3]
+        }
+    }
+}
+
+/// The items of a top-level list such as `neurons=[…]`.
 fn list<'a>(top: &Rec<'a>, key: &str, errors: &mut Errors) -> &'a [Node] {
     match top.get(key).map(|n| (&n.value, n.span)) {
         Some((Value::List(items), _)) => items,
@@ -211,299 +332,687 @@ fn list<'a>(top: &Rec<'a>, key: &str, errors: &mut Errors) -> &'a [Node] {
     }
 }
 
+/// Types (neuron or synapse) by name, with `extends` chains merged: each type's own fields over its base's.
+fn types<'a>(
+    nodes: &'a [Node],
+    record: &'static str,
+    what: &'static str,
+    errors: &mut Errors,
+) -> HashMap<String, Rec<'a>> {
+    let mut raw: Vec<(String, Rec<'a>)> = Vec::new();
+    for node in nodes {
+        let Some(rec) = Rec::of(node, what, errors) else {
+            continue;
+        };
+        rec.check_keys(&schema::keys(record, None), errors);
+        let name = rec.word("name", None, &[], errors);
+        if raw.iter().any(|(n, _)| *n == name) {
+            errors.add(rec.span, format!("{what} '{name}' is defined twice"));
+            continue;
+        }
+        raw.push((name, rec));
+    }
+    let mut resolved: HashMap<String, Rec<'a>> = HashMap::new();
+    for (name, own) in &raw {
+        let mut chain: Vec<&Rec<'a>> = Vec::new();
+        let mut at = name.clone();
+        while let Some((_, rec)) = raw.iter().find(|(n, _)| *n == at) {
+            if chain.iter().any(|r| std::ptr::eq(*r, rec)) {
+                errors.add(own.span, format!("{what} '{name}' extends itself (through '{at}')"));
+                break;
+            }
+            chain.push(rec);
+            if rec.get("extends").is_none() {
+                break;
+            }
+            let base = rec.word("extends", None, &[], errors);
+            if !raw.iter().any(|(n, _)| *n == base) {
+                errors.add(rec.span_of("extends"), format!("{what} '{base}' isn't defined"));
+                break;
+            }
+            at = base;
+        }
+        // From the root down: each type's fields over its base's.
+        let mut merged = own.empty();
+        for rec in chain.iter().rev() {
+            merged = rec.over(&merged, &["name", "extends"]);
+        }
+        merged.span = own.span;
+        resolved.insert(name.clone(), merged);
+    }
+    resolved
+}
+
+/// A record's settings over those of the type it names (`type=`).
+fn with_type<'a>(
+    rec: &Rec<'a>,
+    types: &HashMap<String, Rec<'a>>,
+    what: &str,
+    own_only: &[&str],
+    errors: &mut Errors,
+) -> Rec<'a> {
+    let Some(name) = rec.optional_word("type", &[], errors) else {
+        return rec.over(&rec.empty(), own_only);
+    };
+    match types.get(&name) {
+        Some(base) => rec.over(base, own_only),
+        None => {
+            errors.add(rec.span_of("type"), format!("{what} '{name}' isn't defined"));
+            rec.over(&rec.empty(), own_only)
+        }
+    }
+}
+
+const NEURON_OWN: &[&str] = &["name", "type", "position", "node"];
+const POPULATION_OWN: &[&str] = &[
+    "name",
+    "type",
+    "count",
+    "positions",
+    "random",
+    "grid",
+    "line",
+    "ring",
+    "seed",
+    "node",
+];
+const CONNECTION_OWN: &[&str] = &[
+    "from",
+    "to",
+    "pattern",
+    "count",
+    "probability",
+    "within",
+    "self",
+    "type",
+];
+
 pub(crate) fn convert(root: &Node) -> Result<NetworkDescription, Vec<ParseError>> {
     let mut errors = Errors::default();
     let Some(top) = Rec::of(root, "network description", &mut errors) else {
         return Err(errors.0);
     };
     top.check_keys(&schema::keys("network", None), &mut errors);
-    if top.get("NRN").is_none() && top.get("POP").is_none() {
+    if top.get("neurons").is_none() && top.get("populations").is_none() {
         errors.add(
             top.span,
-            "a network needs neurons: 'NRN' (one by one) or 'POP' (populations)",
+            "a network needs neurons: 'neurons' (one by one) or 'populations'",
         );
     }
 
-    let groups: Vec<GroupDescription> = list(&top, "GRP", &mut errors)
-        .iter()
-        .filter_map(|node| group(node, &mut errors))
-        .collect();
-    let learning = named(
-        list(&top, "LRN", &mut errors),
-        "learning function",
-        learning_rule,
-        &mut errors,
-    );
-    let stickiness = named(
-        list(&top, "CST", &mut errors),
-        "stickiness function",
-        stickiness_fn,
-        &mut errors,
-    );
-    let modulators: Vec<ModulatorDescription> = list(&top, "MOD", &mut errors)
+    // Nodes.
+    let mut nodes: Vec<String> = Vec::new();
+    for node in list(&top, "nodes", &mut errors) {
+        let Some(rec) = Rec::of(node, "node", &mut errors) else {
+            continue;
+        };
+        rec.check_keys(&schema::keys("node", None), &mut errors);
+        let name = rec.word("name", None, &[], &mut errors);
+        if name == "main" || nodes.contains(&name) {
+            errors.add(
+                rec.span,
+                format!("node '{name}' is defined twice ('main' is the engine itself)"),
+            );
+        }
+        nodes.push(name);
+    }
+    let node_of = |rec: &Rec<'_>, errors: &mut Errors| -> Option<String> {
+        let name = rec.optional_word("node", &[], errors)?;
+        if name != "main" && !nodes.contains(&name) {
+            errors.add(rec.span_of("node"), format!("node '{name}' isn't defined in 'nodes'"));
+        }
+        Some(name)
+    };
+
+    // Learning rules, stickiness, modulators.
+    let mut learning: BTreeMap<String, LearningRule> = BTreeMap::from([("flat".to_string(), LearningRule::None)]);
+    for node in list(&top, "learning_rules", &mut errors) {
+        if let Some((name, rule, span)) = learning_rule(node, &mut errors)
+            && learning.insert(name.clone(), rule).is_some()
+        {
+            errors.add(span, format!("learning rule '{name}' is defined twice"));
+        }
+    }
+    let mut stickiness: BTreeMap<String, Stickiness> = BTreeMap::from([("none".to_string(), Stickiness::None)]);
+    for node in list(&top, "stickiness", &mut errors) {
+        let Some(rec) = Rec::of(node, "stickiness function", &mut errors) else {
+            continue;
+        };
+        rec.check_keys(&schema::keys("stickiness", None), &mut errors);
+        let name = rec.word("name", None, &[], &mut errors);
+        let tau_ms = rec.quantity("time", Quantity::Time, None, &mut errors);
+        if stickiness
+            .insert(name.clone(), Stickiness::Sigmoid { tau_ms })
+            .is_some()
+        {
+            errors.add(rec.span, format!("stickiness function '{name}' is defined twice"));
+        }
+    }
+    let modulators: Vec<ModulatorDescription> = list(&top, "modulators", &mut errors)
         .iter()
         .filter_map(|node| modulator(node, &mut errors))
         .collect();
     let mut modulator_index = HashMap::new();
     for (i, m) in modulators.iter().enumerate() {
         if modulator_index.insert(m.name.clone(), i as u16).is_some() {
-            errors.add(root.span, format!("modulator '{}' is defined twice in MOD", m.name));
+            errors.add(top.span, format!("modulator '{}' is defined twice", m.name));
         }
     }
-    let listed: Vec<NeuronDescription> = list(&top, "NRN", &mut errors)
-        .iter()
-        .filter_map(|node| neuron(node, &modulator_index, &mut errors))
-        .collect();
-    let mut neurons: Neurons = listed.iter().cloned().collect();
+
+    // Neurons: types, then listed neurons, then populations.
+    let neuron_types = types(
+        list(&top, "neuron_types", &mut errors),
+        "neuronType",
+        "neuron type",
+        &mut errors,
+    );
+    let mut neurons = Neurons::new();
+    let mut taken: HashMap<String, Span> = HashMap::new();
+    for node in list(&top, "neurons", &mut errors) {
+        let Some(rec) = Rec::of(node, "neuron", &mut errors) else {
+            continue;
+        };
+        rec.check_keys(&schema::keys("neuron", None), &mut errors);
+        let name = rec.word("name", None, &[], &mut errors);
+        if let Some(first) = taken.insert(name.clone(), rec.span) {
+            errors.add(rec.span, format!("neuron '{name}' is already defined at {first}"));
+        }
+        let settings = with_type(&rec, &neuron_types, "neuron type", NEURON_OWN, &mut errors);
+        let location = rec.point("position", &mut errors).unwrap_or_else(|| {
+            rec.missing("position", &mut errors);
+            [0.0; 3]
+        });
+        let node_name = node_of(&rec, &mut errors);
+        if let Some(mut n) = neuron_settings(&settings, &modulator_index, &mut errors) {
+            n.id = name;
+            n.location_um = location;
+            n.node = node_name;
+            n.span = rec.span;
+            neurons.push(n);
+        }
+    }
     let mut populations: Vec<PopulationDescription> = Vec::new();
-    for node in list(&top, "POP", &mut errors) {
-        if let Some(p) = population(node, &modulator_index, &mut neurons, &mut errors) {
-            if populations.iter().any(|q| q.name == p.name) {
-                errors.add(p.span, format!("population '{}' is defined twice", p.name));
-            }
-            populations.push(p);
+    for node in list(&top, "populations", &mut errors) {
+        let Some(rec) = Rec::of(node, "population", &mut errors) else {
+            continue;
+        };
+        rec.check_keys(&schema::keys("population", None), &mut errors);
+        let name = rec.word("name", None, &[], &mut errors);
+        if populations.iter().any(|p| p.name == name) || taken.contains_key(&name) {
+            errors.add(
+                rec.span,
+                format!("'{name}' is already the name of a population or neuron"),
+            );
         }
+        let settings = with_type(&rec, &neuron_types, "neuron type", POPULATION_OWN, &mut errors);
+        let node_name = node_of(&rec, &mut errors);
+        let Some(mut template) = neuron_settings(&settings, &modulator_index, &mut errors) else {
+            continue;
+        };
+        template.node = node_name.clone();
+        template.span = rec.span;
+        let (locations, own_names) = placement(&rec, &name, &mut errors);
+        if let Some(own_names) = &own_names {
+            for n in own_names {
+                if let Some(first) = taken.insert(n.clone(), rec.span) {
+                    errors.add(rec.span, format!("neuron '{n}' is already defined at {first}"));
+                }
+            }
+        }
+        let first = neurons.len() as u32;
+        let count = locations.len() as u32;
+        neurons.push_population(name.clone(), template, locations, own_names);
+        populations.push(PopulationDescription {
+            name,
+            first,
+            count,
+            node: node_name,
+            span: rec.span,
+        });
     }
-    // Population neurons are named `<population>-<i>`: a listed neuron can't have one of those names.
-    for n in &listed {
-        if let Some((p, k)) = n.id.rsplit_once('-')
+    let names = neurons.names();
+    // A neuron named one by one can't have the name of a population's neuron (`<population>-<i>`).
+    for (n, &span) in &taken {
+        if let Some((p, k)) = n.rsplit_once('-')
             && let Some(pop) = populations.iter().find(|q| q.name == p)
             && k.parse::<u32>().is_ok_and(|k| k < pop.count)
+            && names
+                .index(n)
+                .is_some_and(|i| !(pop.first..pop.first + pop.count).contains(&i))
         {
             errors.add(
-                n.span,
-                format!("neuron '{}' has the name of a neuron of population '{p}'", n.id),
+                span,
+                format!("neuron '{n}' has the name of a neuron of population '{p}'"),
             );
         }
     }
-    let templates: Vec<&NeuronDescription> = neurons
-        .iter()
-        .filter(|n| n.population().is_some())
-        .map(|n| n.template())
-        .fold(Vec::new(), |mut all, t| {
-            if !all.iter().any(|&u: &&NeuronDescription| std::ptr::eq(u, t)) {
-                all.push(t);
-            }
-            all
+
+    // Sets, in order (a set may use earlier ones).
+    let mut sets: Vec<SetDescription> = Vec::new();
+    for node in list(&top, "sets", &mut errors) {
+        let Some(rec) = Rec::of(node, "set", &mut errors) else {
+            continue;
+        };
+        rec.check_keys(&schema::keys("set", None), &mut errors);
+        let name = rec.word("name", None, &[], &mut errors);
+        if sets.iter().any(|s| s.name == name)
+            || populations.iter().any(|p| p.name == name)
+            || names.index(&name).is_some()
+        {
+            errors.add(
+                rec.span,
+                format!("'{name}' is already the name of a set, population or neuron"),
+            );
+        }
+        let mut members = resolve(&rec, "members", &names, &populations, &sets, &mut errors);
+        members.sort_unstable();
+        members.dedup();
+        sets.push(SetDescription {
+            name,
+            members,
+            node: node_of(&rec, &mut errors),
+            span: rec.span,
         });
-
-    let mut learning_map: BTreeMap<String, LearningRule> = BTreeMap::from([("flat".to_string(), LearningRule::None)]);
-    learning_map.extend(learning);
-    let mut stickiness_map = BTreeMap::from([("none".to_string(), Stickiness::None)]);
-    stickiness_map.extend(stickiness);
-
-    // References: groups, duplicate neurons.
-    let group_ids: HashSet<&str> = groups.iter().map(|g| g.id.as_str()).collect();
-    let mut seen = HashMap::new();
-    for n in &listed {
-        if let Some(first) = seen.insert(n.id.as_str(), n.span) {
-            errors.add(n.span, format!("neuron '{}' is already defined at {first}", n.id));
-        }
-        if !groups.is_empty() && !group_ids.contains(n.group.as_str()) {
-            errors.add(
-                n.span,
-                format!(
-                    "neuron '{}' is in group '{}', which isn't defined in GRP",
-                    n.id, n.group
-                ),
-            );
-        }
     }
-    for n in &templates {
-        if !groups.is_empty() && !group_ids.contains(n.group.as_str()) {
-            errors.add(
-                n.span,
-                format!(
-                    "neuron '{}' is in group '{}', which isn't defined in GRP",
-                    n.id, n.group
-                ),
-            );
-        }
-    }
-    let inhibitory: HashMap<&str, bool> = listed.iter().map(|n| (n.id.as_str(), n.inhibitory)).collect();
-    let mut sets: HashSet<&str> = populations.iter().map(|p| p.name.as_str()).collect();
-    sets.extend(listed.iter().chain(templates.iter().copied()).map(|n| n.group.as_str()));
-    sets.extend(groups.iter().map(|g| g.id.as_str()));
-    let rules: Vec<ConnectionRule> = list(&top, "RUL", &mut errors)
-        .iter()
-        .filter_map(|node| rule(node, &sets, &learning_map, &stickiness_map, &mut errors))
-        .collect();
 
+    // Connections.
+    let synapse_types = types(
+        list(&top, "synapse_types", &mut errors),
+        "synapseType",
+        "synapse type",
+        &mut errors,
+    );
     let mut connections = Vec::new();
-    for node in list(&top, "CON", &mut errors) {
-        connection(
-            node,
-            &inhibitory,
-            &learning_map,
-            &stickiness_map,
-            &mut connections,
-            &mut errors,
-        );
+    for node in list(&top, "connections", &mut errors) {
+        let Some(rec) = Rec::of(node, "connection", &mut errors) else {
+            continue;
+        };
+        rec.check_keys(&schema::keys("connection", None), &mut errors);
+        let from = resolve(&rec, "from", &names, &populations, &sets, &mut errors);
+        let to = resolve(&rec, "to", &names, &populations, &sets, &mut errors);
+        let pattern = match rec
+            .word("pattern", Some("all_to_all"), schema::PATTERNS, &mut errors)
+            .as_str()
+        {
+            "one_to_one" => {
+                if from.len() != to.len() {
+                    errors.add(
+                        rec.span,
+                        format!(
+                            "one_to_one needs as many senders as receivers ({} and {})",
+                            from.len(),
+                            to.len()
+                        ),
+                    );
+                }
+                Pattern::OneToOne
+            }
+            "fan_in" => {
+                let count = rec.quantity("count", Quantity::Dimensionless, None, &mut errors);
+                if !(count >= 0.0 && count.fract() == 0.0 && count <= f64::from(u32::MAX)) {
+                    errors.add(rec.span_of("count"), "'count' must be a whole number");
+                }
+                Pattern::FanIn(count as u32)
+            }
+            "random" => {
+                let p = rec.quantity("probability", Quantity::Dimensionless, None, &mut errors);
+                if !(0.0..=1.0).contains(&p) {
+                    errors.add(rec.span_of("probability"), "'probability' must be from 0 to 1");
+                }
+                Pattern::Random(p)
+            }
+            _ => Pattern::AllToAll,
+        };
+        for (key, applies) in [
+            ("count", matches!(pattern, Pattern::FanIn(_))),
+            ("probability", matches!(pattern, Pattern::Random(_))),
+        ] {
+            if !applies && rec.get(key).is_some() {
+                errors.add(rec.span_of(key), format!("'{key}' doesn't apply to this pattern"));
+            }
+        }
+        let within_um = rec.optional("within", Quantity::Length, &mut errors);
+        let autapses = rec.boolean("self", false, &mut errors);
+        let settings = with_type(&rec, &synapse_types, "synapse type", CONNECTION_OWN, &mut errors);
+        let Some(synapse) = synapse_spec(&settings, &learning, &stickiness, &mut errors) else {
+            continue;
+        };
+        connections.push(ConnectionDescription {
+            from,
+            to,
+            pattern,
+            within_um,
+            autapses,
+            synapse,
+            span: rec.span,
+        });
     }
-
-    // Without a GRP section, every neuron runs locally in the groups it names.
-    let groups = if groups.is_empty() {
-        let mut names: Vec<&str> = listed
-            .iter()
-            .chain(templates.iter().copied())
-            .map(|n| n.group.as_str())
-            .collect();
-        names.sort_unstable();
-        names.dedup();
-        names
-            .into_iter()
-            .map(|id| GroupDescription {
-                id: id.to_string(),
-                remote: None,
-            })
-            .collect()
-    } else {
-        groups
-    };
 
     if errors.0.is_empty() {
         Ok(NetworkDescription {
-            groups,
+            nodes,
             neurons,
             populations,
+            sets,
             connections,
-            rules,
-            learning: learning_map,
-            stickiness: stickiness_map,
+            learning,
+            stickiness,
             modulators,
         })
     } else {
         errors.0.sort_by_key(|e| e.span);
+        errors.0.dedup();
         Err(errors.0)
     }
 }
 
-/// Converts a list of named definitions, reporting duplicate names.
-fn named<T>(
-    nodes: &[Node],
-    what: &'static str,
-    one: fn(&Rec<'_>, &mut Errors) -> Option<(String, T)>,
+/// The neurons a `from`, `to` or `members` names: populations, sets, neuron names, id ranges, or a list of them.
+fn resolve(
+    rec: &Rec<'_>,
+    key: &str,
+    names: &crate::NeuronNames,
+    populations: &[PopulationDescription],
+    sets: &[SetDescription],
     errors: &mut Errors,
-) -> Vec<(String, T)> {
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for node in nodes {
-        let Some(rec) = Rec::of(node, what, errors) else {
-            continue;
-        };
-        if let Some((name, value)) = one(&rec, errors) {
-            if !seen.insert(name.clone()) {
-                errors.add(
-                    rec.span,
-                    format!("{what} '{name}' is defined twice (use nam= to give one another name)"),
-                );
-            }
-            out.push((name, value));
+) -> Vec<u32> {
+    let Some(node) = rec.get(key) else {
+        rec.missing(key, errors);
+        return Vec::new();
+    };
+    let items: Vec<&Node> = match &node.value {
+        Value::List(items) => items.iter().collect(),
+        _ => vec![node],
+    };
+    let mut words: Vec<&String> = Vec::new();
+    for item in items {
+        match &item.value {
+            Value::Ids(ids) => words.extend(ids.iter()),
+            _ => errors.add(
+                item.span,
+                format!("'{key}' takes neurons: names, populations, sets or id ranges"),
+            ),
         }
+    }
+    let mut out = Vec::new();
+    let mut unknown: Vec<&str> = Vec::new();
+    for word in words {
+        if let Some(p) = populations.iter().find(|p| p.name == *word) {
+            out.extend(p.first..p.first + p.count);
+        } else if let Some(s) = sets.iter().find(|s| s.name == *word) {
+            out.extend(&s.members);
+        } else if let Some(i) = names.index(word) {
+            out.push(i);
+        } else {
+            unknown.push(word);
+        }
+    }
+    match unknown.as_slice() {
+        [] => {}
+        [one] => errors.add(
+            node.span,
+            format!("'{one}' isn't a neuron, a population or a set (defined before here)"),
+        ),
+        many => errors.add(
+            node.span,
+            format!(
+                "{} names aren't neurons, populations or sets: {}{}",
+                many.len(),
+                many.iter().take(5).copied().collect::<Vec<_>>().join(", "),
+                if many.len() > 5 { ", …" } else { "" }
+            ),
+        ),
     }
     out
 }
 
-fn group(node: &Node, errors: &mut Errors) -> Option<GroupDescription> {
-    let rec = Rec::of(node, "group", errors)?;
-    rec.check_keys(&schema::keys("group", None), errors);
-    let id = rec.word("gid", None, &[], errors);
-    let remote = match (rec.get("hst"), rec.get("prt")) {
-        (None, None) => None,
-        (Some(_), Some(_)) => {
-            let host = rec.word("hst", None, &[], errors);
-            let port = rec.quantity("prt", Quantity::Dimensionless, None, errors);
-            if !(0.0..=65_535.0).contains(&port) || port.fract() != 0.0 {
-                errors.add(rec.span, format!("port {port} is not a valid port number"));
+/// A population's positions (and names, if it names its neurons), from its placement.
+fn placement(rec: &Rec<'_>, name: &str, errors: &mut Errors) -> (Vec<[f64; 3]>, Option<Vec<String>>) {
+    let given: Vec<&str> = ["positions", "random", "grid", "line", "ring"]
+        .into_iter()
+        .filter(|k| rec.get(k).is_some())
+        .collect();
+    let counted = |errors: &mut Errors| -> usize {
+        let c = rec.quantity("count", Quantity::Dimensionless, None, errors);
+        const MAX: f64 = 100_000_000.0;
+        if !((1.0..=MAX).contains(&c) && c.fract() == 0.0) {
+            errors.add(
+                rec.span_of("count"),
+                format!("'count' must be a whole number from 1 to {MAX:e}"),
+            );
+            return 0;
+        }
+        c as usize
+    };
+    let no_count = |why: &str, errors: &mut Errors| {
+        if rec.get("count").is_some() {
+            errors.add(rec.span_of("count"), format!("'count' comes from {why}; leave it out"));
+        }
+    };
+    match given.as_slice() {
+        ["positions"] => {
+            no_count("the positions", errors);
+            let Some(Value::List(items)) = rec.get("positions").map(|n| &n.value) else {
+                errors.add(rec.span_of("positions"), "'positions' must be a list of points");
+                return (Vec::new(), None);
+            };
+            let named = items
+                .first()
+                .is_some_and(|n| matches!(&n.value, Value::Record(f) if f.iter().any(|f| f.key == "at")));
+            if named {
+                let mut locations = Vec::new();
+                let mut names = Vec::new();
+                for item in items {
+                    let Some(p) = Rec::of(item, "named position", errors) else {
+                        continue;
+                    };
+                    p.check_keys(&schema::keys("namedPosition", None), errors);
+                    names.push(p.word("name", None, &[], errors));
+                    locations.push(p.point("at", errors).unwrap_or_else(|| {
+                        p.missing("at", errors);
+                        [0.0; 3]
+                    }));
+                }
+                (locations, Some(names))
+            } else {
+                (items.iter().map(|n| point(n, errors)).collect(), None)
             }
-            Some((host, port as u16))
+        }
+        ["random"] => {
+            let n = counted(errors);
+            let Some(r) = rec.record("random", "random placement", errors) else {
+                return (Vec::new(), None);
+            };
+            r.check_keys(&schema::keys("randomPlacement", None), errors);
+            let seed = rec.quantity("seed", Quantity::Dimensionless, Some(1.0), errors) as u64;
+            use rand::{RngExt, SeedableRng};
+            // Positions depend only on the population (its name and seed), not on what else is in the file.
+            let name_hash = name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x1000_0000_01b3)
+            });
+            let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(seed ^ name_hash);
+            match (r.record("box", "box", errors), r.record("ball", "ball", errors)) {
+                (Some(b), None) => {
+                    b.check_keys(&schema::keys("box", None), errors);
+                    let corner = b.point("corner", errors).unwrap_or_else(|| {
+                        b.missing("corner", errors);
+                        [0.0; 3]
+                    });
+                    let size = b.triple("size", Quantity::Length, errors).unwrap_or_else(|| {
+                        b.missing("size", errors);
+                        [0.0; 3]
+                    });
+                    if size.iter().any(|s| s.is_nan() || *s < 0.0) {
+                        errors.add(b.span, "a box's sides can't be negative");
+                    }
+                    let locations = (0..n)
+                        .map(|_| std::array::from_fn(|d| corner[d] + size[d] * rng.random::<f64>()))
+                        .collect();
+                    (locations, None)
+                }
+                (None, Some(b)) => {
+                    b.check_keys(&schema::keys("ball", None), errors);
+                    let center = b.point("center", errors).unwrap_or_else(|| {
+                        b.missing("center", errors);
+                        [0.0; 3]
+                    });
+                    let radius = b.quantity("radius", Quantity::Length, None, errors);
+                    if radius.is_nan() || radius <= 0.0 {
+                        errors.add(b.span, "a ball needs a positive radius");
+                        return (Vec::new(), None);
+                    }
+                    let locations = (0..n)
+                        .map(|_| {
+                            loop {
+                                let p: [f64; 3] = std::array::from_fn(|_| 2.0 * rng.random::<f64>() - 1.0);
+                                if p.iter().map(|v| v * v).sum::<f64>() <= 1.0 {
+                                    break std::array::from_fn(|d| center[d] + radius * p[d]);
+                                }
+                            }
+                        })
+                        .collect();
+                    (locations, None)
+                }
+                _ => {
+                    errors.add(r.span, "random placement needs a box=(…) or a ball=(…), not both");
+                    (Vec::new(), None)
+                }
+            }
+        }
+        ["grid"] => {
+            no_count("the grid's shape", errors);
+            let Some(g) = rec.record("grid", "grid", errors) else {
+                return (Vec::new(), None);
+            };
+            g.check_keys(&schema::keys("grid", None), errors);
+            let origin = g.point("origin", errors).unwrap_or([0.0; 3]);
+            let spacing = g.triple("spacing", Quantity::Length, errors).unwrap_or_else(|| {
+                g.missing("spacing", errors);
+                [0.0; 3]
+            });
+            let shape = g.triple("shape", Quantity::Dimensionless, errors).unwrap_or_else(|| {
+                g.missing("shape", errors);
+                [1.0; 3]
+            });
+            if shape.iter().any(|s| *s < 1.0 || s.fract() != 0.0) || shape.iter().product::<f64>() > 1e8 {
+                errors.add(
+                    g.span_of("shape"),
+                    "a grid's shape is three whole numbers of at least 1",
+                );
+                return (Vec::new(), None);
+            }
+            let [nx, ny, nz] = shape.map(|s| s as usize);
+            let mut locations = Vec::with_capacity(nx * ny * nz);
+            for k in 0..nz {
+                for j in 0..ny {
+                    for i in 0..nx {
+                        let at = [i, j, k];
+                        locations.push(std::array::from_fn(|d| origin[d] + spacing[d] * at[d] as f64));
+                    }
+                }
+            }
+            (locations, None)
+        }
+        ["line"] => {
+            let n = counted(errors);
+            let Some(l) = rec.record("line", "line", errors) else {
+                return (Vec::new(), None);
+            };
+            l.check_keys(&schema::keys("line", None), errors);
+            let from = l.point("from", errors).unwrap_or_else(|| {
+                l.missing("from", errors);
+                [0.0; 3]
+            });
+            let to = l.point("to", errors).unwrap_or_else(|| {
+                l.missing("to", errors);
+                [0.0; 3]
+            });
+            let at = |i: usize| if n > 1 { i as f64 / (n - 1) as f64 } else { 0.0 };
+            let locations = (0..n)
+                .map(|i| std::array::from_fn(|d| from[d] + (to[d] - from[d]) * at(i)))
+                .collect();
+            (locations, None)
+        }
+        ["ring"] => {
+            let n = counted(errors);
+            let Some(r) = rec.record("ring", "ring", errors) else {
+                return (Vec::new(), None);
+            };
+            r.check_keys(&schema::keys("ring", None), errors);
+            let center = r.point("center", errors).unwrap_or([0.0; 3]);
+            let radius = r.quantity("radius", Quantity::Length, None, errors);
+            let axis = r.word("axis", Some("z"), &["x", "y", "z"], errors);
+            let start = r.quantity("start_angle", Quantity::Angle, Some(0.0), errors);
+            let locations = (0..n)
+                .map(|i| {
+                    let a = start + std::f64::consts::TAU * i as f64 / n as f64;
+                    let (u, v) = (radius * a.cos(), radius * a.sin());
+                    let offset = match axis.as_str() {
+                        "x" => [0.0, u, v],
+                        "y" => [v, 0.0, u],
+                        _ => [u, v, 0.0],
+                    };
+                    std::array::from_fn(|d| center[d] + offset[d])
+                })
+                .collect();
+            (locations, None)
+        }
+        [] => {
+            errors.add(
+                rec.span,
+                "a population needs a placement: positions, random, grid, line or ring",
+            );
+            (Vec::new(), None)
         }
         _ => {
             errors.add(
                 rec.span,
-                "a remote group needs both 'hst' and 'prt' (a local group needs neither)",
+                format!("a population has one placement, not {}", given.join(" and ")),
             );
-            None
+            (Vec::new(), None)
         }
-    };
-    Some(GroupDescription { id, remote })
+    }
 }
 
-fn learning_rule(rec: &Rec<'_>, errors: &mut Errors) -> Option<(String, LearningRule)> {
-    let function = rec.word(
-        "fnc",
-        None,
-        &["stdp_hard", "stdp_soft", "stdp_alpha", "stdp", "flat"],
-        errors,
-    );
+fn learning_rule(node: &Node, errors: &mut Errors) -> Option<(String, LearningRule, Span)> {
+    let rec = Rec::of(node, "learning rule", errors)?;
+    let rule = rec.word("rule", None, schema::RULES, errors);
+    rec.check_keys(&schema::keys("learningRule", Some(&rule)), errors);
     let exponential = |errors: &mut Errors| ExponentialStdp {
-        inhibition_amplitude: rec.quantity("ina", Quantity::Dimensionless, None, errors),
-        inhibition_period_ms: rec.quantity("inp", Quantity::Time, None, errors),
-        excitation_amplitude: rec.quantity("exa", Quantity::Dimensionless, None, errors),
-        excitation_period_ms: rec.quantity("exp", Quantity::Time, None, errors),
+        inhibition_amplitude: rec.quantity("depression", Quantity::Dimensionless, None, errors),
+        inhibition_period_ms: rec.quantity("depression_time", Quantity::Time, None, errors),
+        excitation_amplitude: rec.quantity("potentiation", Quantity::Dimensionless, None, errors),
+        excitation_period_ms: rec.quantity("potentiation_time", Quantity::Time, None, errors),
     };
-    let rule = match function.as_str() {
-        // "stdp" is the 2017 name for what later became stdp_hard.
-        "stdp_hard" | "stdp" => {
-            rec.check_keys(&schema::keys("learning", Some(&function)), errors);
-            LearningRule::HardLimit(exponential(errors))
-        }
-        "stdp_soft" => {
-            rec.check_keys(&schema::keys("learning", Some(&function)), errors);
-            LearningRule::SoftLimit(exponential(errors))
-        }
-        "stdp_alpha" => {
-            rec.check_keys(&schema::keys("learning", Some(&function)), errors);
-            LearningRule::Alpha(AlphaStdp::new(
-                rec.quantity("bln", Quantity::Dimensionless, None, errors),
-                rec.quantity("atc", Quantity::Time, None, errors),
-                rec.quantity("alr", Quantity::Dimensionless, None, errors),
-            ))
-        }
-        "flat" => {
-            rec.check_keys(&schema::keys("learning", Some("flat")), errors);
-            LearningRule::None
-        }
+    let value = match rule.as_str() {
+        "stdp_hard" => LearningRule::HardLimit(exponential(errors)),
+        "stdp_soft" => LearningRule::SoftLimit(exponential(errors)),
+        "stdp_alpha" => LearningRule::Alpha(AlphaStdp::new(
+            rec.quantity("baseline", Quantity::Dimensionless, None, errors),
+            rec.quantity("time", Quantity::Time, None, errors),
+            rec.quantity("rate", Quantity::Dimensionless, None, errors),
+        )),
         _ => return None,
     };
-    let name = rec.word("nam", Some(&function), &[], errors);
-    Some((name, rule))
-}
-
-fn stickiness_fn(rec: &Rec<'_>, errors: &mut Errors) -> Option<(String, Stickiness)> {
-    let function = rec.word("fnc", None, &["sig", "none"], errors);
-    let value = match function.as_str() {
-        "sig" => {
-            rec.check_keys(&schema::keys("stickiness", Some(&function)), errors);
-            Stickiness::Sigmoid {
-                tau_ms: rec.quantity("dhl", Quantity::Time, None, errors),
-            }
-        }
-        "none" => {
-            rec.check_keys(&schema::keys("stickiness", Some("none")), errors);
-            Stickiness::None
-        }
-        _ => return None,
-    };
-    let name = rec.word("nam", Some(&function), &[], errors);
-    Some((name, value))
+    let name = rec.word("name", None, &[], errors);
+    if name == "flat" {
+        errors.add(rec.span, "'flat' means no learning; give this rule another name");
+    }
+    Some((name, value, rec.span))
 }
 
 fn modulator(node: &Node, errors: &mut Errors) -> Option<ModulatorDescription> {
     let rec = Rec::of(node, "modulator", errors)?;
     rec.check_keys(&schema::keys("modulator", None), errors);
     let description = ModulatorDescription {
-        name: rec.word("nam", None, &[], errors),
-        clearance_ms: rec.quantity("clr", Quantity::Time, None, errors),
-        radius_um: rec.quantity("rad", Quantity::Length, Some(f64::INFINITY), errors),
-        speed_m_per_s: rec.quantity("spd", Quantity::Speed, Some(f64::INFINITY), errors),
-        latency_ms: rec.quantity("lat", Quantity::Time, Some(1.0), errors),
-        falloff_um: rec
-            .get("len")
-            .map(|_| rec.quantity("len", Quantity::Length, None, errors)),
+        name: rec.word("name", None, &[], errors),
+        clearance_ms: rec.quantity("clearance_time", Quantity::Time, None, errors),
+        radius_um: rec.quantity("reach", Quantity::Length, Some(f64::INFINITY), errors),
+        speed_m_per_s: rec.quantity("speed", Quantity::Speed, Some(f64::INFINITY), errors),
+        latency_ms: rec.quantity("latency", Quantity::Time, Some(1.0), errors),
+        falloff_um: rec.optional("falloff", Quantity::Length, errors),
     };
     if description.clearance_ms <= 0.0 {
-        errors.add(rec.span, "the clearance time 'clr' must be positive");
+        errors.add(rec.span, "the clearance time must be positive");
     }
     Some(description)
 }
@@ -515,8 +1024,8 @@ fn modulator_ref(rec: &Rec<'_>, key: &str, modulators: &HashMap<String, u16>, er
         Some(&i) => i,
         None => {
             errors.add(
-                rec.get(key).map_or(rec.span, |n| n.span),
-                format!("modulator '{name}' isn't defined in MOD"),
+                rec.span_of(key),
+                format!("modulator '{name}' isn't defined in 'modulators'"),
             );
             0
         }
@@ -526,32 +1035,32 @@ fn modulator_ref(rec: &Rec<'_>, key: &str, modulators: &HashMap<String, u16>, er
 fn receptor(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -> Option<Receptor> {
     let rec = Rec::of(node, "receptor", errors)?;
     rec.check_keys(&schema::keys("receptor", None), errors);
-    let three_factor = match (rec.get("elg"), rec.get("rat")) {
+    let three_factor = match (rec.get("eligibility_time"), rec.get("learning_rate")) {
         (None, None) => None,
         (Some(_), Some(_)) => Some(ThreeFactor {
-            eligibility_ms: rec.quantity("elg", Quantity::Time, None, errors),
-            rate: rec.quantity("rat", Quantity::Dimensionless, None, errors),
+            eligibility_ms: rec.quantity("eligibility_time", Quantity::Time, None, errors),
+            rate: rec.quantity("learning_rate", Quantity::Dimensionless, None, errors),
         }),
         _ => {
             errors.add(
                 rec.span,
-                "three-factor learning needs both 'elg' (eligibility time) and 'rat' (rate)",
+                "three-factor learning needs both 'eligibility_time' and 'learning_rate'",
             );
             None
         }
     };
     Some(Receptor {
-        modulator: modulator_ref(&rec, "mod", modulators, errors),
-        excitatory_gain: rec.quantity("exg", Quantity::Dimensionless, Some(0.0), errors),
-        inhibitory_gain: rec.quantity("ing", Quantity::Dimensionless, Some(0.0), errors),
-        threshold: rec.quantity("thr", Quantity::Dimensionless, Some(0.0), errors),
-        plasticity: rec.quantity("pla", Quantity::Dimensionless, Some(0.0), errors),
+        modulator: modulator_ref(&rec, "modulator", modulators, errors),
+        excitatory_gain: rec.quantity("excitatory_gain", Quantity::Dimensionless, Some(0.0), errors),
+        inhibitory_gain: rec.quantity("inhibitory_gain", Quantity::Dimensionless, Some(0.0), errors),
+        threshold: rec.quantity("threshold_gain", Quantity::Dimensionless, Some(0.0), errors),
+        plasticity: rec.quantity("plasticity_gain", Quantity::Dimensionless, Some(0.0), errors),
         three_factor,
-        direct_mv: rec.quantity("dir", Quantity::Potential, Some(0.0), errors),
+        direct_mv: rec.quantity("direct_potential", Quantity::Potential, Some(0.0), errors),
     })
 }
 
-/// v1's defaults, used for keys a neuron doesn't give (older files lack several).
+/// Defaults for settings a neuron doesn't give.
 mod default {
     pub const THRESHOLD_MV: f64 = 10.0;
     pub const BISTABLE_THRESHOLD_MV: f64 = 15.0;
@@ -564,76 +1073,56 @@ mod default {
     pub const NOISE_MV: f64 = 0.1;
     pub const SPIKE_MV: f64 = 1.0;
     pub const CONDUCTION_M_PER_S: f64 = 10.0;
-    /// Fast chemical synapses take ~0.2–0.5 ms at body temperature, more when cooler or slower.
-    pub const SYNAPTIC_DELAY_MS: f64 = 0.5;
     pub const IP_DECAY_MS: f64 = 600_000.0; // 10 min
-    pub const WEIGHT_DECAY_MS: f64 = 1_500.0;
 }
 
-fn neuron(node: &Node, modulators: &HashMap<String, u16>, errors: &mut Errors) -> Option<NeuronDescription> {
-    neuron_like(node, modulators, false, errors)
-}
-
-/// A neuron, or (`template`) a population's neuron: no `nid` or `LOC`, and the population's own keys allowed.
-fn neuron_like(
-    node: &Node,
-    modulators: &HashMap<String, u16>,
-    template: bool,
-    errors: &mut Errors,
-) -> Option<NeuronDescription> {
-    let what = if template { "population" } else { "neuron" };
-    let rec = Rec::of(node, what, errors)?;
-    // Neurons accept every neuron key whatever their type; the schema's per-type keys only guide the editor.
-    rec.check_keys(&schema::keys(what, None), errors);
+/// A neuron's settings (a type's merged with its own), without its name, position or node.
+fn neuron_settings(rec: &Rec<'_>, modulators: &HashMap<String, u16>, errors: &mut Errors) -> Option<NeuronDescription> {
     let q = |key, quantity, default, errors: &mut Errors| rec.quantity(key, quantity, Some(default), errors);
+    let dynamics = rec.word("dynamics", Some("monostable_integrator"), schema::DYNAMICS, errors);
+    let inhibitory = rec.boolean("inhibitory", false, errors);
 
-    let id = if template {
-        String::new()
-    } else {
-        rec.word("nid", None, &[], errors)
-    };
-    let group = rec.word("grp", Some("default"), &[], errors);
-    let kind_name = rec.word("nty", Some("mi"), &["mi", "bi", "mr", "br"], errors);
-    let inhibitory = rec.boolean("inh", false, errors);
-
-    let mut threshold_mv = q("mst", Quantity::Potential, default::THRESHOLD_MV, errors);
+    let mut threshold_mv = q("threshold", Quantity::Potential, default::THRESHOLD_MV, errors);
     let resonance = |errors: &mut Errors| -> Option<(Resonance, Rec<'_>)> {
-        let Some(res) = rec.record("RES", "resonance", errors) else {
-            rec.missing("RES", errors);
+        let Some(res) = rec.record("resonance", "resonance", errors) else {
+            rec.missing("resonance", errors);
             return None;
         };
+        res.check_keys(&schema::keys("resonance", None), errors);
         let r = Resonance {
-            frequency_hz: res.quantity("frq", Quantity::Frequency, None, errors),
-            damping_ms: res.quantity("dmp", Quantity::Time, None, errors),
+            frequency_hz: res.quantity("frequency", Quantity::Frequency, None, errors),
+            damping_ms: res.quantity("damping_time", Quantity::Time, None, errors),
         };
         if r.frequency_hz <= 0.0 {
-            errors.add(res.span, "the resonant frequency 'frq' must be positive");
+            errors.add(res.span, "the resonant frequency must be positive");
         }
         Some((r, res))
     };
-    let kind = match kind_name.as_str() {
-        "bi" => {
-            threshold_mv = rec.quantity("lct", Quantity::Potential, Some(default::BISTABLE_THRESHOLD_MV), errors);
+    let kind = match dynamics.as_str() {
+        "bistable_integrator" => {
+            threshold_mv = q(
+                "tonic_on_threshold",
+                Quantity::Potential,
+                default::BISTABLE_THRESHOLD_MV,
+                errors,
+            );
             NeuronKind::BistableIntegrator {
-                resting_threshold_mv: q("rst", Quantity::Potential, default::RESTING_THRESHOLD_MV, errors),
-                tonic_rate_hz: q("tfr", Quantity::Frequency, default::TONIC_RATE_HZ, errors),
+                resting_threshold_mv: q(
+                    "tonic_off_threshold",
+                    Quantity::Potential,
+                    default::RESTING_THRESHOLD_MV,
+                    errors,
+                ),
+                tonic_rate_hz: q("tonic_rate", Quantity::Frequency, default::TONIC_RATE_HZ, errors),
             }
         }
-        "mr" => {
+        "monostable_resonator" => NeuronKind::MonostableResonator(resonance(errors)?.0),
+        "bistable_resonator" => {
             let (r, res) = resonance(errors)?;
-            res.check_keys(&schema::keys("resonance", Some("mr")), errors);
-            NeuronKind::MonostableResonator(r)
-        }
-        "br" => {
-            let (r, res) = resonance(errors)?;
-            res.check_keys(&schema::keys("resonance", Some("br")), errors);
-            let cycle_mv = res.quantity("lcr", Quantity::Potential, None, errors);
-            let separatrix_mv = res.quantity("sep", Quantity::Potential, None, errors);
+            let cycle_mv = res.quantity("limit_cycle", Quantity::Potential, None, errors);
+            let separatrix_mv = res.quantity("separatrix", Quantity::Potential, None, errors);
             if separatrix_mv >= cycle_mv {
-                errors.add(
-                    res.span,
-                    "the separatrix radius 'sep' must be smaller than the limit cycle 'lcr'",
-                );
+                errors.add(res.span, "the separatrix must be smaller than the limit cycle");
             }
             NeuronKind::BistableResonator {
                 resonance: r,
@@ -644,443 +1133,165 @@ fn neuron_like(
         _ => NeuronKind::MonostableIntegrator,
     };
 
-    let homeostasis = rec.record("HIP", "homeostasis", errors).map(|h| {
+    let homeostasis = rec.record("homeostasis", "homeostasis", errors).map(|h| {
         h.check_keys(&schema::keys("homeostasis", None), errors);
         Homeostasis {
-            target_hz: h.quantity("tgt", Quantity::Frequency, None, errors),
-            strength: h.quantity("str", Quantity::Dimensionless, None, errors),
-            window_ms: h.quantity("win", Quantity::Time, Some(1_000.0), errors),
-            min_mv: h.quantity("lwb", Quantity::Potential, Some(f64::NEG_INFINITY), errors),
-            max_mv: h.quantity("upb", Quantity::Potential, Some(f64::INFINITY), errors),
+            target_hz: h.quantity("target_rate", Quantity::Frequency, None, errors),
+            strength: h.quantity("strength", Quantity::Dimensionless, None, errors),
+            window_ms: h.quantity("window", Quantity::Time, Some(1_000.0), errors),
+            min_mv: h.quantity("min_shift", Quantity::Potential, Some(f64::NEG_INFINITY), errors),
+            max_mv: h.quantity("max_shift", Quantity::Potential, Some(f64::INFINITY), errors),
         }
     });
+    let intrinsic = rec.record("intrinsic_plasticity", "intrinsic plasticity", errors);
+    if let Some(ip) = &intrinsic {
+        ip.check_keys(&schema::keys("intrinsicPlasticity", None), errors);
+    }
+    let ip = |key, quantity, default, errors: &mut Errors| {
+        intrinsic
+            .as_ref()
+            .map_or(default, |r| r.quantity(key, quantity, Some(default), errors))
+    };
 
     let params = NeuronParams {
         kind,
         threshold_mv,
-        refractory_ms: q("rfp", Quantity::Time, default::REFRACTORY_MS, errors),
-        base_refractoriness: q("rfb", Quantity::Flux, default::BASE_REFRACTORINESS, errors),
-        min_potential_mv: q("mnp", Quantity::Potential, 0.0, errors),
-        decay_ms: q("mpd", Quantity::Time, default::DECAY_MS, errors),
-        rise_ms: q("mpr", Quantity::Time, default::RISE_MS, errors),
-        noise_mv: q("mpn", Quantity::Potential, default::NOISE_MV, errors),
-        spike_mv: q("spp", Quantity::Potential, default::SPIKE_MV, errors),
+        refractory_ms: q("refractory_period", Quantity::Time, default::REFRACTORY_MS, errors),
+        base_refractoriness: q(
+            "relative_refractoriness",
+            Quantity::Flux,
+            default::BASE_REFRACTORINESS,
+            errors,
+        ),
+        min_potential_mv: q("resting_potential", Quantity::Potential, 0.0, errors),
+        decay_ms: q("decay_time", Quantity::Time, default::DECAY_MS, errors),
+        rise_ms: q("rise_time", Quantity::Time, default::RISE_MS, errors),
+        noise_mv: q("membrane_noise", Quantity::Potential, default::NOISE_MV, errors),
+        spike_mv: q("spike_potential", Quantity::Potential, default::SPIKE_MV, errors),
         intrinsic: IntrinsicParams {
-            base_mv: q("ipb", Quantity::Potential, 0.0, errors),
-            learning_mv: q("ipl", Quantity::Potential, 0.0, errors),
-            decay_ms: q("ipd", Quantity::Time, default::IP_DECAY_MS, errors),
+            base_mv: ip("step", Quantity::Potential, 0.0, errors),
+            learning_mv: ip("amplitude", Quantity::Potential, 0.0, errors),
+            decay_ms: ip("decay_time", Quantity::Time, default::IP_DECAY_MS, errors),
             homeostasis,
         },
     };
 
-    let decay = match rec.record("WDF", "weight decay", errors) {
-        None => WeightDecay::Exponential {
-            tau_ms: default::WEIGHT_DECAY_MS,
-        },
-        Some(w) => match w.word("fnc", None, &["exp", "zer"], errors).as_str() {
-            "exp" => {
-                w.check_keys(&schema::keys("weightDecay", Some("exp")), errors);
-                WeightDecay::Exponential {
-                    tau_ms: w.quantity("dhl", Quantity::Time, None, errors),
-                }
-            }
-            _ => {
-                w.check_keys(&schema::keys("weightDecay", Some("zer")), errors);
-                WeightDecay::None
-            }
-        },
-    };
-    let limit = match rec.record("WLF", "weight limit", errors) {
-        None => WeightLimit::Unbounded,
-        Some(w) => match w.word("fnc", None, &["bnd", "unb"], errors).as_str() {
-            "bnd" => {
-                w.check_keys(&schema::keys("weightLimit", Some("bnd")), errors);
-                let upper_key = if w.get("uwb").is_some() { "uwb" } else { "upb" };
-                let lower = w.quantity("lwb", Quantity::Dimensionless, None, errors);
-                let upper = w.quantity(upper_key, Quantity::Dimensionless, None, errors);
-                if lower > upper {
-                    errors.add(
-                        w.span,
-                        format!("the lower bound {lower} is above the upper bound {upper}"),
-                    );
-                }
-                WeightLimit::Bounded { lower, upper }
-            }
-            _ => {
-                w.check_keys(&schema::keys("weightLimit", Some("unb")), errors);
-                WeightLimit::Unbounded
-            }
-        },
-    };
-    // `SNT` is an older name for `SRP`.
-    let release_rec = rec
-        .record("SRP", "release probability", errors)
-        .or_else(|| rec.record("SNT", "release probability", errors));
-    let release = Some(match release_rec {
-        None => Release::V1_DEFAULT,
-        Some(r) => {
-            r.check_keys(&schema::keys("release", None), errors);
-            let d = Release::V1_DEFAULT;
-            Release {
-                facilitation_base: r.quantity("fcb", Quantity::Dimensionless, Some(d.facilitation_base), errors),
-                facilitation_magnitude: r.quantity(
-                    "fcm",
-                    Quantity::Dimensionless,
-                    Some(d.facilitation_magnitude),
-                    errors,
-                ),
-                facilitation_tau_ms: r.quantity("fct", Quantity::Time, Some(d.facilitation_tau_ms), errors),
-                depletion_base: r.quantity("dpb", Quantity::Dimensionless, Some(d.depletion_base), errors),
-                depletion_magnitude: r.quantity("dpm", Quantity::Dimensionless, Some(d.depletion_magnitude), errors),
-                depletion_tau_ms: r.quantity("dpt", Quantity::Time, Some(d.depletion_tau_ms), errors),
-            }
-        }
-    });
-
-    let location_um = match rec.record("LOC", "location", errors) {
-        _ if template => [0.0; 3],
-        Some(loc) => location(&loc, errors),
-        None => {
-            rec.missing("LOC", errors);
-            [0.0; 3]
-        }
-    };
-
-    let receptors = match rec.get("RCP").map(|n| (&n.value, n.span)) {
+    let receptors = match rec.get("receptors").map(|n| (&n.value, n.span)) {
         None => Vec::new(),
         Some((Value::List(items), _)) => items.iter().filter_map(|n| receptor(n, modulators, errors)).collect(),
         Some((_, span)) => {
-            errors.add(span, "'RCP' must be a list of receptors: RCP=[(mod=…, …)]");
+            errors.add(span, "'receptors' must be a list: receptors=[(modulator=…, …)]");
             Vec::new()
         }
     };
-    let modulator_release = rec.record("REL", "release", errors).map(|r| {
+    let release = rec.record("releases", "release", errors).map(|r| {
         r.check_keys(&schema::keys("modulatorRelease", None), errors);
         (
-            modulator_ref(&r, "mod", modulators, errors),
-            r.quantity("amt", Quantity::Dimensionless, Some(1.0), errors),
+            modulator_ref(&r, "modulator", modulators, errors),
+            r.quantity("amount", Quantity::Dimensionless, Some(1.0), errors),
         )
     });
 
     Some(NeuronDescription {
-        id,
-        group,
+        id: String::new(),
+        node: None,
         inhibitory,
         params,
-        conduction_m_per_s: q("csp", Quantity::Speed, default::CONDUCTION_M_PER_S, errors),
-        synaptic_delay_ms: synaptic_delay(&rec, Some(default::SYNAPTIC_DELAY_MS), errors),
-        location_um,
-        synapses: SynapseDefaults {
-            decay,
-            limit,
-            release,
-            weight_noise: q("wnm", Quantity::Dimensionless, 0.0, errors),
-        },
+        conduction_m_per_s: q("conduction_speed", Quantity::Speed, default::CONDUCTION_M_PER_S, errors),
+        location_um: [0.0; 3],
         receptors,
-        release: modulator_release,
+        release,
         span: rec.span,
     })
 }
 
-/// A location, converted to cartesian µm. Cylindrical is (r, φ, z); spherical is (r, φ, θ) with azimuth φ and
-/// polar angle θ, as in v1.
-fn location(loc: &Rec<'_>, errors: &mut Errors) -> [f64; 3] {
-    loc.check_keys(&schema::keys("location", None), errors);
-    let system = loc.word("cst", Some("ct"), &["ct", "cl", "sp"], errors);
-    let length = |key, errors: &mut Errors| loc.quantity(key, Quantity::Length, None, errors);
-    let angle = |key, errors: &mut Errors| loc.quantity(key, Quantity::Angle, None, errors);
-    match system.as_str() {
-        "cl" => {
-            let (r, phi, z) = (length("px1", errors), angle("px2", errors), length("px3", errors));
-            [r * phi.cos(), r * phi.sin(), z]
-        }
-        "sp" => {
-            let (r, phi, theta) = (length("px1", errors), angle("px2", errors), angle("px3", errors));
-            [
-                r * phi.cos() * theta.sin(),
-                r * phi.sin() * theta.sin(),
-                r * theta.cos(),
-            ]
-        }
-        _ => [length("px1", errors), length("px2", errors), length("px3", errors)],
-    }
-}
-
-fn connection(
-    node: &Node,
-    inhibitory: &HashMap<&str, bool>,
-    learning: &BTreeMap<String, LearningRule>,
-    stickiness: &BTreeMap<String, Stickiness>,
-    out: &mut Vec<ConnectionDescription>,
-    errors: &mut Errors,
-) {
-    let Some(rec) = Rec::of(node, "connection", errors) else {
-        return;
-    };
-    rec.check_keys(&schema::keys("connection", None), errors);
-    let synaptic_delay_ms = rec.get("syd").map(|_| synaptic_delay(&rec, None, errors));
-    let pres = rec.ids("prn", errors);
-    let posts = rec.ids("psn", errors);
-    let weight = rec.weight("cnw", errors);
-    if weight.is_none() && rec.get("cnw").is_none() {
-        rec.missing("cnw", errors);
-    }
-    let weight = weight.unwrap_or(WeightSpec::Fixed(0.0));
-    let equilibrium = rec.weight("eqw", errors).unwrap_or(weight);
-    let learning_name = rec.word("lrn", Some("flat"), &[], errors);
-    if !learning.contains_key(&learning_name) {
-        let known: Vec<&str> = learning.keys().map(String::as_str).collect();
-        errors.add(
-            rec.get("lrn").map_or(rec.span, |n| n.span),
-            format!(
-                "learning function '{learning_name}' isn't defined in LRN (defined: {})",
-                known.join(", ")
-            ),
-        );
-    }
-    let stickiness_name = rec.word("cst", Some("none"), &[], errors);
-    if !stickiness.contains_key(&stickiness_name) {
-        errors.add(
-            rec.get("cst").map_or(rec.span, |n| n.span),
-            format!("stickiness function '{stickiness_name}' isn't defined in CST"),
-        );
-    }
-    let sign = rec.get("typ").map(|_| rec.word("typ", None, &["exc", "inh"], errors));
-
-    // One error per connection, however many names its id sets expand to.
-    let mut missing: Vec<&str> = pres
-        .iter()
-        .chain(&posts)
-        .map(String::as_str)
-        .filter(|name| !inhibitory.contains_key(name))
-        .collect();
-    missing.dedup();
-    match missing.as_slice() {
-        [] => {}
-        [name] => errors.add(
-            rec.span,
-            format!("connection refers to neuron '{name}', which isn't defined in NRN"),
-        ),
-        names => errors.add(
-            rec.span,
-            format!(
-                "connection refers to {} neurons that aren't defined in NRN: {}",
-                names.len(),
-                names.join(", ")
-            ),
-        ),
-    }
-    for pre in &pres {
-        for post in &posts {
-            let sign = match sign.as_deref() {
-                Some("inh") => Sign::Inhibitory,
-                Some(_) => Sign::Excitatory,
-                None if inhibitory.get(pre.as_str()).copied().unwrap_or(false) => Sign::Inhibitory,
-                None => Sign::Excitatory,
-            };
-            out.push(ConnectionDescription {
-                pre: pre.clone(),
-                post: post.clone(),
-                weight,
-                equilibrium,
-                learning: learning_name.clone(),
-                stickiness: stickiness_name.clone(),
-                sign,
-                synaptic_delay_ms,
-                span: rec.span,
-            });
-        }
-    }
-}
-
-/// A population: its neurons (appended to `neurons`, named `<nam>-<i>`, placed at random in its region).
-fn population(
-    node: &Node,
-    modulators: &HashMap<String, u16>,
-    neurons: &mut Neurons,
-    errors: &mut Errors,
-) -> Option<PopulationDescription> {
-    let template = neuron_like(node, modulators, true, errors)?;
-    let rec = Rec::of(node, "population", errors)?;
-    let name = rec.word("nam", None, &[], errors);
-    let count = rec.quantity("cnt", Quantity::Dimensionless, None, errors);
-    const MAX: f64 = 100_000_000.0;
-    if !((1.0..=MAX).contains(&count) && count.fract() == 0.0) {
-        errors.add(
-            rec.get("cnt").map_or(rec.span, |n| n.span),
-            format!("'cnt' must be a whole number from 1 to {MAX:e}"),
-        );
-        return None;
-    }
-    let seed = rec.quantity("sed", Quantity::Dimensionless, Some(1.0), errors) as u64;
-    let Some(reg) = rec.record("REG", "region", errors) else {
-        rec.missing("REG", errors);
-        return None;
-    };
-    let region = region(&reg, errors)?;
-    use rand::{RngExt, SeedableRng};
-    // Positions depend only on the population (its name and seed), not on what else is in the file.
-    let name_hash = name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x1000_0000_01b3)
-    });
-    let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(seed ^ name_hash);
-    let first = neurons.len() as u32;
-    let count = count as u32;
-    let mut locations = Vec::with_capacity(count as usize);
-    for _ in 0..count {
-        let location_um = match region {
-            Region::Box { corner, size } => std::array::from_fn(|d| corner[d] + size[d] * rng.random::<f64>()),
-            Region::Ball { center, radius } => loop {
-                let p: [f64; 3] = std::array::from_fn(|_| 2.0 * rng.random::<f64>() - 1.0);
-                if p.iter().map(|v| v * v).sum::<f64>() <= 1.0 {
-                    break std::array::from_fn(|d| center[d] + radius * p[d]);
-                }
-            },
-        };
-        locations.push(location_um);
-    }
-    neurons.push_population(name.clone(), template, locations);
-    Some(PopulationDescription {
-        name,
-        first,
-        count,
-        region,
-        span: rec.span,
-    })
-}
-
-fn region(rec: &Rec<'_>, errors: &mut Errors) -> Option<Region> {
-    let kind = rec.word("cst", Some("bx"), &["bx", "sp"], errors);
-    rec.check_keys(&schema::keys("region", Some(&kind)), errors);
-    let length = |key, errors: &mut Errors| rec.quantity(key, Quantity::Length, None, errors);
-    let point = [length("px1", errors), length("px2", errors), length("px3", errors)];
-    let region = if kind == "sp" {
-        Region::Ball {
-            center: point,
-            radius: length("rad", errors),
-        }
-    } else {
-        Region::Box {
-            corner: point,
-            size: [length("sx1", errors), length("sx2", errors), length("sx3", errors)],
-        }
-    };
-    let bad = match region {
-        // (NaN fails these too.)
-        Region::Ball { radius, .. } => radius.is_nan() || radius <= 0.0,
-        Region::Box { size, .. } => size.iter().any(|s| s.is_nan() || *s < 0.0),
-    };
-    if bad {
-        errors.add(
-            rec.span,
-            "a region needs a positive radius, or sizes that aren't negative",
-        );
-        return None;
-    }
-    Some(region)
-}
-
-fn rule(
-    node: &Node,
-    sets: &HashSet<&str>,
+/// A synapse's settings (a type's merged with a connection's).
+fn synapse_spec(
+    rec: &Rec<'_>,
     learning: &BTreeMap<String, LearningRule>,
     stickiness: &BTreeMap<String, Stickiness>,
     errors: &mut Errors,
-) -> Option<ConnectionRule> {
-    let rec = Rec::of(node, "connection rule", errors)?;
-    rec.check_keys(&schema::keys("rule", None), errors);
-    let set = |key: &str, errors: &mut Errors| {
-        let name = rec.word(key, None, &[], errors);
-        if !name.is_empty() && !sets.contains(name.as_str()) {
-            errors.add(
-                rec.get(key).map_or(rec.span, |n| n.span),
-                format!("'{name}' is neither a population (POP) nor a group of neurons"),
-            );
-        }
-        name
-    };
-    let (pre, post) = (set("prp", errors), set("psp", errors));
-    let in_degree = match (rec.get("cnt"), rec.get("prb")) {
-        (Some(_), None) => {
-            let k = rec.quantity("cnt", Quantity::Dimensionless, None, errors);
-            if !(k >= 0.0 && k.fract() == 0.0 && k <= f64::from(u32::MAX)) {
-                errors.add(rec.span, "'cnt' must be a whole number of inputs");
-            }
-            InDegree::Fixed(k as u32)
-        }
-        (None, Some(_)) => {
-            let p = rec.quantity("prb", Quantity::Dimensionless, None, errors);
-            if !(p > 0.0 && p <= 1.0) {
-                errors.add(rec.span, "'prb' must be a probability, more than 0 and at most 1");
-            }
-            InDegree::Probability(p)
-        }
-        _ => {
+) -> Option<SynapseSpec> {
+    let Some(weight) = rec.weight("weight", errors) else {
+        if rec.get("weight").is_none() {
             errors.add(
                 rec.span,
-                "a rule needs exactly one of 'cnt' (inputs per neuron) and 'prb' (probability)",
+                "this connection needs a 'weight' (here or in its synapse type)",
             );
-            InDegree::Fixed(0)
         }
+        return None;
     };
-    let radius_um = rec
-        .get("rad")
-        .map(|_| rec.quantity("rad", Quantity::Length, None, errors));
-    if radius_um.is_some_and(|r| r.is_nan() || r <= 0.0) {
-        errors.add(rec.span, "'rad' must be positive");
-    }
-    let weight = rec.weight("cnw", errors);
-    if weight.is_none() && rec.get("cnw").is_none() {
-        rec.missing("cnw", errors);
-    }
-    let weight = weight.unwrap_or(WeightSpec::Fixed(0.0));
-    let equilibrium = rec.weight("eqw", errors).unwrap_or(weight);
-    let learning_name = rec.word("lrn", Some("flat"), &[], errors);
+    let learning_name = rec.word("learning", Some("flat"), &[], errors);
     if !learning.contains_key(&learning_name) {
         errors.add(
-            rec.span,
-            format!("learning function '{learning_name}' isn't defined in LRN"),
+            rec.span_of("learning"),
+            format!("learning rule '{learning_name}' isn't defined in 'learning_rules'"),
         );
     }
-    let stickiness_name = rec.word("cst", Some("none"), &[], errors);
+    let stickiness_name = rec.word("stickiness", Some("none"), &[], errors);
     if !stickiness.contains_key(&stickiness_name) {
         errors.add(
-            rec.span,
-            format!("stickiness function '{stickiness_name}' isn't defined in CST"),
+            rec.span_of("stickiness"),
+            format!("stickiness function '{stickiness_name}' isn't defined in 'stickiness'"),
         );
     }
+    let decay = match rec.record("decay", "weight decay", errors) {
+        None => WeightDecay::None,
+        Some(d) => {
+            d.check_keys(&schema::keys("decay", None), errors);
+            WeightDecay::Exponential {
+                tau_ms: d.quantity("time", Quantity::Time, None, errors),
+            }
+        }
+    };
+    let limit = match rec.record("limits", "weight limits", errors) {
+        None => WeightLimit::Unbounded,
+        Some(l) => {
+            l.check_keys(&schema::keys("limits", None), errors);
+            let lower = l.quantity("min", Quantity::Dimensionless, None, errors);
+            let upper = l.quantity("max", Quantity::Dimensionless, None, errors);
+            if lower > upper {
+                errors.add(
+                    l.span,
+                    format!("the lower bound {lower} is above the upper bound {upper}"),
+                );
+            }
+            WeightLimit::Bounded { lower, upper }
+        }
+    };
+    let release = rec.record("release", "release", errors).map(|r| {
+        r.check_keys(&schema::keys("release", None), errors);
+        let d = DEFAULT_RELEASE;
+        let n = |key, default, errors: &mut Errors| r.quantity(key, Quantity::Dimensionless, Some(default), errors);
+        let t = |key, default, errors: &mut Errors| r.quantity(key, Quantity::Time, Some(default), errors);
+        Release {
+            facilitation_base: n("facilitation_base", d.facilitation_base, errors),
+            facilitation_magnitude: n("facilitation_step", d.facilitation_magnitude, errors),
+            facilitation_tau_ms: t("facilitation_time", d.facilitation_tau_ms, errors),
+            depletion_base: n("depletion_base", d.depletion_base, errors),
+            depletion_magnitude: n("depletion_step", d.depletion_magnitude, errors),
+            depletion_tau_ms: t("depletion_time", d.depletion_tau_ms, errors),
+        }
+    });
     let sign = rec
-        .get("typ")
-        .map(|_| match rec.word("typ", None, &["exc", "inh"], errors).as_str() {
-            "inh" => Sign::Inhibitory,
-            _ => Sign::Excitatory,
+        .optional_word("sign", &["excitatory", "inhibitory"], errors)
+        .map(|s| {
+            if s == "inhibitory" {
+                Sign::Inhibitory
+            } else {
+                Sign::Excitatory
+            }
         });
-    let synaptic_delay_ms = rec.get("syd").map(|_| synaptic_delay(&rec, None, errors));
-    Some(ConnectionRule {
-        pre,
-        post,
-        in_degree,
-        radius_um,
-        autapses: rec.boolean("aut", false, errors),
+    Some(SynapseSpec {
         weight,
-        equilibrium,
+        equilibrium: rec.weight("equilibrium", errors),
+        sign,
+        delay_ms: rec.quantity("delay", Quantity::Time, Some(SynapseSpec::DEFAULT_DELAY_MS), errors),
         learning: learning_name,
         stickiness: stickiness_name,
-        sign,
-        synaptic_delay_ms,
-        span: rec.span,
+        decay,
+        limit,
+        release,
+        weight_noise: rec.quantity("weight_noise", Quantity::Dimensionless, Some(0.0), errors),
     })
-}
-
-/// A synaptic delay (`syd`) in ms, which can't be negative.
-fn synaptic_delay(rec: &Rec<'_>, default: Option<f64>, errors: &mut Errors) -> f64 {
-    let ms = rec.quantity("syd", Quantity::Time, default, errors);
-    if ms < 0.0 {
-        errors.add(
-            rec.get("syd").map_or(rec.span, |n| n.span),
-            "the synaptic delay 'syd' can't be negative",
-        );
-        return 0.0;
-    }
-    ms
 }

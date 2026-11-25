@@ -1,35 +1,26 @@
 //! The Spikes network description language (`.boo` files): parser and description model.
 //!
 //! [`parse`] reads a file into a [`NetworkDescription`] with units converted to the model's base units (mV, ms,
-//! µm, m/s, Hz), id sets expanded (`input-1{1:7:1}` → `input-11` … `input-17`), and every reference checked. All
-//! problems are reported, each with its line and column.
+//! µm, m/s, Hz), neuron and synapse types applied (with each neuron's and connection's overrides), populations
+//! placed, sets and connection ends resolved, and every reference checked. All problems are reported, each with its
+//! line and column. The language is described in `docs/plans/dna/README.md`; [`schema`] has every key, and is what
+//! the editor's completions and hover help come from.
 //!
-//! The language is v1's (see `notes/03-network-description-language.md` and v1's `dna-defs.md`), read leniently:
-//! keys an older file lacks get v1's defaults, and older names (`fnc=stdp`, `SNT`, `uwb`) are accepted. v2 adds:
-//!
-//! | Key | Where | Meaning |
-//! |-----|-------|---------|
-//! | `nty=mr`, `nty=br` | neuron | monostable / bistable resonator |
-//! | `RES=(frq=…, dmp=…, lcr=…, sep=…)` | resonator neuron | resonant frequency, damping time constant; for `br` the limit-cycle and separatrix radii |
-//! | `HIP=(tgt=…, str=…, win=…, lwb=…, upb=…)` | neuron | homeostatic intrinsic plasticity: target rate, strength (mV per Hz·s), rate window, bounds |
-//! | `typ=exc` / `typ=inh` | connection | the connection's sign (default: from the sending neuron's `inh`) |
-//! | `syd=…` | neuron, connection | synaptic delay (default 0.5 ms; on a neuron, for its outgoing connections; on a connection, overriding it). A connection's delay is `syd + distance / csp` |
-//! | `nam=…` | learning or stickiness function | a name, so several of one type can coexist (default: its `fnc`) |
-//! | `MOD=[(nam=…, clr=…, rad=…, spd=…, lat=…, len=…)]` | top level | neuromodulators: clearance time, reach, spreading speed, latency, spatial falloff |
-//! | `RCP=[(mod=…, exg=…, ing=…, thr=…, pla=…, elg=…, rat=…, dir=…)]` | neuron | receptors: excitatory/inhibitory gain, threshold, plasticity, three-factor learning (eligibility time, rate), direct potential |
-//! | `REL=(mod=…, amt=…)` | neuron | releases a modulator when the neuron spikes |
+//! [`migrate`] converts a file in the older (v1-derived) form to this one.
 
 mod convert;
 pub mod description;
+mod migrate;
 mod neurons;
 pub mod schema;
 mod syntax;
 pub mod units;
 
 pub use description::{
-    ConnectionDescription, ConnectionRule, GroupDescription, InDegree, ModulatorDescription, NetworkDescription,
-    NeuronDescription, PopulationDescription, Region, SynapseDefaults, WeightSpec,
+    ConnectionDescription, DEFAULT_RELEASE, ModulatorDescription, NetworkDescription, NeuronDescription, Pattern,
+    PopulationDescription, SetDescription, SynapseSpec, WeightSpec,
 };
+pub use migrate::migrate;
 pub use neurons::{NeuronNames, NeuronView, Neurons};
 pub use syntax::{ParseError, Span};
 

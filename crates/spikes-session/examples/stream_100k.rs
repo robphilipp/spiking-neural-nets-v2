@@ -19,11 +19,19 @@ use spikes_session::{BuildSettings, Engine, InputSpec, RunSettings, Selection, S
 use tempo_runtime::SimDuration;
 
 const TEMPLATE: &str = "(
-NRN=[
-    (nid=a, mst=10 mV, mpn=0 mV, mpd=20 ms, rfp=5 ms, spp=1 mV, csp=1 m/s, LOC=(cst=ct, px1=0, px2=0, px3=0)),
-    (nid=b, mst=10 mV, mpn=0 mV, mpd=20 ms, rfp=5 ms, spp=1 mV, csp=1 m/s, LOC=(cst=ct, px1=1, px2=0, px3=0)),
+neuron_types=[
+    (name=neuron, threshold=10 mV, membrane_noise=0 mV, decay_time=20 ms, refractory_period=5 ms, spike_potential=1 mV, conduction_speed=1 m/s),
 ],
-CON=[(prn=a, psn=b, cnw=0.5)],
+synapse_types=[
+    (name=fixed, decay=(time=1500 ms), release=()),
+],
+neurons=[
+    (name=a, type=neuron, position=[0, 0, 0]),
+    (name=b, type=neuron, position=[1, 0, 0]),
+],
+connections=[
+    (from=a, to=b, type=fixed, weight=0.5),
+],
 )";
 
 #[derive(Default)]
@@ -123,10 +131,10 @@ fn main() {
     description.connections = (0..n * 10)
         .map(|k| {
             let mut c = template.connections[0].clone();
-            c.pre = format!("n{}", rng.random_range(0..n));
-            c.post = format!("n{}", k / 10);
-            c.weight = WeightSpec::Fixed(0.5);
-            c.equilibrium = WeightSpec::Fixed(0.5);
+            c.from = vec![rng.random_range(0..n) as u32];
+            c.to = vec![(k / 10) as u32];
+            c.synapse.weight = WeightSpec::Fixed(0.5);
+            c.synapse.equilibrium = None;
             c
         })
         .collect();

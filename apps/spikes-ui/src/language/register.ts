@@ -29,8 +29,10 @@ export function registerSpikesLanguage(monaco: typeof Monaco): void {
       root: [
         [/\/\/.*$/, "comment"],
         [/\/\*/, "comment", "@comment"],
-        [/[A-Z]{3}(?=\s*=)/, "keyword"],
-        [/[a-z][a-z0-9]{2}(?=\s*=)/, "variable"],
+        // Keys: a word before `=` (the section keys of the whole network are keys too).
+        [/[a-z][a-z0-9_]*(?=\s*=)/, "variable"],
+        [/\b(true|false)\b/, "keyword"],
+        [/(uniform|normal)(?=\()/, "keyword"],
         [/-?\d+(\.\d+)?([eE][-+]?\d+)?(\s*(µ|μ|u|m|n|k)?(V|s|m|Hz|Wb|m\/s|rad|deg|min|h)\b)?/, "number"],
         [/[{}()[\]]/, "@brackets"],
         [/[A-Za-z_][\w\-.]*/, "identifier"],

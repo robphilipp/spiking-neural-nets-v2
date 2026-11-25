@@ -55,7 +55,7 @@ fn op() -> impl Strategy<Value = Op> {
 }
 
 fn ring() -> String {
-    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-data/v1/ring.boo")).unwrap()
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-data/networks/ring.boo")).unwrap()
 }
 
 /// Errors that are fine: the operation doesn't apply in this state, or its argument is out of range.
@@ -129,7 +129,7 @@ fn apply(ops: Vec<Op>) {
                 let text = if valid {
                     ring()
                 } else {
-                    "(NRN=[(nid=x, mst=1 parsec)])".to_string()
+                    "(neurons=[(name=x, threshold=1 parsec, position=[0, 0, 0])])".to_string()
                 };
                 match session.update_description(text) {
                     Ok(()) => assert_eq!(session.state(), State::Loaded),

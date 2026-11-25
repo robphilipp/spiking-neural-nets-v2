@@ -4,9 +4,10 @@
 //! file    ::= record
 //! record  ::= "(" [ field { "," field } [","] ] ")"
 //! field   ::= key "=" value
-//! value   ::= record | list | random | number [unit] | ids
-//! list    ::= "[" [ value { "," value } [","] ] "]"
-//! random  ::= "r" number ":" number                    e.g. r0:1
+//! value   ::= record | list | call | random | number [unit] | ids
+//! list    ::= "[" [ value { "," value } [","] ] "]"          e.g. a point: [40, 0, 10 µm]
+//! call    ::= word "(" [ value { "," value } ] ")"            e.g. uniform(0, 2)
+//! random  ::= "r" number ":" number                    e.g. r0:1 (the old form of uniform(0, 1))
 //! ids     ::= word [ "{" item { "," item } "}" ]        e.g. in-1, input-1{1:7:1}, inhib-{1,3,5}
 //! item    ::= integer ":" integer ":" integer | word    a range (start:end:step, inclusive) or a suffix
 //! ```
@@ -67,6 +68,11 @@ pub(crate) enum Value {
     },
     /// A word, or the words an id expression expands to.
     Ids(Vec<String>),
+    /// `name(arg, …)`, e.g. `uniform(0, 2)`.
+    Call {
+        name: String,
+        args: Vec<Node>,
+    },
 }
 
 /// A value with its position.
@@ -246,7 +252,7 @@ impl Parser {
         let span = self.span();
         let key = self.word();
         if key.is_empty() || !key.starts_with(|c: char| c.is_ascii_alphabetic()) {
-            return Err(self.error("expected a key such as 'nid' or 'NRN'"));
+            return Err(self.error("expected a key such as 'name' or 'neurons'"));
         }
         self.expect('=')?;
         let value = self.value()?;
@@ -283,12 +289,28 @@ impl Parser {
                     unit: (!unit.is_empty()).then_some(unit),
                 }
             }
+            // A call ('uniform(0, 2)'): a word directly followed by '('.
+            Some(c) if c.is_ascii_alphabetic() && self.call_ahead() => {
+                let name = self.word();
+                let args = self.sequence('(', ')', |p| p.value())?;
+                Value::Call { name, args }
+            }
             // A word, a word with a set ('in-{1,2}'), or a bare set ('{a, b}').
             Some(c) if is_word_char(c) || c == '{' => Value::Ids(self.ids()?),
             Some(found) => return Err(self.error(format!("expected a value, found '{found}'"))),
             None => return Err(self.error("expected a value, found the end of the file")),
         };
         Ok(Node { span, value })
+    }
+
+    /// `true` if the text ahead is a word directly followed by `(`.
+    fn call_ahead(&self) -> bool {
+        let rest = &self.chars[self.pos..];
+        let len = rest
+            .iter()
+            .take_while(|c| c.is_ascii_alphanumeric() || **c == '_')
+            .count();
+        len > 0 && rest.get(len) == Some(&'(')
     }
 
     /// `true` if the text ahead is `r<number>:<number>` rather than a word starting with 'r'.
@@ -524,6 +546,22 @@ mod tests {
         assert_eq!(value("r0.2:0.4"), Value::Random { low: 0.2, high: 0.4 });
         assert_eq!(value("ring-1"), Value::Ids(vec!["ring-1".into()]));
         assert_eq!(value("{a, b}"), Value::Ids(vec!["a".into(), "b".into()]));
+    }
+
+    #[test]
+    fn calls_and_points() {
+        let Value::Call { name, args } = value("uniform(0.5, 2)") else {
+            panic!()
+        };
+        assert_eq!(name, "uniform");
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[1].value, Value::Number { value: 2.0, unit: None });
+        // A word then a space then '(' is not a call.
+        assert!(parse("(x=uniform (1, 2))").is_err());
+        let Value::List(point) = value("[40, 0, 10 µm]") else {
+            panic!()
+        };
+        assert_eq!(point.len(), 3);
     }
 
     #[test]

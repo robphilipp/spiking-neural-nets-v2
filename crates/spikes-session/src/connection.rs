@@ -276,7 +276,7 @@ impl Connection {
                             .map(|n| api::Neuron {
                                 index: n.index,
                                 name: n.name.clone(),
-                                group: n.group.clone(),
+                                population: n.population.clone(),
                                 kind: n.kind.to_string(),
                                 position: n.position,
                                 inhibitory: n.inhibitory,

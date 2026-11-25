@@ -28,12 +28,22 @@ use spikes_session::{BuildSettings, Engine, InputSpec, RunSettings, SessionNotic
 use tempo_runtime::{Jitter, SimDuration};
 
 const TEMPLATE: &str = "(
-NRN=[
-    (nid=a, mst=10 mV, mpn=0 mV, mpd=20 ms, rfp=4 ms, spp=1 mV, csp=1 m/s, WLF=(fnc=bnd, lwb=0.0, upb=3.0), LOC=(cst=ct, px1=0, px2=0, px3=0)),
-    (nid=b, mst=10 mV, mpn=0 mV, mpd=20 ms, rfp=4 ms, spp=1 mV, csp=1 m/s, WLF=(fnc=bnd, lwb=0.0, upb=3.0), LOC=(cst=ct, px1=1, px2=0, px3=0)),
+neuron_types=[
+    (name=neuron, threshold=10 mV, membrane_noise=0 mV, decay_time=20 ms, refractory_period=4 ms, spike_potential=1 mV, conduction_speed=1 m/s),
 ],
-CON=[(prn=a, psn=b, cnw=1.0, lrn=stdp)],
-LRN=[(fnc=stdp, ina=0.06, inp=30 ms, exa=0.05, exp=20 ms), (fnc=flat)],
+synapse_types=[
+    (name=stdp, decay=(time=1500 ms), limits=(min=0, max=3), release=(), learning=stdp),
+],
+neurons=[
+    (name=a, type=neuron, position=[0, 0, 0]),
+    (name=b, type=neuron, position=[1, 0, 0]),
+],
+connections=[
+    (from=a, to=b, type=stdp, weight=1),
+],
+learning_rules=[
+    (name=stdp, rule=stdp_hard, depression=0.06, depression_time=30 ms, potentiation=0.05, potentiation_time=20 ms),
+],
 )";
 
 /// A random recurrent network: `n` neurons in a 1 mm cube, 20 excitatory (80%) or inhibitory inputs each, learning.
@@ -54,16 +64,16 @@ fn network(n: usize) -> NetworkDescription {
         .map(|k| {
             let mut c = template.connections[0].clone();
             let pre = rng.random_range(0..n);
-            c.pre = format!("n{pre}");
-            c.post = format!("n{}", k / 20);
+            c.from = vec![pre as u32];
+            c.to = vec![(k / 20) as u32];
             let w = rng.random_range(0.5..1.5);
-            c.weight = WeightSpec::Fixed(w);
-            c.equilibrium = WeightSpec::Fixed(w);
-            c.sign = if pre % 5 == 0 {
+            c.synapse.weight = WeightSpec::Fixed(w);
+            c.synapse.equilibrium = None;
+            c.synapse.sign = Some(if pre % 5 == 0 {
                 spikes_model::Sign::Inhibitory
             } else {
                 spikes_model::Sign::Excitatory
-            };
+            });
             c
         })
         .collect();

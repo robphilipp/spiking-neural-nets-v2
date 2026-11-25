@@ -87,7 +87,7 @@ impl ReplayData {
         let f = "neurons.arrow";
         let ids = u64s(&neurons_table, "neuron", f)?;
         let names = column(&neurons_table, "name", f)?.as_string::<i32>().clone();
-        let groups = column(&neurons_table, "group", f)?.as_string::<i32>().clone();
+        let populations = column(&neurons_table, "population", f)?.as_string::<i32>().clone();
         let kinds = column(&neurons_table, "kind", f)?.as_string::<i32>().clone();
         let inhibitory = column(&neurons_table, "inhibitory", f)?.as_boolean().clone();
         let axis = |a: &str| -> Result<Vec<f64>, SessionError> {
@@ -102,7 +102,7 @@ impl ReplayData {
             .map(|i| NeuronInfo {
                 index: i as u32,
                 name: names.value(i).to_string(),
-                group: groups.value(i).to_string(),
+                population: populations.value(i).to_string(),
                 kind: kind(kinds.value(i)),
                 position: [x[i], y[i], z[i]],
                 inhibitory: inhibitory.value(i),

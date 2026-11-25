@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
 /** An example network (the tests run from apps/spikes-ui). */
-const example = (name: string) => join(process.cwd(), "..", "..", "test-data", "v1", name);
+const example = (name: string) => join(process.cwd(), "..", "..", "test-data", "networks", name);
 
 test("open an example, build, stimulate and run it, and watch it live", async ({ page }) => {
   const errors: string[] = [];
@@ -41,7 +41,7 @@ test("parse errors are shown in the editor", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
   await page.locator(".monaco-editor").click();
-  await page.keyboard.type("(NRN=[(nid=a, mst=1 parsec)])");
+  await page.keyboard.type("(neurons=[(name=a, threshold=1 parsec, position=[0, 0, 0])])");
   await page.getByTestId("apply").click();
   await expect(page.getByText(/error\(s\) in the description/)).toBeVisible();
   await expect(page.locator(".monaco-editor .squiggly-error").first()).toBeAttached();
@@ -51,21 +51,23 @@ test("the editor suggests keys and explains them", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
   await page.locator(".monaco-editor").click();
-  await page.keyboard.type("(NRN=[(nid=a, nty=bi, ");
+  await page.keyboard.type("(neurons=[(name=a, dynamics=bistable_integrator, thresh");
   await page.keyboard.press("Control+Space");
   const widget = page.locator(".suggest-widget");
   await expect(widget).toBeVisible();
-  await expect(widget).toContainText("lct"); // the bistable threshold, offered because nty=bi
-  await expect(widget).not.toContainText("mst ");
+  // The bistable thresholds, offered because of its dynamics; not the plain threshold.
+  await expect(widget).toContainText("tonic_on_threshold");
+  await expect(widget.getByRole("option", { name: /^threshold/ })).toHaveCount(0);
   await page.screenshot({ path: "test-results/editor.png" });
   await page.keyboard.press("Escape");
+  for (let i = 0; i < "thresh".length; i++) await page.keyboard.press("Backspace");
   // Hover help on a key.
-  await page.keyboard.type("mpd=250 ms)])");
+  await page.keyboard.type("decay_time=250 ms, position=[0, 0, 0])])");
   // Monaco shows hover help after a delay; hover again if the first one landed while the editor was settling.
   const help = page.locator(".monaco-hover").filter({ hasText: "decay time constant" });
   await expect(async () => {
     await page.mouse.move(0, 0);
-    await page.getByText("mpd", { exact: true }).hover();
+    await page.getByText("decay_time", { exact: true }).hover();
     await expect(help).toBeVisible({ timeout: 1500 });
   }).toPass({ timeout: 10_000 });
 });

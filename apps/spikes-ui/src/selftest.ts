@@ -16,9 +16,9 @@ export async function selftest(): Promise<void> {
     // Project files through the real fs plugin and its permissions (the app's data folder is in scope).
     const folder = await join(await appDataDir(), "selftest-project");
     const project = { ...newProject("selftest"), background: { rateHz: 5, mv: 12, prefix: "" } };
-    await writeProject(folder, project, "(NRN=[(nid=a, LOC=(px1=0, px2=0, px3=0))])");
+    await writeProject(folder, project, "(neurons=[(name=a, position=[0, 0, 0])])");
     const back = await readProject(folder);
-    const projectOk = JSON.stringify(back.project) === JSON.stringify(project) && back.description.includes("nid=a");
+    const projectOk = JSON.stringify(back.project) === JSON.stringify(project) && back.description.includes("name=a");
 
     const client = await TauriClient.connect();
     const ring = examples.find((e) => e.name === "ring")!.text;

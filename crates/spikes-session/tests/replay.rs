@@ -13,7 +13,7 @@ use tempo_runtime::{SimDuration, SimTime};
 fn v1(name: &str) -> String {
     std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../test-data/v1")
+            .join("../../test-data/networks")
             .join(name),
     )
     .unwrap()

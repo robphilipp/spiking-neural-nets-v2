@@ -38,6 +38,16 @@ enum Command {
         /// The run directory.
         dir: PathBuf,
     },
+    /// Converts descriptions in the older form (NRN, CON, …) to the current one, printing the result (or, with
+    /// `--write`, replacing each file).
+    Migrate {
+        /// `.boo` files.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Replace each file with its migrated form.
+        #[arg(long)]
+        write: bool,
+    },
 }
 
 #[derive(clap::Args)]
@@ -90,6 +100,7 @@ fn main() -> ExitCode {
         Command::Check { files } => check(&files),
         Command::Run(args) => run(&args),
         Command::Parquet { dir } => parquet(&dir),
+        Command::Migrate { files, write } => migrate(&files, write),
     };
     match result {
         Ok(code) => code,
@@ -108,7 +119,8 @@ fn check(files: &[PathBuf]) -> Result<ExitCode> {
         let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
         match spikes_dna::parse(&text) {
             Ok(d) => println!(
-                "{}: ok: {} neurons{}, {} connections{}, {} groups, {} learning rules, {} modulators",
+                "{}: ok: {} neurons{}, {} connections (expanded when built), {} sets, {} learning rules, {} \
+                 modulators, {} nodes",
                 file.display(),
                 d.neurons.len(),
                 match d.populations.len() {
@@ -116,13 +128,10 @@ fn check(files: &[PathBuf]) -> Result<ExitCode> {
                     n => format!(" ({n} population{})", if n == 1 { "" } else { "s" }),
                 },
                 d.connections.len(),
-                match d.rules.len() {
-                    0 => String::new(),
-                    n => format!(" + {n} rule{} (expanded when built)", if n == 1 { "" } else { "s" }),
-                },
-                d.groups.len(),
-                d.learning.len(),
-                d.modulators.len()
+                d.sets.len(),
+                d.learning.len() - 1, // 'flat' is always there
+                d.modulators.len(),
+                d.nodes.len(),
             ),
             Err(errors) => {
                 failed = true;
@@ -341,4 +350,37 @@ fn parquet(dir: &Path) -> Result<ExitCode> {
         println!("wrote {}", file.display());
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn migrate(files: &[PathBuf], write: bool) -> Result<ExitCode> {
+    let mut failed = false;
+    for file in files {
+        let text = std::fs::read_to_string(file)?;
+        match spikes_dna::migrate(&text) {
+            Ok(new) => {
+                // The result must be a valid description.
+                if let Err(errors) = spikes_dna::parse(&new) {
+                    failed = true;
+                    eprintln!("{}: migrated, but the result doesn't parse:", file.display());
+                    for e in errors {
+                        eprintln!("  {e}");
+                    }
+                    continue;
+                }
+                if write {
+                    std::fs::write(file, new)?;
+                    eprintln!("{}: migrated", file.display());
+                } else {
+                    print!("{new}");
+                }
+            }
+            Err(errors) => {
+                failed = true;
+                for e in errors {
+                    eprintln!("{}: {e}", file.display());
+                }
+            }
+        }
+    }
+    Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
 }

@@ -5,18 +5,25 @@ use spikes_network::{BuildOptions, Event, Network, NeuronActor, PoissonInput, Ru
 use tempo_runtime::{RuntimeConfig, SimDuration, SimTime, Snapshot};
 
 const NET: &str = "(
-MOD=[(nam=ach, clr=50 ms, rad=300 µm, spd=1 m/s, lat=1 ms)],
-POP=[
-    (nam=exc, cnt=200, csp=1 m/s, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=400 µm, sx2=400 µm, sx3=400 µm)),
-    (nam=inh, cnt=50, inh=t, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=400 µm, sx2=400 µm, sx3=400 µm),
-        REL=(mod=ach, amt=1)),
+synapse_types=[
+    (name=stdp_hard, decay=(time=1500 ms), release=(), learning=stdp_hard),
+    (name=fixed, decay=(time=1500 ms), release=()),
 ],
-RUL=[
-    (prp=exc, psp=exc, cnt=20, cnw=r0.5:1.5, lrn=stdp_hard),
-    (prp=inh, psp=exc, prb=0.2, cnw=1),
-    (prp=exc, psp=inh, cnt=10, rad=120 µm, cnw=1),
+populations=[
+    (name=exc, conduction_speed=1 m/s, count=200, random=(box=(corner=[0, 0, 0], size=[400 µm, 400 µm, 400 µm]))),
+    (name=inh, inhibitory=true, releases=(modulator=ach, amount=1), count=50, random=(box=(corner=[0, 0, 0], size=[400 µm, 400 µm, 400 µm]))),
 ],
-LRN=[(fnc=stdp_hard, ina=0.01, inp=10 ms, exa=0.02, exp=10 ms)],
+connections=[
+    (from=exc, to=exc, pattern=fan_in, count=20, type=stdp_hard, weight=uniform(0.5, 1.5)),
+    (from=inh, to=exc, pattern=random, probability=0.2, type=fixed, weight=1),
+    (from=exc, to=inh, pattern=fan_in, count=10, within=120 µm, type=fixed, weight=1),
+],
+learning_rules=[
+    (name=stdp_hard, rule=stdp_hard, depression=0.01, depression_time=10 ms, potentiation=0.02, potentiation_time=10 ms),
+],
+modulators=[
+    (name=ach, clearance_time=50 ms, reach=300 µm, speed=1 m/s, latency=1 ms),
+],
 )";
 
 fn ms(v: u64) -> SimTime {

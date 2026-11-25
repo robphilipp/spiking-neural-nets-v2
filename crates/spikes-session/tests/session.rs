@@ -9,7 +9,7 @@ use tempo_runtime::{SimDuration, SimTime};
 fn v1(name: &str) -> String {
     std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../test-data/v1")
+            .join("../../test-data/networks")
             .join(name),
     )
     .unwrap()
@@ -22,7 +22,9 @@ fn ms(v: u64) -> SimDuration {
 #[test]
 fn parse_errors_come_back_with_positions() {
     let engine = Engine::new();
-    let err = engine.create("bad", "(NRN=[(nid=a, mst=1 parsec)])").unwrap_err();
+    let err = engine
+        .create("bad", "(neurons=[(name=a, threshold=1 parsec, position=[0, 0, 0])])")
+        .unwrap_err();
     let SessionError::Parse(errors) = err else {
         panic!("{err}")
     };
@@ -168,8 +170,12 @@ fn recorded_runs_write_a_recording() {
 #[test]
 fn modulators_can_be_released_and_bad_input_is_rejected() {
     let text = "(
-MOD=[(nam=ach, clr=50 ms, lat=1 ms)],
-NRN=[(nid=a, mst=5 mV, mpn=0 mV, LOC=(cst=ct, px1=0, px2=0, px3=0), RCP=[(mod=ach, dir=6 mV)])],
+neurons=[
+    (name=a, threshold=5 mV, membrane_noise=0 mV, receptors=[(modulator=ach, direct_potential=6 mV)], position=[0, 0, 0]),
+],
+modulators=[
+    (name=ach, clearance_time=50 ms, latency=1 ms),
+],
 )";
     let engine = Engine::new();
     let session = engine.create("mod", text).unwrap();
@@ -192,7 +198,14 @@ NRN=[(nid=a, mst=5 mV, mpn=0 mV, LOC=(cst=ct, px1=0, px2=0, px3=0), RCP=[(mod=ac
     );
 
     let other = engine
-        .create("plain", "(NRN=[(nid=b, LOC=(cst=ct, px1=0, px2=0, px3=0))])")
+        .create(
+            "plain",
+            "(
+neurons=[
+    (name=b, position=[0, 0, 0]),
+],
+)",
+        )
         .unwrap();
     other.build(BuildSettings::default()).unwrap();
     assert!(matches!(other.release_modulator(0, 1.0), Err(SessionError::Invalid(_))));

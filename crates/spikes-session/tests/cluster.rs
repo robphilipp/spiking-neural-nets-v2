@@ -90,7 +90,9 @@ fn run(session: &Session, ms: u64, record: Option<PathBuf>) -> Option<spikes_rec
 /// Builds the line-sensor network (on `nodes`, if any), drives its inputs, observes some neurons, and runs it twice
 /// (the second time recorded); returns what a viewer saw, a neuron's final state, and the recording's row counts.
 fn line_sensor(engine: &Engine, nodes: Vec<String>, record: PathBuf) -> (Seen, String, String, String) {
-    let session = engine.create("line", data("v1", "line-sensor-layers-wta.boo")).unwrap();
+    let session = engine
+        .create("line", data("networks", "line-sensor-layers-wta.boo"))
+        .unwrap();
     session.set_nodes(nodes).unwrap();
     let network = session
         .build(BuildSettings {
@@ -201,7 +203,9 @@ fn dopamine_reaches_every_node() {
 #[test]
 fn best_effort_runs_follow_the_coordinators_clock_and_count_late_spikes() {
     let engine = Engine::new();
-    let session = engine.create("line", data("v1", "line-sensor-layers-wta.boo")).unwrap();
+    let session = engine
+        .create("line", data("networks", "line-sensor-layers-wta.boo"))
+        .unwrap();
     session.set_nodes(agents(2)).unwrap();
     let network = session.build(BuildSettings::default()).unwrap();
     let inputs: Vec<u32> = (0..network.neurons.len() as u32)
@@ -260,7 +264,7 @@ fn best_effort_runs_follow_the_coordinators_clock_and_count_late_spikes() {
 fn a_network_generated_in_code_builds_on_nodes() {
     // Its "source" is a placeholder: the nodes get the description itself.
     let engine = Engine::new();
-    let mut description = spikes_dna::parse(&data("v1", "stdp-test.boo")).unwrap();
+    let mut description = spikes_dna::parse(&data("networks", "stdp-test.boo")).unwrap();
     description.neurons = description
         .neurons
         .iter()
@@ -269,10 +273,7 @@ fn a_network_generated_in_code_builds_on_nodes() {
             ..n.to_description()
         })
         .collect();
-    description.connections.iter_mut().for_each(|c| {
-        c.pre = format!("gen-{}", c.pre);
-        c.post = format!("gen-{}", c.post);
-    });
+    // (Connections refer to neurons by index: renaming them changes nothing there.)
     let session = engine.create_described("generated", "// generated in code", description);
     session.set_nodes(agents(2)).unwrap();
     let network = session.build(BuildSettings::default()).unwrap();
@@ -284,16 +285,22 @@ fn a_network_generated_in_code_builds_on_nodes() {
 }
 
 const SAVED_NET: &str = "(
-POP=[
-    (nam=exc, cnt=120, csp=1 m/s, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=300 µm, sx2=300 µm, sx3=300 µm)),
-    (nam=inh, cnt=30, inh=t, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=300 µm, sx2=300 µm, sx3=300 µm)),
+synapse_types=[
+    (name=stdp_hard, decay=(time=1500 ms), release=(), learning=stdp_hard),
+    (name=fixed, decay=(time=1500 ms), release=()),
 ],
-RUL=[
-    (prp=exc, psp=exc, cnt=15, cnw=r0.5:1.5, lrn=stdp_hard),
-    (prp=inh, psp=exc, prb=0.2, cnw=1),
-    (prp=exc, psp=inh, cnt=8, cnw=1),
+populations=[
+    (name=exc, conduction_speed=1 m/s, count=120, random=(box=(corner=[0, 0, 0], size=[300 µm, 300 µm, 300 µm]))),
+    (name=inh, inhibitory=true, count=30, random=(box=(corner=[0, 0, 0], size=[300 µm, 300 µm, 300 µm]))),
 ],
-LRN=[(fnc=stdp_hard, ina=0.01, inp=10 ms, exa=0.02, exp=10 ms)],
+connections=[
+    (from=exc, to=exc, pattern=fan_in, count=15, type=stdp_hard, weight=uniform(0.5, 1.5)),
+    (from=inh, to=exc, pattern=random, probability=0.2, type=fixed, weight=1),
+    (from=exc, to=inh, pattern=fan_in, count=8, type=fixed, weight=1),
+],
+learning_rules=[
+    (name=stdp_hard, rule=stdp_hard, depression=0.01, depression_time=10 ms, potentiation=0.02, potentiation_time=10 ms),
+],
 )";
 
 /// Builds the saved-run test network on `nodes` (none: this process), runs it with input and a connection made
@@ -348,7 +355,9 @@ fn a_run_saved_on_a_cluster_continues_anywhere() {
         (&local_save, "saved in one process"),
     ] {
         for nodes in [0, 2, 3] {
-            let session = engine.create("continued", "(NRN=[])").unwrap();
+            let session = engine
+                .create("continued", "(neurons=[(name=placeholder, position=[0, 0, 0])])")
+                .unwrap();
             session.set_nodes(agents(nodes)).unwrap();
             let network = session.load_saved(saved, 1).unwrap();
             assert_eq!(

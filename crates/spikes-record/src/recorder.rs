@@ -207,7 +207,7 @@ fn write_neurons(dir: &Path, network: &Network, description: &NetworkDescription
         vec![
             col("neuron", DataType::UInt64),
             col("name", DataType::Utf8),
-            col("group", DataType::Utf8),
+            col("population", DataType::Utf8),
             col("kind", DataType::Utf8),
             col("inhibitory", DataType::Boolean),
             col("x", DataType::Float64),
@@ -219,7 +219,9 @@ fn write_neurons(dir: &Path, network: &Network, description: &NetworkDescription
                 network.neurons[..n].iter().map(|r| r.id().raw()),
             )),
             Arc::new(StringArray::from_iter_values(neurons().map(|d| d.id()))),
-            Arc::new(StringArray::from_iter_values(neurons().map(|d| d.group()))),
+            Arc::new(StringArray::from_iter_values(
+                neurons().map(|d| d.population().unwrap_or_default()),
+            )),
             Arc::new(StringArray::from_iter_values(neurons().map(|d| d.params().kind.name()))),
             Arc::new(BooleanArray::from_iter(neurons().map(|d| Some(d.inhibitory())))),
             Arc::new(position(0)),

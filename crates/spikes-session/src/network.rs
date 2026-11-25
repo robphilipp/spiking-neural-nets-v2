@@ -16,8 +16,8 @@ pub struct NeuronInfo {
     pub index: u32,
     /// Name (`nid`).
     pub name: String,
-    /// Execution group.
-    pub group: String,
+    /// Its population (empty for a neuron listed on its own).
+    pub population: String,
     /// Dynamics class, e.g. `monostable_integrator`.
     pub kind: &'static str,
     /// Soma position in µm.
@@ -50,7 +50,7 @@ pub struct NeuronList(List);
 enum List {
     Described {
         names: Arc<NeuronNames>,
-        /// (group, dynamics class, inhibitory) of each kind of neuron (a population, or a neuron listed alone).
+        /// (population, dynamics class, inhibitory) of each kind of neuron (a population, or a neuron listed alone).
         kinds: Vec<(String, &'static str, bool)>,
         /// Each neuron's kind and position.
         neurons: Vec<(u32, [f64; 3])>,
@@ -74,7 +74,11 @@ impl NeuronList {
             .neurons
             .iter()
             .map(|d| {
-                let key = (d.group(), d.params().kind.name(), d.inhibitory());
+                let key = (
+                    d.population().unwrap_or_default(),
+                    d.params().kind.name(),
+                    d.inhibitory(),
+                );
                 let kind = *index.entry(key).or_insert_with(|| {
                     kinds.push((key.0.to_string(), key.1, key.2));
                     kinds.len() as u32 - 1
@@ -103,11 +107,11 @@ impl NeuronList {
         match &self.0 {
             List::Described { names, kinds, neurons } => {
                 let &(kind, position) = neurons.get(index as usize)?;
-                let (group, kind, inhibitory) = &kinds[kind as usize];
+                let (population, kind, inhibitory) = &kinds[kind as usize];
                 Some(NeuronInfo {
                     index,
                     name: names.name(index)?.into_owned(),
-                    group: group.clone(),
+                    population: population.clone(),
                     kind,
                     position,
                     inhibitory: *inhibitory,

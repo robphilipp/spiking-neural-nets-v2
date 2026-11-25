@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
-use spikes_dna::{InDegree, NetworkDescription, WeightSpec};
+use spikes_dna::{NetworkDescription, Pattern, SynapseSpec, WeightSpec};
 use spikes_model::{NeuronParams, Receptor, Sign, Synapse, SynapseParams};
 use tempo_runtime::placement::spatial_partitions_weighted;
 use tempo_runtime::{ActorId, EdgeIdx, Jitter, RouteEdge, RouteId, SimDuration};
@@ -18,7 +18,7 @@ use crate::neuron::{NetworkParams, NeuronActor};
 /// How to build a network.
 #[derive(Clone, Debug)]
 pub struct BuildOptions {
-    /// Seed for random initial weights (`cnw=r0:1`).
+    /// Seed for random initial weights (`weight=uniform(0, 1)`) and random connection patterns.
     pub seed: u64,
     /// The shortest allowed connection delay. Neurons closer than `min_delay × speed` get this delay; it also keeps
     /// the lookahead (and so parallelism) from collapsing when neurons sit very close together.
@@ -51,14 +51,11 @@ pub struct NewConnection {
     pub params: u16,
 }
 
-/// What a kind of neuron (a population, or a neuron listed on its own) gives the connections it makes and gets.
+/// What a kind of neuron (a population, or a neuron listed on its own) gives the connections it makes.
 #[derive(Clone, Debug)]
 struct Wire {
-    synaptic_delay_ms: f64,
     conduction_m_per_s: f64,
     inhibitory: bool,
-    /// Which kind of synapse defaults the neuron gives its incoming synapses.
-    defaults: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -66,8 +63,8 @@ struct Wiring {
     kinds: Vec<Wire>,
     /// Each neuron's kind and position.
     neurons: Vec<(u32, [f64; 3])>,
-    /// (synapse defaults kind, learning rule name) → parameter set.
-    params: HashMap<(u32, String), u16>,
+    /// Learning rule name → the parameter set of a plain synapse with it (for connections made during a run).
+    params: HashMap<String, u16>,
     min_delay: SimDuration,
 }
 
@@ -136,22 +133,24 @@ impl Network {
             .map(|i| i as u16)
     }
 
-    /// What a new connection from `pre` to `post` (description indices) would be: its delay, its default sign, and
-    /// its synapse parameter set for `learning` (a rule defined in the description; `None` for `flat`).
+    /// What a new connection from `pre` to `post` (description indices) would be: its delay (the default synaptic
+    /// delay plus conduction), its default sign, and the parameter set of a plain synapse (no decay, limits or
+    /// release) with `learning` (a rule defined in the description; `None` for `flat`).
     pub fn connection(&self, pre: usize, post: usize, learning: Option<&str>) -> Option<NewConnection> {
         let w = &self.wiring;
         let (&(from_kind, from_at), &(to_kind, to_at)) = (w.neurons.get(pre)?, w.neurons.get(post)?);
-        let (from, to) = (&w.kinds[from_kind as usize], &w.kinds[to_kind as usize]);
+        let from = &w.kinds[from_kind as usize];
+        let _ = to_kind;
         let distance_um = from_at
             .iter()
             .zip(&to_at)
             .map(|(a, b)| (a - b).powi(2))
             .sum::<f64>()
             .sqrt();
-        let delay = (SimDuration::from_millis_f64(from.synaptic_delay_ms)
+        let delay = (SimDuration::from_millis_f64(SynapseSpec::DEFAULT_DELAY_MS)
             + SimDuration::from_micros_f64(distance_um / from.conduction_m_per_s))
         .max(w.min_delay);
-        let params = *w.params.get(&(to.defaults, learning.unwrap_or("flat").to_string()))?;
+        let params = *w.params.get(learning.unwrap_or("flat"))?;
         Some(NewConnection {
             delay,
             sign: if from.inhibitory {
@@ -165,9 +164,8 @@ impl Network {
 
     /// The learning rules new connections can use.
     pub fn learning_rules(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.wiring.params.keys().map(|(_, l)| l.clone()).collect();
+        let mut names: Vec<String> = self.wiring.params.keys().cloned().collect();
         names.sort();
-        names.dedup();
         names
     }
 
@@ -211,20 +209,19 @@ impl<T: std::fmt::Debug> Table<T> {
 /// A population: dynamics, receptors, and modulator release on spiking.
 type Population = (NeuronParams, Vec<Receptor>, Option<(u16, f64)>);
 
-/// Each neuron's expected work, for placement: 1, plus its expected incoming connections (from the connection list
-/// and the rules; a probability rule with a radius is counted as if the radius took in every sender).
-fn expected_work(description: &NetworkDescription, index: &impl Fn(&str) -> usize) -> Vec<u64> {
+/// Each neuron's expected work, for placement: 1, plus its expected incoming connections (a connection with
+/// `within` is counted as if the radius took in every sender).
+fn expected_work(description: &NetworkDescription) -> Vec<u64> {
     let mut work = vec![1u64; description.neurons.len()];
     for c in &description.connections {
-        work[index(&c.post)] += 1;
-    }
-    for rule in &description.rules {
-        let senders = description.members(&rule.pre).map_or(0, |s| s.len() as u64);
-        let each = match rule.in_degree {
-            spikes_dna::InDegree::Fixed(k) => u64::from(k).min(senders),
-            spikes_dna::InDegree::Probability(p) => (p * senders as f64).round() as u64,
+        let senders = c.from.len() as u64;
+        let each = match c.pattern {
+            Pattern::AllToAll => senders,
+            Pattern::OneToOne => 1,
+            Pattern::FanIn(k) => u64::from(k).min(senders),
+            Pattern::Random(p) => (p * senders as f64).round() as u64,
         };
-        for post in description.members(&rule.post).unwrap_or_default() {
+        for &post in &c.to {
             work[post as usize] += each;
         }
     }
@@ -234,21 +231,36 @@ fn expected_work(description: &NetworkDescription, index: &impl Fn(&str) -> usiz
 fn draw(spec: WeightSpec, rng: &mut Xoshiro256PlusPlus) -> f64 {
     match spec {
         WeightSpec::Fixed(w) => w,
-        WeightSpec::Random { low, high } => low + (high - low) * rng.random::<f64>(),
+        WeightSpec::Uniform { low, high } => low + (high - low) * rng.random::<f64>(),
+        WeightSpec::Normal { mean, sd } => {
+            // Box–Muller.
+            let u1: f64 = 1.0 - rng.random::<f64>();
+            let u2: f64 = rng.random();
+            mean + sd * (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
+        }
     }
 }
 
-/// A seed for one rule's connections to one receiving neuron.
-fn mix(seed: u64, rule: u64, post: u64) -> u64 {
-    let mut z = seed ^ rule.rotate_left(40) ^ post.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+/// A seed for one connection's synapses onto one receiving neuron.
+fn mix(seed: u64, connection: u64, post: u64) -> u64 {
+    let mut z = seed ^ connection.rotate_left(40) ^ post.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
 }
 
+/// How many senders a receiver picks at random.
+#[derive(Copy, Clone)]
+enum Pick {
+    /// This many different ones.
+    Count(u32),
+    /// Each with this probability.
+    Probability(f64),
+}
+
 /// Picks senders from `pool` (ascending neuron indices) for receiver `post`: `k` different ones at random, or each
 /// with probability `p`; `post` itself only with autapses. The result is ascending.
-fn choose(pool: &[u32], post: u32, autapses: bool, degree: InDegree, rng: &mut Xoshiro256PlusPlus, out: &mut Vec<u32>) {
+fn choose(pool: &[u32], post: u32, autapses: bool, pick: Pick, rng: &mut Xoshiro256PlusPlus, out: &mut Vec<u32>) {
     out.clear();
     // Skip the receiver by index arithmetic, without copying the pool.
     let own = if autapses { None } else { pool.binary_search(&post).ok() };
@@ -257,9 +269,9 @@ fn choose(pool: &[u32], post: u32, autapses: bool, degree: InDegree, rng: &mut X
         Some(o) if i >= o => pool[i + 1],
         _ => pool[i],
     };
-    match degree {
-        InDegree::Fixed(k) if k as usize >= len => out.extend((0..len).map(at)),
-        InDegree::Fixed(k) => {
+    match pick {
+        Pick::Count(k) if k as usize >= len => out.extend((0..len).map(at)),
+        Pick::Count(k) => {
             // Floyd's algorithm: k distinct indices in O(k).
             let mut picked = std::collections::HashSet::with_capacity(k as usize);
             for j in len - k as usize..len {
@@ -271,8 +283,8 @@ fn choose(pool: &[u32], post: u32, autapses: bool, degree: InDegree, rng: &mut X
             out.extend(picked.into_iter().map(at));
             out.sort_unstable();
         }
-        InDegree::Probability(p) if p >= 1.0 => out.extend((0..len).map(at)),
-        InDegree::Probability(p) => {
+        Pick::Probability(p) if p >= 1.0 => out.extend((0..len).map(at)),
+        Pick::Probability(p) => {
             // Geometric skips: O(chosen), not O(pool).
             let log_q = (1.0 - p).ln();
             let mut i = 0usize;
@@ -286,6 +298,18 @@ fn choose(pool: &[u32], post: u32, autapses: bool, degree: InDegree, rng: &mut X
                 i += 1;
             }
         }
+    }
+}
+
+/// The model's synapse parameters for a synapse spec.
+fn synapse_params(spec: &SynapseSpec, description: &NetworkDescription) -> SynapseParams {
+    SynapseParams {
+        decay: spec.decay,
+        limit: spec.limit,
+        stickiness: description.stickiness[&spec.stickiness],
+        release: spec.release,
+        learning: description.learning[&spec.learning].clone(),
+        weight_noise: spec.weight_noise,
     }
 }
 
@@ -344,96 +368,48 @@ impl Grid {
 pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &BuildOptions) -> Network {
     let n = description.neurons.len();
     let names = description.neurons.names();
-    let index = |name: &str| names.index(name).expect("connections refer to defined neurons") as usize;
 
     // Parameter tables, shared by all neurons. A population is a distinct combination of dynamics, receptors and
     // modulator release. Each neuron of a description population shares its template: tables are filled once per
     // template (by address), not once per neuron.
     let mut population_table: Table<Population> = Table::new();
     let mut synapse_table: Table<SynapseParams> = Table::new();
-    // A parameter set for each kind of receiving neuron and learning rule, for connections made during a run.
-    let mut defaults_table: Table<spikes_dna::SynapseDefaults> = Table::new();
     let mut kinds: Vec<Wire> = Vec::new();
-    // Per template: (population, defaults, kind).
-    let mut seen: HashMap<*const spikes_dna::NeuronDescription, (u32, u32, u32)> = HashMap::new();
+    // Per template: (population, kind).
+    let mut seen: HashMap<*const spikes_dna::NeuronDescription, (u32, u32)> = HashMap::new();
     let mut populations: Vec<u32> = Vec::with_capacity(n);
-    let mut defaults: Vec<u32> = Vec::with_capacity(n);
     let mut neuron_kinds: Vec<u32> = Vec::with_capacity(n);
     for d in description.neurons.iter() {
-        let &mut (population, synapse_defaults, kind) =
-            seen.entry(std::ptr::from_ref(d.template())).or_insert_with(|| {
-                let defaults = defaults_table.insert(d.synapses().clone());
-                kinds.push(Wire {
-                    synaptic_delay_ms: d.synaptic_delay_ms(),
-                    conduction_m_per_s: d.conduction_m_per_s(),
-                    inhibitory: d.inhibitory(),
-                    defaults,
-                });
-                (
-                    population_table.insert((d.params().clone(), d.receptors().to_vec(), d.release())),
-                    defaults,
-                    kinds.len() as u32 - 1,
-                )
+        let &mut (population, kind) = seen.entry(std::ptr::from_ref(d.template())).or_insert_with(|| {
+            kinds.push(Wire {
+                conduction_m_per_s: d.conduction_m_per_s(),
+                inhibitory: d.inhibitory(),
             });
+            (
+                population_table.insert((d.params().clone(), d.receptors().to_vec(), d.release())),
+                kinds.len() as u32 - 1,
+            )
+        });
         populations.push(population);
-        defaults.push(synapse_defaults);
         neuron_kinds.push(kind);
     }
-    let mut new_params: HashMap<(u32, String), u16> = HashMap::new();
-    for (kind, d) in defaults_table.items.iter().enumerate() {
-        for (name, learning) in &description.learning {
-            let params = SynapseParams {
-                decay: d.decay,
-                limit: d.limit,
-                stickiness: spikes_model::Stickiness::None,
-                release: d.release,
-                learning: learning.clone(),
-                weight_noise: d.weight_noise,
-            };
-            let index =
-                u16::try_from(synapse_table.insert(params)).expect("fewer than 65,536 distinct synapse parameter sets");
-            new_params.insert((kind as u32, name.clone()), index);
-        }
-    }
+    let mut table = |params: SynapseParams| {
+        u16::try_from(synapse_table.insert(params)).expect("fewer than 65,536 distinct synapse parameter sets")
+    };
+    // Each connection's synapse parameters; and a plain synapse with each learning rule, for connections made
+    // during a run.
     let connection_params: Vec<u16> = description
         .connections
         .iter()
-        .map(|c| {
-            let post = &defaults_table.items[defaults[index(&c.post)] as usize];
-            let params = SynapseParams {
-                decay: post.decay,
-                limit: post.limit,
-                stickiness: description.stickiness[&c.stickiness],
-                release: post.release,
-                learning: description.learning[&c.learning].clone(),
-                weight_noise: post.weight_noise,
-            };
-            u16::try_from(synapse_table.insert(params)).expect("fewer than 65,536 distinct synapse parameter sets")
-        })
+        .map(|c| table(synapse_params(&c.synapse, description)))
         .collect();
-    // Each rule's parameter set for each kind of receiving neuron.
-    let rule_params: Vec<HashMap<u32, u16>> = description
-        .rules
-        .iter()
-        .map(|rule| {
-            defaults_table
-                .items
-                .iter()
-                .enumerate()
-                .map(|(kind, post)| {
-                    let params = SynapseParams {
-                        decay: post.decay,
-                        limit: post.limit,
-                        stickiness: description.stickiness[&rule.stickiness],
-                        release: post.release,
-                        learning: description.learning[&rule.learning].clone(),
-                        weight_noise: post.weight_noise,
-                    };
-                    let index = u16::try_from(synapse_table.insert(params))
-                        .expect("fewer than 65,536 distinct synapse parameter sets");
-                    (kind as u32, index)
-                })
-                .collect()
+    let new_params: HashMap<String, u16> = description
+        .learning
+        .keys()
+        .map(|name| {
+            let mut plain = SynapseSpec::plain(1.0);
+            plain.learning.clone_from(name);
+            (name.clone(), table(synapse_params(&plain, description)))
         })
         .collect();
     let direct: Vec<bool> = (0..description.modulators.len())
@@ -477,7 +453,7 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
     // Neurons, placed so that nearby neurons share a partition, and partitions get equal work: a neuron's work is
     // mostly its incoming connections.
     let locations: Vec<[f64; 3]> = description.neurons.iter().map(|d| d.location_um()).collect();
-    let partitions = spatial_partitions_weighted(&locations, &expected_work(description, &index), rt.partitions());
+    let partitions = spatial_partitions_weighted(&locations, &expected_work(description), rt.partitions());
     let ids: Vec<ActorId> = (0..n)
         .map(|i| {
             let actor = NeuronActor::new(Arc::clone(&params), populations[i], locations[i]);
@@ -495,7 +471,15 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
     let mut pre: Vec<Vec<ActorId>> = vec![Vec::new(); n];
     let mut edges: Vec<Vec<RouteEdge>> = vec![Vec::new(); n];
     let mut incoming: Vec<u32> = vec![0; n];
-    let mut add = |from: usize, to: usize, synapse: Synapse, synaptic_delay_ms: Option<f64>| {
+    let distance = |a: usize, b: usize| {
+        locations[a]
+            .iter()
+            .zip(&locations[b])
+            .map(|(x, y)| (x - y).powi(2))
+            .sum::<f64>()
+            .sqrt()
+    };
+    let mut add = |from: usize, to: usize, synapse: Synapse, synaptic_delay_ms: f64| {
         let edge = EdgeIdx(incoming[to]);
         incoming[to] = incoming[to].checked_add(1).expect("fewer than 2³² synapses per neuron");
         if local[to] {
@@ -503,16 +487,10 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
             pre[to].push(ids[from]);
         }
         if local[from] {
-            let distance_um = locations[from]
-                .iter()
-                .zip(&locations[to])
-                .map(|(a, b)| (a - b).powi(2))
-                .sum::<f64>()
-                .sqrt();
             // Synaptic delay plus conduction along the axon.
             let neuron = &kinds[neuron_kinds[from] as usize];
-            let synaptic = SimDuration::from_millis_f64(synaptic_delay_ms.unwrap_or(neuron.synaptic_delay_ms));
-            let conduction = SimDuration::from_micros_f64(distance_um / neuron.conduction_m_per_s); // µm/µs
+            let synaptic = SimDuration::from_millis_f64(synaptic_delay_ms);
+            let conduction = SimDuration::from_micros_f64(distance(from, to) / neuron.conduction_m_per_s); // µm/µs
             edges[from].push(RouteEdge {
                 target: ids[to],
                 delay: (synaptic + conduction).max(options.min_delay),
@@ -520,66 +498,72 @@ pub fn build(rt: &mut Runtime, description: &NetworkDescription, options: &Build
             });
         }
     };
-    let mut rng = Xoshiro256PlusPlus::seed_from_u64(options.seed);
-    for (c, &synapse_params) in description.connections.iter().zip(&connection_params) {
-        let (from, to) = (index(&c.pre), index(&c.post));
-        let weight = draw(c.weight, &mut rng);
-        let equilibrium = if c.equilibrium == c.weight {
-            weight
-        } else {
-            draw(c.equilibrium, &mut rng)
-        };
-        add(
-            from,
-            to,
-            Synapse::new(weight, equilibrium, c.sign, synapse_params),
-            c.synaptic_delay_ms,
-        );
-    }
 
-    // Rules, receiving neuron by receiving neuron, each with its own random stream: the same connections on every
-    // node, whichever neurons it keeps.
-    for (r, rule) in description.rules.iter().enumerate() {
-        let senders = description.members(&rule.pre).unwrap_or_default();
-        let receivers = description.members(&rule.post).unwrap_or_default();
-        let grid = rule.radius_um.map(|radius| Grid::new(&senders, &locations, radius));
-        let mut candidates: Vec<u32> = Vec::new();
-        let mut chosen: Vec<u32> = Vec::new();
-        for &post in &receivers {
+    // Each connection receiving neuron by receiving neuron, each with its own random stream (for weights and
+    // random patterns): the same connections on every node, whichever neurons it keeps.
+    let mut chosen: Vec<u32> = Vec::new();
+    let mut candidates: Vec<u32> = Vec::new();
+    for (c, (connection, &params)) in description.connections.iter().zip(&connection_params).enumerate() {
+        let spec = &connection.synapse;
+        // Random patterns pick from an ascending pool; the others take the senders in the order written.
+        let mut pool = connection.from.clone();
+        if matches!(connection.pattern, Pattern::FanIn(_) | Pattern::Random(_)) {
+            pool.sort_unstable();
+            pool.dedup();
+        }
+        let grid = match (connection.pattern, connection.within_um) {
+            (Pattern::FanIn(_) | Pattern::Random(_), Some(radius)) => Some(Grid::new(&pool, &locations, radius)),
+            _ => None,
+        };
+        for (k, &post) in connection.to.iter().enumerate() {
             let to = post as usize;
-            let mut rng = Xoshiro256PlusPlus::seed_from_u64(mix(options.seed, r as u64, u64::from(post)));
-            let pool: &[u32] = match &grid {
-                Some(grid) => {
-                    candidates.clear();
-                    grid.within(locations[to], &locations, &mut candidates);
-                    &candidates
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(mix(options.seed, c as u64, u64::from(post)));
+            chosen.clear();
+            match connection.pattern {
+                Pattern::AllToAll => chosen.extend(connection.from.iter().copied().filter(|&f| {
+                    (connection.autapses || f != post)
+                        && connection.within_um.is_none_or(|r| distance(f as usize, to) <= r)
+                })),
+                Pattern::OneToOne => {
+                    let f = connection.from[k];
+                    if (connection.autapses || f != post)
+                        && connection.within_um.is_none_or(|r| distance(f as usize, to) <= r)
+                    {
+                        chosen.push(f);
+                    }
                 }
-                None => &senders,
-            };
-            choose(pool, post, rule.autapses, rule.in_degree, &mut rng, &mut chosen);
-            if chosen.is_empty() {
-                continue;
+                Pattern::FanIn(_) | Pattern::Random(_) => {
+                    let pick = match connection.pattern {
+                        Pattern::FanIn(count) => Pick::Count(count),
+                        Pattern::Random(p) => Pick::Probability(p),
+                        _ => unreachable!(),
+                    };
+                    let from: &[u32] = match &grid {
+                        Some(grid) => {
+                            candidates.clear();
+                            grid.within(locations[to], &locations, &mut candidates);
+                            &candidates
+                        }
+                        None => &pool,
+                    };
+                    let mut picked = Vec::new();
+                    choose(from, post, connection.autapses, pick, &mut rng, &mut picked);
+                    chosen.extend(picked);
+                }
             }
-            let params = rule_params[r][&defaults[to]];
             for &from in &chosen {
                 let from = from as usize;
-                let weight = draw(rule.weight, &mut rng);
-                let equilibrium = if rule.equilibrium == rule.weight {
-                    weight
-                } else {
-                    draw(rule.equilibrium, &mut rng)
+                let weight = draw(spec.weight, &mut rng);
+                let equilibrium = match spec.equilibrium {
+                    None => weight,
+                    Some(e) => draw(e, &mut rng),
                 };
-                let sign = rule.sign.unwrap_or(if kinds[neuron_kinds[from] as usize].inhibitory {
+                let sign = spec.sign.unwrap_or(if kinds[neuron_kinds[from] as usize].inhibitory {
                     Sign::Inhibitory
                 } else {
                     Sign::Excitatory
                 });
-                add(
-                    from,
-                    to,
-                    Synapse::new(weight, equilibrium, sign, params),
-                    rule.synaptic_delay_ms,
-                );
+                add(from, to, Synapse::new(weight, equilibrium, sign, params), spec.delay_ms);
             }
         }
     }

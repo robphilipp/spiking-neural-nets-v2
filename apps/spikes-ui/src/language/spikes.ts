@@ -14,6 +14,8 @@ export type Value =
   | { type: "ids" }
   | { type: "bool" }
   | { type: "weight" }
+  | { type: "point" }
+  | { type: "points" }
   | { type: "record"; record: string }
   | { type: "list"; record: string };
 
@@ -118,6 +120,22 @@ export function scan(text: string, end = text.length): Context {
       continue;
     }
     const frame = top();
+    // A bracketed value that isn't a record or list of records (a point [x, y, z], uniform(0, 2), (r=…, phi=…),
+    // a list of names): part of the value, up to the matching bracket.
+    if ((c === "(" || c === "[") && frame?.type === "record" && frame.afterEquals) {
+      const t = keySchema(frame)?.value.type;
+      if (t !== "record" && t !== "list") {
+        let depth = 0;
+        do {
+          const d = text[i]!;
+          if (d === "(" || d === "[") depth++;
+          else if (d === ")" || d === "]") depth--;
+          frame.value += d;
+          i++;
+        } while (i < end && depth > 0);
+        continue;
+      }
+    }
     if (c === "(") {
       if (!frame) pushRecord("network");
       else if (frame.type === "list") pushRecord(frame.record, frame.parent);
@@ -187,9 +205,9 @@ export function scan(text: string, end = text.length): Context {
 
 // ----- what applies where -----
 
-/** The value of a record's kind key (`fnc`, `nty`…), if written. A resonance's kind is its neuron's `nty`. */
+/** The value of a record's kind key (`dynamics`, `rule`), if written. A resonance's kind is its neuron's dynamics. */
 export function kindOf(node: RecordNode): string | undefined {
-  if (node.record === "resonance") return node.parent?.values.get("nty") ?? "mr";
+  if (node.record === "resonance") return node.parent?.values.get("dynamics") ?? "monostable_resonator";
   const kindKey = recordSchema(node.record)?.kind_key;
   return kindKey ? node.values.get(kindKey) : undefined;
 }
@@ -210,15 +228,22 @@ function* walk(node: RecordNode | undefined): Generator<RecordNode> {
 export function referenceNames(root: RecordNode | undefined, to: string): string[] {
   const names = new Set<string>();
   const add = (v?: string) => v && names.add(v);
+  // Which records define the names each kind of reference points to ("neurons": anything connections and sets take).
+  const definedBy: Record<string, string[]> = {
+    neurons: ["neuron", "population", "set"],
+    neuronType: ["neuronType"],
+    synapseType: ["synapseType"],
+    node: ["node"],
+    modulator: ["modulator"],
+    learning: ["learningRule"],
+    stickiness: ["stickiness"],
+  };
   for (const n of walk(root)) {
-    if (to === "neuron" && n.record === "neuron") add(n.values.get("nid"));
-    if (to === "group" && n.record === "group") add(n.values.get("gid"));
-    if (to === "modulator" && n.record === "modulator") add(n.values.get("nam"));
-    if ((to === "learning" || to === "stickiness") && n.record === to) add(n.values.get("nam") ?? n.values.get("fnc"));
+    if ((definedBy[to] ?? []).includes(n.record)) add(n.values.get("name"));
   }
   if (to === "learning") names.add("flat");
   if (to === "stickiness") names.add("none");
-  if (to === "group") names.add("default");
+  if (to === "node") names.add("main");
   return [...names];
 }
 
@@ -248,12 +273,16 @@ export function describeValue(k: Key): string {
             : v.type === "list"
               ? `list [(…), …]`
               : v.type === "ids"
-                ? "neuron ids: a, {a, b}, n{1:10:1}"
+                ? "neurons: a name, a population, a set, n{1:10:1}, or a list [a, b]"
                 : v.type === "weight"
-                  ? "number, or rLOW:HIGH (random)"
+                  ? "number, uniform(low, high) or normal(mean, sd)"
                   : v.type === "bool"
-                    ? "t | f"
-                    : v.type;
+                    ? "true | false"
+                    : v.type === "point"
+                      ? "point: [x, y, z], (r=…, phi=…, z=…) or (r=…, theta=…, phi=…)"
+                      : v.type === "points"
+                        ? "points: [[x, y, z], …] or [(name=…, at=…), …]"
+                        : v.type;
   return [what, k.default ? `default ${k.default}` : k.required ? "required" : ""].filter(Boolean).join(", ");
 }
 
@@ -274,7 +303,7 @@ function placeholder(k: Key, n: number): string {
 export function suggestions(text: string, offset: number): Suggestion[] {
   const ctx = scan(text, offset);
   if (ctx.mode === "outside") {
-    return [{ label: "network", insert: "(\n\tNRN=[\n\t\t$0\n\t],\n)", detail: "a new network", doc: recordSchema("network")!.doc, kind: "snippet" }];
+    return [{ label: "network", insert: "(\n\tneurons=[\n\t\t$0\n\t],\n)", detail: "a new network", doc: recordSchema("network")!.doc, kind: "snippet" }];
   }
   if (ctx.mode === "list") {
     const r = recordSchema(ctx.listOf!)!;
@@ -289,7 +318,7 @@ export function suggestions(text: string, offset: number): Suggestion[] {
         const v = k.value;
         const insert =
           v.type === "record"
-            ? `${k.key}=${recordSnippet(v.record, k.key === "RES" ? node.values.get("nty") : undefined)}`
+            ? `${k.key}=${recordSnippet(v.record, k.key === "resonance" ? node.values.get("dynamics") : undefined)}`
             : v.type === "list"
               ? `${k.key}=[\n\t${recordSnippet(v.record)}\n]`
               : `${k.key}=${placeholder(k, 1)}`;
@@ -304,11 +333,13 @@ export function suggestions(text: string, offset: number): Suggestion[] {
     case "choice":
       return k.value.values.filter((x) => x !== "stdp").map((x) => value(x));
     case "bool":
-      return [value("t"), value("f")];
+      return [value("true"), value("false")];
     case "reference":
       return referenceNames(ctx.root, k.value.to).map((x) => value(x));
     case "ids":
-      return referenceNames(ctx.root, "neuron").map((x) => value(x));
+      return referenceNames(ctx.root, "neurons").map((x) => value(x));
+    case "point":
+      return [value("[0, 0, 0]")];
     case "quantity":
       return [value(k.default ?? `1 ${k.value.unit}`)];
     default:
@@ -330,6 +361,6 @@ export function hover(text: string, offset: number): { markdown: string; start: 
   if (!k) return null;
   const record = recordSchema(ctx.node.record)!;
   const lines = [`**${k.key}** · ${record.name}`, "", k.doc, "", `*${describeValue(k)}*`];
-  if (k.only) lines.push("", `Only for ${record.kind_key ?? "nty"} = ${k.only.join(", ")}`);
+  if (k.only) lines.push("", `Only for ${record.kind_key ?? "dynamics"} = ${k.only.join(", ")}`);
   return { markdown: lines.join("\n"), start, end };
 }

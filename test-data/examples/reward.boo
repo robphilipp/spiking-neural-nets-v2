@@ -4,16 +4,15 @@
 // over ~1 s); the weights change only if dopamine arrives while the marks last. Turn on background input to the
 // "in-" neurons, run, inspect "out", and press "Release dopamine": the weights step up.
 (
-MOD=[(nam=dopamine, clr=300 ms, lat=1 ms)],
-NRN=[
-    (nid=in-1, mst=5 mV, mpn=0 mV, csp=1 m/s, LOC=(cst=ct, px1=0, px2=0, px3=0)),
-    (nid=in-2, mst=5 mV, mpn=0 mV, csp=1 m/s, LOC=(cst=ct, px1=0, px2=50, px3=0)),
-    (nid=out, mst=0.8 mV, mpn=0 mV, rfp=5 ms, WDF=(fnc=zer), WLF=(fnc=bnd, lwb=0, upb=5),
-        LOC=(cst=ct, px1=100, px2=25, px3=0),
-        RCP=[(mod=dopamine, elg=1 s, rat=20)]),
+modulators=[(name=dopamine, clearance_time=300 ms, latency=1 ms)],
+neuron_types=[(name=input, threshold=5 mV, membrane_noise=0 mV, conduction_speed=1 m/s)],
+neurons=[
+    (name=in-1, type=input, position=[0, 0, 0]),
+    (name=in-2, type=input, position=[0, 50, 0]),
+    (name=out, threshold=0.8 mV, membrane_noise=0 mV, refractory_period=5 ms, position=[100, 25, 0],
+        receptors=[(modulator=dopamine, eligibility_time=1 s, learning_rate=20)]),
 ],
-CON=[
-    (prn={in-1, in-2}, psn=out, cnw=1, lrn=stdp),
-],
-LRN=[(fnc=stdp_hard, nam=stdp, ina=0.005, inp=20 ms, exa=0.02, exp=20 ms)],
+synapse_types=[(name=rewarded, weight=1, learning=stdp, limits=(min=0, max=5), release=())],
+connections=[(from=[in-1, in-2], to=out, type=rewarded)],
+learning_rules=[(name=stdp, rule=stdp_hard, depression=0.005, depression_time=20 ms, potentiation=0.02, potentiation_time=20 ms)],
 )

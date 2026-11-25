@@ -13,9 +13,9 @@ index: number,
  */
 name: string, 
 /**
- * Group.
+ * Its population (empty for a neuron listed on its own).
  */
-group: string, 
+population: string, 
 /**
  * Dynamics class.
  */

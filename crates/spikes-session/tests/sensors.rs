@@ -16,9 +16,9 @@ use tempo_runtime::SimDuration;
 /// `n` unconnected neurons with threshold `mst` mV.
 fn neurons(n: usize, mst: f64) -> String {
     let list: Vec<String> = (0..n)
-        .map(|i| format!("(nid=n{i}, mst={mst} mV, mpn=0 mV, LOC=(cst=ct, px1={i}, px2=0, px3=0))"))
+        .map(|i| format!("(name=n{i}, threshold={mst} mV, membrane_noise=0 mV, position=[{i}, 0, 0])"))
         .collect();
-    format!("(NRN=[{}])", list.join(", "))
+    format!("(neurons=[{}])", list.join(", "))
 }
 
 fn session(engine: &Engine, n: usize, mst: f64) -> Session {

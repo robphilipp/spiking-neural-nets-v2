@@ -20,14 +20,22 @@ fn runtime(shards: usize) -> Runtime {
 }
 
 const REWARD: &str = "(
-MOD=[(nam=dopamine, clr=200 ms, lat=1 ms)],
-NRN=[
-    (nid=pre, mst=5 mV, mpn=0 mV, csp=10 m/s, LOC=(cst=ct, px1=0, px2=0, px3=0)),
-    (nid=post, mst=5 mV, mpn=0 mV, WDF=(fnc=zer), LOC=(cst=ct, px1=100, px2=0, px3=0),
-        RCP=[(mod=dopamine, elg=1 s, rat=1)]),
+synapse_types=[
+    (name=stdp_hard, release=(), learning=stdp_hard),
 ],
-CON=[(prn=pre, psn=post, cnw=1, lrn=stdp_hard)],
-LRN=[(fnc=stdp_hard, ina=0.01, inp=10 ms, exa=0.02, exp=10 ms)],
+neurons=[
+    (name=pre, threshold=5 mV, membrane_noise=0 mV, conduction_speed=10 m/s, position=[0, 0, 0]),
+    (name=post, threshold=5 mV, membrane_noise=0 mV, receptors=[(modulator=dopamine, eligibility_time=1 s, learning_rate=1)], position=[100, 0, 0]),
+],
+connections=[
+    (from=pre, to=post, type=stdp_hard, weight=1),
+],
+learning_rules=[
+    (name=stdp_hard, rule=stdp_hard, depression=0.01, depression_time=10 ms, potentiation=0.02, potentiation_time=10 ms),
+],
+modulators=[
+    (name=dopamine, clearance_time=200 ms, latency=1 ms),
+],
 )";
 
 /// Pairs pre before post, optionally releases dopamine at 100 ms, then fires pre again at 600 ms so the synapse
@@ -63,11 +71,16 @@ fn dopamine_turns_a_marked_synapse_into_learning() {
 }
 
 const DIRECT: &str = "(
-MOD=[(nam=ach, clr=50 ms, rad=300 µm, spd=1 m/s, lat=1 ms)],
-NRN=[
-    (nid=near, mst=5 mV, mpn=0 mV, LOC=(cst=ct, px1=50, px2=0, px3=0), RCP=[(mod=ach, dir=6 mV)]),
-    (nid=far, mst=5 mV, mpn=0 mV, LOC=(cst=ct, px1=500, px2=0, px3=0), RCP=[(mod=ach, dir=6 mV)]),
-    (nid=deaf, mst=5 mV, mpn=0 mV, LOC=(cst=ct, px1=60, px2=0, px3=0)),
+neuron_types=[
+    (name=neuron, threshold=5 mV, membrane_noise=0 mV, receptors=[(modulator=ach, direct_potential=6 mV)]),
+],
+neurons=[
+    (name=near, type=neuron, position=[50, 0, 0]),
+    (name=far, type=neuron, position=[500, 0, 0]),
+    (name=deaf, threshold=5 mV, membrane_noise=0 mV, position=[60, 0, 0]),
+],
+modulators=[
+    (name=ach, clearance_time=50 ms, reach=300 µm, speed=1 m/s, latency=1 ms),
 ],
 )";
 
@@ -104,10 +117,12 @@ fn a_direct_modulator_fires_neurons_it_reaches_on_arrival() {
 }
 
 const RELEASING_NEURON: &str = "(
-MOD=[(nam=ach, clr=50 ms, rad=300 µm, spd=1 m/s, lat=1 ms)],
-NRN=[
-    (nid=cholinergic, mst=5 mV, mpn=0 mV, LOC=(cst=ct, px1=0, px2=0, px3=0), REL=(mod=ach, amt=1)),
-    (nid=target, mst=5 mV, mpn=0 mV, LOC=(cst=ct, px1=100, px2=0, px3=0), RCP=[(mod=ach, dir=6 mV)]),
+neurons=[
+    (name=cholinergic, threshold=5 mV, membrane_noise=0 mV, releases=(modulator=ach, amount=1), position=[0, 0, 0]),
+    (name=target, threshold=5 mV, membrane_noise=0 mV, receptors=[(modulator=ach, direct_potential=6 mV)], position=[100, 0, 0]),
+],
+modulators=[
+    (name=ach, clearance_time=50 ms, reach=300 µm, speed=1 m/s, latency=1 ms),
 ],
 )";
 

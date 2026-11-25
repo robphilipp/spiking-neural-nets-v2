@@ -6,7 +6,7 @@
 //! | File | Format | Rows |
 //! |------|--------|------|
 //! | `run.arrow` | Arrow IPC file | one: seed, shard count, start time, the network description |
-//! | `neurons.arrow` | Arrow IPC file | one per neuron: actor id, name, group, kind, position |
+//! | `neurons.arrow` | Arrow IPC file | one per neuron: actor id, name, population, kind, position |
 //! | `synapses.arrow` | Arrow IPC file | one per synapse at the start: post, index, pre, weight, sign |
 //! | `spikes.arrows` | Arrow IPC stream | every spike |
 //! | `weights.arrows` | Arrow IPC stream | every learning weight change (build with `record_weights`) |
