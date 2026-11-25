@@ -16,12 +16,30 @@ import {
 import { useConnection } from "../connection";
 import { startInput, stopInput, useActiveInput } from "../inputStreams";
 import { compile, sample, type Signal, SignalError } from "../signal";
-import { Choice, Field, Heading, Notice, NumberField, Panel, Row } from "@/components/kit";
+import {
+  Choice,
+  Field,
+  Heading,
+  Notice,
+  NumberField,
+  Panel,
+  Row,
+} from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { useChartColors } from "../theme";
+import { useChartSettings, ZOOM, ZOOM_HELP } from "../chartSettings";
 import { useSession } from "../store";
 
-const PALETTE = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#F0E442", "#999999"];
+const PALETTE = [
+  "#0072B2",
+  "#E69F00",
+  "#009E73",
+  "#CC79A7",
+  "#56B4E9",
+  "#D55E00",
+  "#F0E442",
+  "#999999",
+];
 const DT_MS = 1; // sample spacing for designed signals
 const PREVIEW_MS = 1000;
 
@@ -40,14 +58,24 @@ function encodingOf(kind: EncodingKind, a: number, b: number): Encoding {
 
 /** Streams a source of samples into a session in 10 ms batches, on the sensor's own clock (wall time). Stops by
  *  itself if the connection goes. */
-function stream(sensor: Sensor, channels: number, dtMs: number, next: (first: number, count: number) => ArrayLike<number>) {
+function stream(
+  sensor: Sensor,
+  channels: number,
+  dtMs: number,
+  next: (first: number, count: number) => ArrayLike<number>,
+) {
   const start = performance.now();
   let sent = 0; // samples per channel
   const timer = setInterval(() => {
     const due = Math.floor((performance.now() - start) / dtMs);
     if (due <= sent) return;
     try {
-      sensor.sendSamples(BigInt(Math.round(sent * dtMs * 1e6)), dtMs * 1e6, channels, next(sent, due - sent));
+      sensor.sendSamples(
+        BigInt(Math.round(sent * dtMs * 1e6)),
+        dtMs * 1e6,
+        channels,
+        next(sent, due - sent),
+      );
     } catch {
       stopInput(); // not connected any more
       return;
@@ -58,14 +86,24 @@ function stream(sensor: Sensor, channels: number, dtMs: number, next: (first: nu
 }
 
 /** Log-spaced bands of an analyser's spectrum, scaled to 0…1. */
-function bands(spectrum: Float32Array, channels: number, sampleRate: number): Float32Array {
+function bands(
+  spectrum: Float32Array,
+  channels: number,
+  sampleRate: number,
+): Float32Array {
   const out = new Float32Array(channels);
   const binHz = sampleRate / 2 / spectrum.length;
   const lo = Math.log(100);
   const hi = Math.log(Math.min(8000, sampleRate / 2));
   for (let c = 0; c < channels; c++) {
-    const from = Math.max(0, Math.floor(Math.exp(lo + ((hi - lo) * c) / channels) / binHz));
-    const to = Math.max(from + 1, Math.floor(Math.exp(lo + ((hi - lo) * (c + 1)) / channels) / binHz));
+    const from = Math.max(
+      0,
+      Math.floor(Math.exp(lo + ((hi - lo) * c) / channels) / binHz),
+    );
+    const to = Math.max(
+      from + 1,
+      Math.floor(Math.exp(lo + ((hi - lo) * (c + 1)) / channels) / binHz),
+    );
     let sum = 0;
     for (let b = from; b < to && b < spectrum.length; b++) sum += spectrum[b]!;
     const db = sum / (to - from);
@@ -76,6 +114,7 @@ function bands(spectrum: Float32Array, channels: number, sampleRate: number): Fl
 
 export function InputsPage() {
   const colors = useChartColors();
+  const { zoomResets, resetZoom } = useChartSettings();
   const { client } = useConnection();
   const { id, network, state, replayEndMs } = useSession();
   const [prefix, setPrefix] = useState("input-");
@@ -84,16 +123,26 @@ export function InputsPage() {
   const [b, setB] = useState(6);
   const [formula, setFormula] = useState("floor(t / 100) % 7 == c % 7");
   const [seconds, setSeconds] = useState(5);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(
+    null,
+  );
   const activeInput = useActiveInput();
   const active = activeInput?.kind ?? null;
 
-  const targets: Neuron[] = useMemo(() => (network?.neurons ?? []).filter((n) => n.name.startsWith(prefix)), [network, prefix]);
+  const targets: Neuron[] = useMemo(
+    () => (network?.neurons ?? []).filter((n) => n.name.startsWith(prefix)),
+    [network, prefix],
+  );
   const compiled = useMemo((): { signal: Signal } | { error: string } => {
     try {
       return { signal: compile(formula) };
     } catch (e) {
-      return { error: e instanceof SignalError ? `${e.message} (at character ${e.position + 1})` : String(e) };
+      return {
+        error:
+          e instanceof SignalError
+            ? `${e.message} (at character ${e.position + 1})`
+            : String(e),
+      };
     }
   }, [formula]);
   const channels = targets.length;
@@ -105,23 +154,55 @@ export function InputsPage() {
     const steps = PREVIEW_MS / 5;
     const values = sample(compiled.signal, channels, 5, 0, steps);
     const series = Array.from({ length: shown }, (_, c) =>
-      seriesFrom<Datum>(targets[c]!.name, Array.from({ length: steps }, (_, s) => ({ x: s * 5, y: values[s * channels + c]! + c * 1.2 }))),
+      seriesFrom<Datum>(
+        targets[c]!.name,
+        Array.from({ length: steps }, (_, s) => ({
+          x: s * 5,
+          y: values[s * channels + c]! + c * 1.2,
+        })),
+      ),
     );
-    const styles = new Map<string, SeriesLineStyle>(series.map((s, i) => [s.name, { ...defaultLineStyle(), color: PALETTE[i]!, lineWidth: 1.5 }]));
-    return { source: new TimeSeriesDataSource({ initialData: series, generator: () => NEVER }), styles, shown };
+    const styles = new Map<string, SeriesLineStyle>(
+      series.map((s, i) => [
+        s.name,
+        { ...defaultLineStyle(), color: PALETTE[i]!, lineWidth: 1.5 },
+      ]),
+    );
+    return {
+      source: new TimeSeriesDataSource({
+        initialData: series,
+        generator: () => NEVER,
+      }),
+      styles,
+      shown,
+    };
   }, [compiled, channels, targets]);
 
-
   if (id === null || !network) {
-    return <Notice>Build a network on the Run page first; its neurons are the inputs' targets.</Notice>;
+    return (
+      <Notice>
+        Build a network on the Run page first; its neurons are the inputs'
+        targets.
+      </Notice>
+    );
   }
   if (replayEndMs !== null) {
-    return <Notice>This session is a replay: it plays back what was recorded and takes no input.</Notice>;
+    return (
+      <Notice>
+        This session is a replay: it plays back what was recorded and takes no
+        input.
+      </Notice>
+    );
   }
   const ready = state === "ready";
   const running = state === "running" || state === "paused";
 
-  const connect = async (client: ProtocolClient, name: string, n: number, buffer: boolean) =>
+  const connect = async (
+    client: ProtocolClient,
+    name: string,
+    n: number,
+    buffer: boolean,
+  ) =>
     client.connectSensor(id, {
       name,
       targets: targets.slice(0, n).map((t) => [t.index]),
@@ -135,7 +216,10 @@ export function InputsPage() {
     try {
       await f();
     } catch (e) {
-      setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      setMessage({
+        ok: false,
+        text: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
@@ -162,15 +246,37 @@ export function InputsPage() {
               { value: "threshold", label: "threshold (delta)" },
             ]}
           />
-          <NumberField label={kind === "rate" ? "Hz at 1" : kind === "current" ? "mV per unit" : "Change per event"} width={130} value={a} onChange={setA} />
-          {kind !== "current" && <NumberField label="mV per event" width={120} value={b} onChange={setB} />}
+          <NumberField
+            label={
+              kind === "rate"
+                ? "Hz at 1"
+                : kind === "current"
+                  ? "mV per unit"
+                  : "Change per event"
+            }
+            width={130}
+            value={a}
+            onChange={setA}
+          />
+          {kind !== "current" && (
+            <NumberField
+              label="mV per event"
+              width={120}
+              value={b}
+              onChange={setB}
+            />
+          )}
         </Row>
         <Field
           label="Value of channel c at time t (ms); n channels"
           value={formula}
           onChange={(e) => setFormula(e.target.value)}
           error={"error" in compiled}
-          help={"error" in compiled ? compiled.error : "e.g. pulse(t, 200, 50) · sin(2*pi*t/500 + c) · floor(t/100) % 7 == c % 7 · t > 300 ? 1 : 0"}
+          help={
+            "error" in compiled
+              ? compiled.error
+              : "e.g. pulse(t, 200, 50) · sin(2*pi*t/500 + c) · floor(t/100) % 7 == c % 7 · t > 300 ? 1 : 0"
+          }
           data-testid="formula"
           spellCheck={false}
           className="[&_input]:font-mono"
@@ -178,12 +284,43 @@ export function InputsPage() {
         {preview && (
           <div data-testid="preview">
             <p className="text-xs text-muted-foreground">
-              First {PREVIEW_MS / 1000} s of {preview.shown < channels ? `the first ${preview.shown} of ${channels}` : "all"} channels (offset for clarity)
+              First {PREVIEW_MS / 1000} s of{" "}
+              {preview.shown < channels
+                ? `the first ${preview.shown} of ${channels}`
+                : "all"}{" "}
+              channels (offset for clarity). {ZOOM_HELP}{" "}
+              <button
+                type="button"
+                className="underline"
+                onClick={resetZoom}
+                data-testid="reset-zoom"
+              >
+                Reset zoom
+              </button>
             </p>
-            <Chart chartId={10} width={900} height={200} dataSource={preview.source} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={preview.styles}>
-              <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, PREVIEW_MS]} label="t (ms)" />
-              <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-0.2, preview.shown * 1.2]} label="value" />
-              <ScatterPlot />
+            <Chart
+              key={zoomResets}
+              chartId={10}
+              width={900}
+              height={200}
+              dataSource={preview.source}
+              color={colors.color}
+              backgroundColor={colors.backgroundColor}
+              seriesStyles={preview.styles}
+            >
+              <ContinuousAxis
+                axisId="x-axis-1"
+                location={AxisLocation.Bottom}
+                domain={[0, PREVIEW_MS]}
+                label="t (ms)"
+              />
+              <ContinuousAxis
+                axisId="y-axis-1"
+                location={AxisLocation.Left}
+                domain={[-0.2, preview.shown * 1.2]}
+                label="value"
+              />
+              <ScatterPlot {...ZOOM} />
             </Chart>
           </div>
         )}
@@ -191,21 +328,43 @@ export function InputsPage() {
 
       <Panel>
         <Row>
-          <NumberField label="Seconds" width={100} min={0.01} value={seconds} onChange={setSeconds} />
+          <NumberField
+            label="Seconds"
+            width={100}
+            min={0.01}
+            value={seconds}
+            onChange={setSeconds}
+          />
           <Button
             disabled={!client || !ready || !channels || !("signal" in compiled)}
             data-testid="inject"
             title="Inject the whole signal now, at exact times from the current time: every run with it is the same"
             onClick={attempt(async () => {
               if (!("signal" in compiled)) return;
-              const sensor = await connect(client!, "designed signal", channels, true);
+              const sensor = await connect(
+                client!,
+                "designed signal",
+                channels,
+                true,
+              );
               const total = Math.round((seconds * 1000) / DT_MS);
-              const per = Math.max(1, Math.min(Math.floor(65_535), Math.floor(200_000 / channels)));
+              const per = Math.max(
+                1,
+                Math.min(Math.floor(65_535), Math.floor(200_000 / channels)),
+              );
               for (let first = 0; first < total; first += per) {
                 const count = Math.min(per, total - first);
-                sensor.sendSamples(BigInt(Math.round(first * DT_MS * 1e6)), DT_MS * 1e6, channels, sample(compiled.signal, channels, DT_MS, first, count));
+                sensor.sendSamples(
+                  BigInt(Math.round(first * DT_MS * 1e6)),
+                  DT_MS * 1e6,
+                  channels,
+                  sample(compiled.signal, channels, DT_MS, first, count),
+                );
               }
-              setMessage({ ok: true, text: `Injected ${seconds} s of the signal into ${channels} neurons. Start the run on the Run page.` });
+              setMessage({
+                ok: true,
+                text: `Injected ${seconds} s of the signal into ${channels} neurons. Start the run on the Run page.`,
+              });
             })}
           >
             <Download data-icon="inline-start" />
@@ -213,14 +372,30 @@ export function InputsPage() {
           </Button>
           <Button
             variant="outline"
-            disabled={!client || !running || active !== null || !channels || !("signal" in compiled)}
+            disabled={
+              !client ||
+              !running ||
+              active !== null ||
+              !channels ||
+              !("signal" in compiled)
+            }
             data-testid="stream"
             title="Stream the signal as the run goes, like a sensor"
             onClick={attempt(async () => {
               if (!("signal" in compiled)) return;
               const signal = compiled.signal;
-              const sensor = await connect(client!, "designed signal (live)", channels, false);
-              const stopStream = stream(sensor, channels, DT_MS, (first, count) => sample(signal, channels, DT_MS, first, count));
+              const sensor = await connect(
+                client!,
+                "designed signal (live)",
+                channels,
+                false,
+              );
+              const stopStream = stream(
+                sensor,
+                channels,
+                DT_MS,
+                (first, count) => sample(signal, channels, DT_MS, first, count),
+              );
               startInput({
                 kind: "live",
                 session: id,
@@ -243,14 +418,23 @@ export function InputsPage() {
               // The raw sound: echo cancellation, noise suppression and gain control would reshape it (noise
               // suppression removes steady tones altogether).
               const media = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+                audio: {
+                  echoCancellation: false,
+                  noiseSuppression: false,
+                  autoGainControl: false,
+                },
               });
               const audio = new AudioContext();
               const analyser = audio.createAnalyser();
               analyser.fftSize = 2048;
               audio.createMediaStreamSource(media).connect(analyser);
               const spectrum = new Float32Array(analyser.frequencyBinCount);
-              const sensor = await connect(client!, "microphone", channels, false);
+              const sensor = await connect(
+                client!,
+                "microphone",
+                channels,
+                false,
+              );
               const stopStream = stream(sensor, channels, 10, (_, count) => {
                 analyser.getFloatFrequencyData(spectrum);
                 const one = bands(spectrum, channels, audio.sampleRate);
@@ -274,7 +458,11 @@ export function InputsPage() {
             Microphone
           </Button>
           {active && (
-            <Button className="bg-warning text-black hover:bg-warning/80" onClick={stopInput} data-testid="stop-input">
+            <Button
+              className="bg-warning text-black hover:bg-warning/80"
+              onClick={stopInput}
+              data-testid="stop-input"
+            >
               <Square data-icon="inline-start" />
               Stop {active === "microphone" ? "the microphone" : "streaming"}
             </Button>
@@ -288,7 +476,10 @@ export function InputsPage() {
               : "Build the network first."}
         </p>
         {message && (
-          <Notice tone={message.ok ? "success" : "error"} onClose={() => setMessage(null)}>
+          <Notice
+            tone={message.ok ? "success" : "error"}
+            onClose={() => setMessage(null)}
+          >
             {message.text}
           </Notice>
         )}

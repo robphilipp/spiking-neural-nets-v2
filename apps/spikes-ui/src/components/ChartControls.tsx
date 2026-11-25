@@ -1,15 +1,27 @@
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, ZoomOut } from "lucide-react";
 import { Choice, NumberField, Row, Toggle } from "@/components/kit";
 import { Button } from "@/components/ui/button";
-import { KEEP_CHOICES, useChartSettings } from "../chartSettings";
+import { KEEP_CHOICES, useChartSettings, ZOOM_HELP } from "../chartSettings";
 
 /**
  * How the live charts take in and keep data (as in stream-charts' examples): buffering (how long a chart gathers
  * data before drawing it), the update rate (how often the engine sends it), cadence (smooth scrolling between
- * updates) and how much simulated time is kept. They apply to every live chart, at once.
+ * updates) and how much simulated time is kept. They apply to every live chart, at once. Reset zoom puts every
+ * chart's pan and zoom back.
  */
 export function ChartControls() {
-  const { bufferMs, updateMs, cadence, keepMs, setBufferMs, setUpdateMs, setCadence, setKeepMs, reset } = useChartSettings();
+  const {
+    bufferMs,
+    updateMs,
+    cadence,
+    keepMs,
+    setBufferMs,
+    setUpdateMs,
+    setCadence,
+    setKeepMs,
+    reset,
+    resetZoom,
+  } = useChartSettings();
   return (
     <Row data-testid="chart-controls">
       <NumberField
@@ -38,7 +50,10 @@ export function ChartControls() {
         value={keepMs}
         onChange={setKeepMs}
         testId="keep"
-        options={KEEP_CHOICES.map((ms) => ({ value: ms, label: `${ms / 1000} s` }))}
+        options={KEEP_CHOICES.map((ms) => ({
+          value: ms,
+          label: `${ms / 1000} s`,
+        }))}
       />
       <Toggle
         label="Cadence"
@@ -47,9 +62,25 @@ export function ChartControls() {
         testId="cadence"
         title="Move the time axes on every animation frame, so the charts scroll smoothly between updates"
       />
-      <Button variant="ghost" size="icon-sm" title="Reset the chart settings" aria-label="Reset the chart settings" onClick={reset}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        title="Reset the chart settings"
+        aria-label="Reset the chart settings"
+        onClick={reset}
+      >
         <RotateCcw />
       </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        title={`${ZOOM_HELP} This puts every chart back.`}
+        onClick={resetZoom}
+        data-testid="reset-zoom"
+      >
+        <ZoomOut /> Reset zoom
+      </Button>
+      <span className="pb-1.5 text-xs text-muted-foreground">{ZOOM_HELP}</span>
     </Row>
   );
 }

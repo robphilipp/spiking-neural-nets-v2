@@ -6,7 +6,7 @@ import { Choice, Field, Heading, NeuronPicker, Notice, NumberField, Panel, Row, 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useChartSettings } from "../chartSettings";
+import { useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectInspect, useInspect, type WeightSeries } from "../live";
 import { useSession } from "../store";
 import { useBehavior } from "../useBehavior";
@@ -48,6 +48,7 @@ export function Inspector(props: {
   replay?: boolean;
 }) {
   const { client, session, network, width, labelWidth, colors, windowMs, picked } = props;
+  const timeDomain = useTimeDomain(windowMs);
   const setPicked = (value: Neuron[] | ((p: Neuron[]) => Neuron[])) =>
     props.onPicked(typeof value === "function" ? value(props.picked) : value);
   const [state, setState] = useState<NeuronState | null>(null);
@@ -94,7 +95,7 @@ export function Inspector(props: {
   }, [view, picked, incoming]);
   const membrane = useBehavior(view?.membrane);
   const weightSource = useBehavior(view?.weights);
-  const { bufferMs, updateMs, cadence } = useChartSettings();
+  const { bufferMs, updateMs, cadence, zoomResets } = useChartSettings();
 
   // The first picked neuron's state, twice a second (a replay has none: its neurons were recorded).
   useEffect(() => {
@@ -172,10 +173,10 @@ export function Inspector(props: {
             <Heading className="mb-1">Membrane potential (mV)</Heading>
             <Legend names={membraneNames} />
             {membrane && (
-              <Chart key={`${windowMs}:${cadence}`} chartId={3} width={width} height={200} dataSource={membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membrane.seriesList().map((s) => s.name))} windowingTime={bufferMs} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
-                <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
+              <Chart key={`${windowMs}:${cadence}:${zoomResets}`} chartId={3} width={width} height={200} dataSource={membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membrane.seriesList().map((s) => s.name))} windowingTime={bufferMs} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
+                <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={timeDomain} label="t (ms)" />
                 <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-1, 15]} label="mV" autoScale />
-                <ScatterPlot withCadence={cadence} />
+                <ScatterPlot withCadence={cadence} {...ZOOM} />
               </Chart>
             )}
           </div>
@@ -184,10 +185,10 @@ export function Inspector(props: {
             <Heading className="mb-1">Incoming weights</Heading>
             {weightNames.length ? <Legend names={weightNames} /> : <p className="text-sm text-muted-foreground">No incoming connections.</p>}
             {weightSource && weightSource.seriesList().length > 0 && (
-              <Chart key={`${windowMs}:${cadence}`} chartId={4} width={width} height={180} dataSource={weightSource} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(weightSource.seriesList().map((s) => s.name))} windowingTime={bufferMs} dataUpdatePeriod={updateMs} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
-                <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
+              <Chart key={`${windowMs}:${cadence}:${zoomResets}`} chartId={4} width={width} height={180} dataSource={weightSource} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(weightSource.seriesList().map((s) => s.name))} windowingTime={bufferMs} dataUpdatePeriod={updateMs} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
+                <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={timeDomain} label="t (ms)" />
                 <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[0, 2]} label="weight" autoScale />
-                <ScatterPlot withCadence={cadence} />
+                <ScatterPlot withCadence={cadence} {...ZOOM} />
               </Chart>
             )}
           </div>

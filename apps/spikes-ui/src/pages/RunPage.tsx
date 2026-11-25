@@ -23,7 +23,7 @@ import { WeightsPanel } from "../components/WeightsPanel";
 import { useConnection } from "../connection";
 import { stopInput, useActiveInput } from "../inputStreams";
 import { ChartControls } from "../components/ChartControls";
-import { useChartSettings } from "../chartSettings";
+import { useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectLive, useLive } from "../live";
 import { useBehavior } from "../useBehavior";
 import { backgroundChanged, built, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
@@ -78,6 +78,7 @@ export function RunPage() {
   const [stimulus, setStimulus] = useState({ prefix: "", mv: 10 });
   const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12, prefix: "" });
   const [windowMs, setWindowMs] = useState(1000);
+  const timeDomain = useTimeDomain(windowMs);
   const [error, setError] = useState<string | null>(null);
   /** The last save (see the Recordings page's saved runs). */
   const [savedNote, setSavedNote] = useState<string | null>(null);
@@ -160,7 +161,7 @@ export function RunPage() {
   useEffect(() => {
     if (stats) simTime(stats.simMs);
   }, [stats]);
-  const { bufferMs, updateMs, cadence } = useChartSettings();
+  const { bufferMs, updateMs, cadence, zoomResets } = useChartSettings();
   // The 3D view's tooltip asks for a neuron's state (a replay's neurons have none).
   const queryState = useMemo(
     () => (client && id !== null && !replay ? (neuron: number) => client.queryNeuron(id, neuron) : undefined),
@@ -514,7 +515,7 @@ export function RunPage() {
         <div ref={rasterRef} data-testid="raster">
           {raster && rows.length > 0 && (
             <Chart
-              key={`${windowMs}:${cadence}`}
+              key={`${windowMs}:${cadence}:${zoomResets}`}
               chartId={1}
               width={width}
               height={rasterHeight}
@@ -526,7 +527,7 @@ export function RunPage() {
               dataUpdatePeriod={updateMs}
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
-              <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
+              <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={timeDomain} label="t (ms)" />
               <OrdinalAxis
                 axisId="y-axis-1"
                 location={AxisLocation.Left}
@@ -534,7 +535,7 @@ export function RunPage() {
                 label={showNames ? "" : `${rows.length} neurons`}
                 font={showNames ? (rowHeight < 14 ? { size: 9 } : undefined) : { color: "transparent" }}
               />
-              <RasterPlot spikeMargin={rowHeight >= 10 ? 1 : 0} withCadence={cadence} />
+              <RasterPlot spikeMargin={rowHeight >= 10 ? 1 : 0} withCadence={cadence} {...ZOOM} />
             </Chart>
           )}
         </div>
@@ -542,7 +543,7 @@ export function RunPage() {
         <div data-testid="rate">
           {live && (
             <Chart
-              key={`${windowMs}:${cadence}`}
+              key={`${windowMs}:${cadence}:${zoomResets}`}
               chartId={2}
               width={width}
               height={180}
@@ -554,9 +555,9 @@ export function RunPage() {
               dataUpdatePeriod={16}
               margin={{ left: labelWidth, right: 20, bottom: 48 }}
             >
-              <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={[0, windowMs]} label="t (ms)" />
+              <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={timeDomain} label="t (ms)" />
               <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-1, 10]} label="Hz" autoScale autoScaleMin={-1} />
-              <ScatterPlot withCadence={cadence} />
+              <ScatterPlot withCadence={cadence} {...ZOOM} />
             </Chart>
           )}
         </div>
