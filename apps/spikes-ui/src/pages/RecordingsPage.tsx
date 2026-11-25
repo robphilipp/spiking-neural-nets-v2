@@ -1,5 +1,5 @@
-import type { Recording } from "@spikes/client";
-import { Download, PlayCircle, RefreshCw, Table2 } from "lucide-react";
+import type { Recording, SavedRun } from "@spikes/client";
+import { Download, History, PlayCircle, RefreshCw, Table2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Heading, Notice, Panel } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
@@ -18,16 +18,20 @@ function made(id: string): string {
   return Number.isFinite(ms) && ms > 1e12 ? new Date(ms).toLocaleString() : "";
 }
 
-/** Recorded runs: replay one in the live views, export it to Parquet, or download its tables. */
-export function RecordingsPage({ onReplay }: { onReplay: () => void }) {
+/** Recorded runs: replay one in the live views, export it to Parquet, or download its tables. Saved runs: continue
+ *  one where it was saved. */
+export function RecordingsPage({ onOpen }: { onOpen: () => void }) {
   const { client } = useConnection();
   const dispatch = useAppDispatch();
   const server = useAppSelector((s) => s.settings.server);
   const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [saves, setSaves] = useState<SavedRun[]>([]);
+  const shards = useAppSelector((s) => s.project.project.run.shards);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const refresh = useCallback(() => {
     client?.listRecordings().then((r) => setRecordings([...r].reverse())).catch((e: Error) => setMessage({ ok: false, text: e.message }));
+    client?.listSaves().then((s) => setSaves([...s].reverse())).catch((e: Error) => setMessage({ ok: false, text: e.message }));
   }, [client]);
   useEffect(refresh, [refresh]);
 
@@ -56,6 +60,32 @@ export function RecordingsPage({ onReplay }: { onReplay: () => void }) {
           {message.text}
         </Notice>
       )}
+      {saves.length > 0 && (
+        <>
+          <h3 className="text-sm font-medium">Saved runs</h3>
+          {saves.map((s) => (
+            <Panel key={s.id} data-testid="saved-run" className="flex-row items-center gap-3">
+              <Heading className="flex-1">
+                {s.name} <span className="font-normal text-muted-foreground">at {(s.atMs / 1000).toFixed(2)} s · {size(s.bytes)} · {made(s.id)}</span>
+              </Heading>
+              <Button
+                data-testid="continue-run"
+                title={`Open it as a new session on ${shards} shard${shards === 1 ? "" : "s"} (the Run page's setting), ready to continue`}
+                onClick={attempt(async () => {
+                  const opened_ = await client!.openSave(s.id, shards);
+                  const [description, network] = await Promise.all([client!.getDescription(opened_.id), client!.getNetwork(opened_.id)]);
+                  dispatch(opened({ id: opened_.id, name: opened_.name, description, state: opened_.state, simMs: opened_.simMs, network }));
+                  onOpen();
+                })}
+              >
+                <History data-icon="inline-start" />
+                Continue
+              </Button>
+            </Panel>
+          ))}
+          <h3 className="text-sm font-medium">Recordings</h3>
+        </>
+      )}
       {!recordings.length && <p className="text-sm text-muted-foreground">No recordings yet. Turn on Record on the Run page to record a run.</p>}
       {recordings.map((r) => (
         <Panel key={r.id} data-testid="recording">
@@ -68,7 +98,7 @@ export function RecordingsPage({ onReplay }: { onReplay: () => void }) {
               onClick={attempt(async () => {
                 const s = await client!.openRecording(r.id);
                 dispatch(opened({ id: s.id, name: s.name, description: await client!.getDescription(s.id), state: s.state, simMs: s.simMs, network: null, replayEndMs: s.replayEndMs }));
-                onReplay();
+                onOpen();
               })}
             >
               <PlayCircle data-icon="inline-start" />

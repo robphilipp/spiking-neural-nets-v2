@@ -222,3 +222,54 @@ fn sensors_send_binary_batches() {
     assert!(fired.contains(&0) && fired.contains(&1), "{fired:?}");
     assert!(c.notices.iter().any(|(_, n)| matches!(n, Notice::StateChanged { .. })));
 }
+
+#[test]
+fn a_run_saved_through_the_protocol_opens_as_a_new_session() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("connection-saves");
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut c = Client::new(&dir);
+    let Response::Session { session } = c.ok(json!({"type": "createSession", "name": "ring", "description": ring()}))
+    else {
+        panic!()
+    };
+    let s = session.id;
+    // Not built yet: nothing to save.
+    let Outcome::Error(e) = c.call(json!({"type": "saveRun", "session": s, "name": "early"})) else {
+        panic!()
+    };
+    assert_eq!(serde_json::to_value(e.code).unwrap(), "invalidState");
+
+    c.ok(json!({"type": "build", "session": s, "settings": {"shards": 1}}));
+    c.ok(json!({"type": "stimulate", "session": s, "neurons": [0, 1, 2], "mv": 10.0}));
+    c.ok(json!({"type": "start", "session": s, "speed": null, "durationMs": 120.0}));
+    c.drain(300);
+    let Response::Saved { save } = c.ok(json!({"type": "saveRun", "session": s, "name": "ring at 120 ms"})) else {
+        panic!()
+    };
+    assert_eq!(save.name, "ring_at_120_ms");
+    assert_eq!(save.at_ms, 120.0);
+    assert!(save.bytes > 0.0);
+    let Response::Saves { saves } = c.ok(json!({"type": "listSaves"})) else {
+        panic!()
+    };
+    assert_eq!(saves, std::slice::from_ref(&save));
+    // Saved runs aren't recordings.
+    let Response::Recordings { recordings } = c.ok(json!({"type": "listRecordings"})) else {
+        panic!()
+    };
+    assert!(recordings.is_empty(), "{recordings:?}");
+
+    let Response::Session { session: opened } = c.ok(json!({"type": "openSave", "id": save.id, "shards": 2})) else {
+        panic!()
+    };
+    assert_ne!(opened.id, s);
+    assert_eq!(opened.sim_ms, 120.0);
+    let Response::Network { network } = c.ok(json!({"type": "getNetwork", "session": opened.id})) else {
+        panic!()
+    };
+    assert_eq!(network.neurons.len(), 25);
+    let Outcome::Error(e) = c.call(json!({"type": "openSave", "id": "nope.spksave"})) else {
+        panic!()
+    };
+    assert_eq!(serde_json::to_value(e.code).unwrap(), "notFound");
+}

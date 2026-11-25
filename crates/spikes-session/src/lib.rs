@@ -117,6 +117,20 @@ impl Engine {
         session
     }
 
+    /// Opens a saved run (see [`Session::save`]) as a new session on `shards` shards, ready at the saved time.
+    pub fn open_saved(&self, name: impl Into<String>, bytes: &[u8], shards: usize) -> Result<Session, SessionError> {
+        let id = SessionId(self.next.fetch_add(1, Ordering::Relaxed));
+        let session = Session::described(
+            id,
+            name.into(),
+            String::new(),
+            spikes_dna::NetworkDescription::default(),
+        );
+        session.load_saved(bytes, shards)?;
+        self.lock().insert(id, session.clone());
+        Ok(session)
+    }
+
     /// Opens a recorded run (a `spikes-record` directory) as a replay session: build it, then start it like a run.
     pub fn open_recording(&self, dir: &std::path::Path) -> Result<Session, SessionError> {
         let data = replay::ReplayData::load(dir)?;

@@ -168,10 +168,10 @@ struct FieldCodec {
 }
 
 /// How each kind of actor and each field is saved: register every kind the runtime has ([`Self::actor`], or
-/// [`Self::stateless`] for actors with nothing to save) and every field, in the order the fields were added.
+/// [`Self::stateless`] for actors with nothing to save) and every type of field it may have.
 pub struct SnapshotCodec<M, E> {
     kinds: HashMap<TypeId, KindCodec>,
-    fields: Vec<FieldCodec>,
+    fields: HashMap<TypeId, FieldCodec>,
     _types: PhantomData<fn(M, E)>,
 }
 
@@ -179,7 +179,7 @@ impl<M, E> Default for SnapshotCodec<M, E> {
     fn default() -> Self {
         Self {
             kinds: HashMap::new(),
-            fields: Vec::new(),
+            fields: HashMap::new(),
             _types: PhantomData,
         }
     }
@@ -241,25 +241,47 @@ impl<M: 'static, E: 'static> SnapshotCodec<M, E> {
         self
     }
 
-    /// The next field (in the order fields were added to the runtime) is of type `F`.
+    /// Fields of type `F` are saved with [`PersistField`] (if the runtime has one).
     pub fn field<F: PersistField>(mut self) -> Self {
-        self.fields.push(FieldCodec {
-            save: |f| postcard::to_stdvec(&f.downcast_ref::<F>().expect("field type").save()).expect("field encodes"),
-            load: |f, bytes| {
-                let field = f.downcast_mut::<F>().ok_or_else(|| err("field type mismatch"))?;
-                field.restore(postcard::from_bytes(bytes).map_err(|e| err(format!("field state: {e}")))?);
-                Ok(())
+        self.fields.insert(
+            TypeId::of::<F>(),
+            FieldCodec {
+                save: |f| {
+                    postcard::to_stdvec(&f.downcast_ref::<F>().expect("field type").save()).expect("field encodes")
+                },
+                load: |f, bytes| {
+                    let field = f.downcast_mut::<F>().ok_or_else(|| err("field type mismatch"))?;
+                    field.restore(postcard::from_bytes(bytes).map_err(|e| err(format!("field state: {e}")))?);
+                    Ok(())
+                },
+                encode_update: |u| {
+                    postcard::to_stdvec(u.downcast_ref::<F::Update>().expect("update type")).expect("encodes")
+                },
+                decode_update: |bytes| {
+                    postcard::from_bytes::<F::Update>(bytes)
+                        .ok()
+                        .map(|u| Box::new(u) as Box<dyn Any + Send>)
+                },
             },
-            encode_update: |u| {
-                postcard::to_stdvec(u.downcast_ref::<F::Update>().expect("update type")).expect("encodes")
-            },
-            decode_update: |bytes| {
-                postcard::from_bytes::<F::Update>(bytes)
-                    .ok()
-                    .map(|u| Box::new(u) as Box<dyn Any + Send>)
-            },
-        });
+        );
         self
+    }
+}
+
+impl<M, E> Runtime<M, E> {
+    /// The codec of each of the runtime's fields, in its order.
+    fn field_codecs<'c>(&self, codec: &'c SnapshotCodec<M, E>) -> Result<Vec<&'c FieldCodec>, SnapshotError> {
+        self.world
+            .field_types
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                codec
+                    .fields
+                    .get(t)
+                    .ok_or_else(|| err(format!("field #{i} has no snapshot codec")))
+            })
+            .collect()
     }
 }
 
@@ -274,13 +296,7 @@ where
     /// # Errors
     /// If an actor kind or field has no codec.
     pub fn snapshot(&mut self, codec: &SnapshotCodec<M, E>) -> Result<Snapshot, SnapshotError> {
-        if codec.fields.len() != self.world.field_types.len() {
-            return Err(err(format!(
-                "the runtime has {} field(s); the codec describes {}",
-                self.world.field_types.len(),
-                codec.fields.len()
-            )));
-        }
+        let fields = self.field_codecs(codec)?;
         let node = self.world.dir.node;
         let mut snapshot = Snapshot {
             now: self.now.as_nanos(),
@@ -335,7 +351,7 @@ where
         snapshot.routes.sort_by_key(|r| r.0);
         // Fields: every shard has the same copy.
         if let Some(shard) = self.shards.first() {
-            for (field, c) in shard.core.fields.iter().zip(&codec.fields) {
+            for (field, c) in shard.core.fields.iter().zip(&fields) {
                 snapshot.fields.push((c.save)(field.as_any()));
             }
         }
@@ -360,8 +376,7 @@ where
                         msg: encode(msg),
                     }),
                     Item::Field { field, update } if once => {
-                        let c = codec
-                            .fields
+                        let c = fields
                             .get(usize::from(*field))
                             .ok_or_else(|| err(format!("field {field} has no codec")))?;
                         Some(EventItem::Field {
@@ -399,7 +414,8 @@ where
     /// # Errors
     /// If the runtime has different actors, or a kind or field has no codec, or the snapshot is damaged.
     pub fn restore(&mut self, codec: &SnapshotCodec<M, E>, snapshot: &Snapshot) -> Result<(), SnapshotError> {
-        if codec.fields.len() != self.world.field_types.len() || snapshot.fields.len() != codec.fields.len() {
+        let fields = self.field_codecs(codec)?;
+        if snapshot.fields.len() != fields.len() {
             return Err(err("the snapshot's fields don't match the runtime's"));
         }
         let node = self.world.dir.node;
@@ -459,7 +475,7 @@ where
             }
         }
         for shard in &mut self.shards {
-            for ((field, c), bytes) in shard.core.fields.iter_mut().zip(&codec.fields).zip(&snapshot.fields) {
+            for ((field, c), bytes) in shard.core.fields.iter_mut().zip(&fields).zip(&snapshot.fields) {
                 (c.load)(field.as_any_mut(), bytes)?;
             }
         }
@@ -509,8 +525,7 @@ where
                     }
                 }
                 EventItem::Field { field, update } => {
-                    let c = codec
-                        .fields
+                    let c = fields
                         .get(usize::from(*field))
                         .ok_or_else(|| err(format!("field {field} has no codec")))?;
                     for shard in &mut self.shards {

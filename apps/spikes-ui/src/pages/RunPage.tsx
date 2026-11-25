@@ -1,5 +1,5 @@
 import { Lod, type Neuron, type SensorInfo } from "@spikes/client";
-import { Hammer, Pause, Play, SkipForward, Square, X, Zap } from "lucide-react";
+import { Hammer, Pause, Play, Save, SkipForward, Square, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AxisLocation,
@@ -77,6 +77,8 @@ export function RunPage() {
   const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12, prefix: "" });
   const [windowMs, setWindowMs] = useState(1000);
   const [error, setError] = useState<string | null>(null);
+  /** The last save (see the Recordings page's saved runs). */
+  const [savedNote, setSavedNote] = useState<string | null>(null);
   /** Building (and applying background input): nothing else may start meanwhile. */
   const [building, setBuilding] = useState(false);
   const nodesSetting = useAppSelector((s) => s.settings.nodes);
@@ -271,6 +273,21 @@ export function RunPage() {
             <Square data-icon="inline-start" />
             Stop
           </Button>
+          {!replay && (
+            <Button
+              variant="outline"
+              disabled={!network || state !== "ready" || building}
+              title="Save the run so far, to continue it later (from the Recordings page). Stop the run first."
+              data-testid="save-run"
+              onClick={act(async () => {
+                const saved = await client!.saveRun(id, session.name);
+                setSavedNote(`Saved at ${(saved.atMs / 1000).toFixed(2)} s. Continue it from the Recordings page.`);
+              })}
+            >
+              <Save data-icon="inline-start" />
+              Save
+            </Button>
+          )}
           <Field
             label="Run for (s)"
             width={110}
@@ -388,6 +405,11 @@ export function RunPage() {
       {error && (
         <Notice tone="error" onClose={() => setError(null)}>
           {error}
+        </Notice>
+      )}
+      {savedNote && (
+        <Notice tone="success" onClose={() => setSavedNote(null)} data-testid="saved-note">
+          {savedNote}
         </Notice>
       )}
 

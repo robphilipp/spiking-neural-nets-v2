@@ -14,6 +14,7 @@ import type { Notice } from "./generated/Notice";
 import type { Recording } from "./generated/Recording";
 import type { Request } from "./generated/Request";
 import type { Response } from "./generated/Response";
+import type { SavedRun } from "./generated/SavedRun";
 import type { SensorInfo } from "./generated/SensorInfo";
 import type { SensorSpec } from "./generated/SensorSpec";
 import type { ServerMessage } from "./generated/ServerMessage";
@@ -247,6 +248,21 @@ export abstract class ProtocolClient {
   /** Converts a recorded run to Parquet, beside its Arrow files. */
   async exportParquet(id: string): Promise<void> {
     await this.request({ type: "exportParquet", id });
+  }
+
+  /** Saves a session's run so far (when ready: built, or stopped), to continue later with `openSave`. */
+  async saveRun(session: number, name: string): Promise<SavedRun> {
+    return (await this.expect({ type: "saveRun", session, name }, "saved")).save;
+  }
+
+  /** Saved runs, oldest first. */
+  async listSaves(): Promise<SavedRun[]> {
+    return (await this.expect({ type: "listSaves" }, "saves")).saves;
+  }
+
+  /** Opens a saved run as a new session, ready at the saved time (start it to continue). */
+  async openSave(id: string, shards?: number): Promise<SessionSummary> {
+    return (await this.expect({ type: "openSave", id, shards: shards ?? null }, "session")).session;
   }
 
   /** A replay: jumps to simulated time `ms` (not while running). */

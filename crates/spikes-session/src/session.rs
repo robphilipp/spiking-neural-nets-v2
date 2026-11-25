@@ -239,6 +239,8 @@ struct Inner {
     /// A cluster's paced runs wait for every node at every window (exact), rather than each node following its copy
     /// of the clock (best effort).
     lockstep: bool,
+    /// Inputs added since the build, and when: a saved run adds them again before restoring.
+    inputs: Vec<(InputSpec, SimTime)>,
 }
 
 struct Shared {
@@ -302,6 +304,7 @@ impl Session {
                     cluster: None,
                     member: None,
                     lockstep: true,
+                    inputs: Vec::new(),
                 }),
                 changed: Condvar::new(),
                 listeners: Mutex::new(Vec::new()),
@@ -514,6 +517,7 @@ impl Session {
         }
         inner.network = Arc::clone(&network);
         inner.settings = settings;
+        inner.inputs.clear();
         Ok((rt, net, network))
     }
 
@@ -961,16 +965,6 @@ impl Session {
     pub fn add_input(&self, input: InputSpec) -> Result<(), SessionError> {
         self.not_replay("take input")?;
         let network = self.network();
-        let targets = input
-            .targets()
-            .iter()
-            .map(|&i| {
-                network
-                    .id(i)
-                    .map(NeuronRef::new)
-                    .ok_or_else(|| SessionError::NotFound(format!("neuron {i}")))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         let input_copy = input.clone();
         let mut inner = self.inner();
         let state = state_of(&inner);
@@ -981,45 +975,118 @@ impl Session {
             });
         };
         let start = built.rt.now();
-        let delay = SimDuration::from_millis(1);
-        match input {
-            InputSpec::Poisson {
-                rate_hz, mv, duration, ..
-            } => {
-                if !(rate_hz.is_finite() && rate_hz > 0.0) {
-                    return Err(SessionError::Invalid(format!("rate must be positive, not {rate_hz}")));
-                }
-                built.rt.spawn(PoissonInput {
-                    rate_hz,
-                    targets,
-                    mv,
-                    delay,
-                    start,
-                    until: duration.map_or(SimTime::MAX, |d| start.saturating_add(d)),
-                });
-            }
-            InputSpec::Periodic {
-                period, mv, duration, ..
-            } => {
-                if period.is_zero() {
-                    return Err(SessionError::Invalid("the period must be positive".into()));
-                }
-                built.rt.spawn(PeriodicInput {
-                    period,
-                    targets,
-                    mv,
-                    delay,
-                    start,
-                    until: duration.map_or(SimTime::MAX, |d| start.saturating_add(d)),
-                });
-            }
-        }
+        spawn_input(&mut built.rt, &network, input, start)?;
+        inner.inputs.push((input_copy.clone(), start));
         // Every node spawns it too, so the directories stay identical (it lives on one of them).
         if let Some(cluster) = inner.cluster.clone() {
             drop(inner);
             cluster.add_input(&input_copy)?;
         }
         Ok(())
+    }
+
+    /// Saves the run so far: the description, how it was built, the inputs added and every neuron's, synapse's and
+    /// pending event's state. Allowed when ready (built, or stopped); [`Self::load_saved`] continues from it, also
+    /// on another number of shards.
+    ///
+    /// # Errors
+    /// Unless ready; for a replay, or a network built on a cluster (not supported yet).
+    pub fn save(&self) -> Result<Vec<u8>, SessionError> {
+        self.not_replay("save")?;
+        let mut guard = self.inner();
+        let inner = &mut *guard;
+        if inner.cluster.is_some() {
+            return Err(SessionError::Invalid(
+                "saving a network built on a cluster isn't supported yet".into(),
+            ));
+        }
+        let state = state_of(inner);
+        let Stage::Ready(built) = &mut inner.phase else {
+            return Err(SessionError::State { state, action: "save" });
+        };
+        let snapshot = built
+            .rt
+            .snapshot(&spikes_network::snapshot_codec())
+            .map_err(|e| SessionError::Invalid(format!("couldn't save: {e}")))?;
+        let saved = SavedRun {
+            description: inner.text.clone(),
+            seed: inner.settings.seed,
+            min_delay: inner.settings.min_delay,
+            jitter: inner.settings.jitter,
+            record_weights: inner.settings.record_weights,
+            inputs: inner.inputs.clone(),
+            snapshot,
+        };
+        let mut bytes = SAVED_MAGIC.to_vec();
+        bytes.extend(postcard::to_stdvec(&saved).map_err(|e| SessionError::Invalid(e.to_string()))?);
+        Ok(bytes)
+    }
+
+    /// Continues a saved run (see [`Self::save`]): takes its description, builds it on `shards` shards, and restores
+    /// its state. The session is then ready, at the saved time. Allowed unless running.
+    ///
+    /// # Errors
+    /// If the file isn't a saved run, or is damaged; for a replay, or a session building on a cluster.
+    pub fn load_saved(&self, bytes: &[u8], shards: usize) -> Result<Arc<NetworkInfo>, SessionError> {
+        self.not_replay("load a saved run into")?;
+        let body = bytes
+            .strip_prefix(SAVED_MAGIC.as_slice())
+            .ok_or_else(|| SessionError::Invalid("not a saved run".into()))?;
+        let saved: SavedRun =
+            postcard::from_bytes(body).map_err(|e| SessionError::Invalid(format!("the saved run is damaged: {e}")))?;
+        if !self.inner().nodes.is_empty() {
+            return Err(SessionError::Invalid(
+                "loading a saved run onto a cluster isn't supported yet".into(),
+            ));
+        }
+        self.update_description(saved.description.clone())?;
+        self.build(BuildSettings {
+            seed: saved.seed,
+            shards,
+            min_delay: saved.min_delay,
+            jitter: saved.jitter,
+            record_weights: saved.record_weights,
+        })?;
+        let mut guard = self.inner();
+        let inner = &mut *guard;
+        let state = state_of(inner);
+        let Stage::Ready(built) = &mut inner.phase else {
+            return Err(SessionError::State {
+                state,
+                action: "load a saved run into",
+            });
+        };
+        for (spec, start) in &saved.inputs {
+            spawn_input(&mut built.rt, &inner.network, spec.clone(), *start)?;
+        }
+        built
+            .rt
+            .restore(&spikes_network::snapshot_codec(), &saved.snapshot)
+            .map_err(|e| SessionError::Invalid(format!("couldn't restore the saved run: {e}")))?;
+        inner.inputs = saved.inputs;
+        // Connections made or pruned before saving are in the neurons now.
+        let net = built.net.as_ref().expect("a built network");
+        let count: u64 = net
+            .neurons
+            .iter()
+            .filter_map(|n| built.rt.actor::<NeuronActor>(n.id()))
+            .map(|a| a.pre.iter().filter(|&&p| p != tempo_runtime::ActorId::WORLD).count() as u64)
+            .sum();
+        let rows = if count <= crate::network::SYNAPSE_LIST_LIMIT {
+            spikes_record::synapse_rows(&built.rt, net)
+        } else {
+            Vec::new()
+        };
+        let mut info = NetworkInfo::new(net, &inner.description, &rows);
+        info.synapse_count = count;
+        let network = Arc::new(info);
+        inner.network = Arc::clone(&network);
+        self.shared.hub.connect(&built.rt, Arc::clone(&network));
+        let now = built.rt.now();
+        drop(guard);
+        self.shared.hub.advance(now);
+        self.notify(SessionNotice::NetworkChanged);
+        Ok(network)
     }
 
     pub(crate) fn replay_of(id: SessionId, data: crate::replay::ReplayData) -> Self {
@@ -1714,6 +1781,69 @@ fn state_of_phase(phase: &Stage) -> State {
         Stage::Running { .. } => State::Running,
         Stage::Failed(_) => State::Failed,
     }
+}
+
+/// A saved run (see [`Session::save`]): what rebuilds the network, and the runtime's state.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavedRun {
+    description: String,
+    seed: u64,
+    min_delay: SimDuration,
+    jitter: Jitter,
+    record_weights: bool,
+    inputs: Vec<(InputSpec, SimTime)>,
+    snapshot: tempo_runtime::Snapshot,
+}
+
+/// A saved run's first bytes (with the format's version).
+const SAVED_MAGIC: &[u8; 8] = b"SPKSAVE1";
+
+/// Spawns a synthetic input that starts at `start`.
+fn spawn_input(rt: &mut Runtime, network: &NetworkInfo, input: InputSpec, start: SimTime) -> Result<(), SessionError> {
+    let targets = input
+        .targets()
+        .iter()
+        .map(|&i| {
+            network
+                .id(i)
+                .map(NeuronRef::new)
+                .ok_or_else(|| SessionError::NotFound(format!("neuron {i}")))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let delay = SimDuration::from_millis(1);
+    match input {
+        InputSpec::Poisson {
+            rate_hz, mv, duration, ..
+        } => {
+            if !(rate_hz.is_finite() && rate_hz > 0.0) {
+                return Err(SessionError::Invalid(format!("rate must be positive, not {rate_hz}")));
+            }
+            rt.spawn(PoissonInput {
+                rate_hz,
+                targets,
+                mv,
+                delay,
+                start,
+                until: duration.map_or(SimTime::MAX, |d| start.saturating_add(d)),
+            });
+        }
+        InputSpec::Periodic {
+            period, mv, duration, ..
+        } => {
+            if period.is_zero() {
+                return Err(SessionError::Invalid("the period must be positive".into()));
+            }
+            rt.spawn(PeriodicInput {
+                period,
+                targets,
+                mv,
+                delay,
+                start,
+                until: duration.map_or(SimTime::MAX, |d| start.saturating_add(d)),
+            });
+        }
+    }
+    Ok(())
 }
 
 fn state_of(inner: &Inner) -> State {

@@ -81,7 +81,7 @@ export function App() {
             {page === "network" && <NetworkPage />}
             {page === "run" && <RunPage />}
             {page === "inputs" && <InputsPage />}
-            {page === "recordings" && <RecordingsPage onReplay={() => setPage("run")} />}
+            {page === "recordings" && <RecordingsPage onOpen={() => setPage("run")} />}
             {page === "settings" && <SettingsPage />}
           </div>
         </SidebarInset>

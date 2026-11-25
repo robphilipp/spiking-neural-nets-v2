@@ -3,6 +3,7 @@ import type { Cluster } from "./Cluster";
 import type { Network } from "./Network";
 import type { NeuronState } from "./NeuronState";
 import type { Recording } from "./Recording";
+import type { SavedRun } from "./SavedRun";
 import type { SensorInfo } from "./SensorInfo";
 import type { SessionSummary } from "./SessionSummary";
 
@@ -49,4 +50,12 @@ sensors: Array<SensorInfo>, } | { "type": "recordings",
 /**
  * One each.
  */
-recordings: Array<Recording>, };
+recordings: Array<Recording>, } | { "type": "saved", 
+/**
+ * It.
+ */
+save: SavedRun, } | { "type": "saves", 
+/**
+ * One each, oldest first.
+ */
+saves: Array<SavedRun>, };

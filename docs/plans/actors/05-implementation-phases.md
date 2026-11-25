@@ -287,8 +287,21 @@ Milestone 2, memory and speed per synapse (2026-11-24):
 - Decision: leave memory and per-event cost here for now (10⁸ synapses fit on one machine; 10⁹ needs a cluster
   either way).
 
-Next: snapshots (save and restore a network, also onto another number of nodes), the 10⁹-synapse network on a
-cluster.
+Snapshots (2026-11-24):
+- Runtime: `Runtime::snapshot` / `Runtime::restore` (feature `serde`) save actor states (`Persist`), fields
+  (`PersistField`), the framework's per-actor state (random streams, sequence counters), pending events, route
+  edges and the time. Keyed by actor ID, so a snapshot restores onto any number of shards; `Snapshot::merge` joins a
+  cluster's parts. Restoring needs the same build (description, seed, actors spawned in the same order).
+- Network: `spikes_network::snapshot_codec()`. A network with learning, a modulator and inputs continues exactly
+  after a restore, on 1 or 3 shards.
+- Session: `Session::save` (when ready: built or stopped) writes the description, build settings, inputs added and
+  the snapshot; `Engine::open_saved` / `Session::load_saved` rebuild it on any number of shards and restore it.
+  Protocol: `saveRun`, `listSaves`, `openSave` (files in the recordings folder's `saved-runs/`). UI: Save on the Run
+  page, Continue under Saved runs on the Recordings page.
+- Not yet: saving while paused (stop first), and saving or loading on a cluster (each node would save its part;
+  the coordinator merges them).
+
+Next: snapshots on a cluster, the 10⁹-synapse network on a cluster.
 
 ## Benchmarks to keep from day one
 

@@ -248,4 +248,20 @@ session: number,
 /**
  * Where to.
  */
-ms: number, };
+ms: number, } | { "type": "saveRun", 
+/**
+ * The session.
+ */
+session: number, 
+/**
+ * A name for it.
+ */
+name: string, } | { "type": "listSaves" } | { "type": "openSave", 
+/**
+ * The saved run (its id from `listSaves`).
+ */
+id: string, 
+/**
+ * Worker threads (default 1, as for `build`).
+ */
+shards: number | null, };

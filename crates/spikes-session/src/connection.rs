@@ -518,6 +518,44 @@ impl Connection {
                 .seek(SimTime::from_start(duration(ms)?))
                 .map(done)
                 .map_err(api_error),
+            Request::SaveRun { session, name } => {
+                let session = self.session(session)?;
+                let bytes = session.save().map_err(api_error)?;
+                let at_ms = session.sim_time().since_start().as_millis_f64();
+                let dir = self.recordings.join(SAVES_DIR);
+                std::fs::create_dir_all(&dir).map_err(|e| error(ErrorCode::Io, e.to_string()))?;
+                let stamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis());
+                let name = plain_name(&name);
+                let id = format!("{stamp}-{name}-{}ms.{SAVE_EXTENSION}", at_ms.round());
+                std::fs::write(dir.join(&id), &bytes).map_err(|e| error(ErrorCode::Io, e.to_string()))?;
+                Ok(Response::Saved {
+                    save: api::SavedRun {
+                        id,
+                        name,
+                        at_ms: at_ms.round(),
+                        bytes: bytes.len() as f64,
+                    },
+                })
+            }
+            Request::ListSaves => Ok(Response::Saves {
+                saves: list_saves(&self.recordings.join(SAVES_DIR)),
+            }),
+            Request::OpenSave { id, shards } => {
+                let save = list_saves(&self.recordings.join(SAVES_DIR))
+                    .into_iter()
+                    .find(|s| s.id == id)
+                    .ok_or_else(|| error(ErrorCode::NotFound, format!("saved run '{id}'")))?;
+                let bytes = std::fs::read(self.recordings.join(SAVES_DIR).join(&save.id))
+                    .map_err(|e| error(ErrorCode::Io, e.to_string()))?;
+                let shards = shards.map_or(BuildSettings::default().shards, |n| n as usize);
+                let session = self.engine.open_saved(save.name, &bytes, shards).map_err(api_error)?;
+                self.watch(&session);
+                Ok(Response::Session {
+                    session: summary(&session),
+                })
+            }
         }
     }
 
@@ -706,13 +744,58 @@ fn view_settings(view: &api::View) -> Result<ViewSettings, ApiError> {
     })
 }
 
+/// Saved runs live in this folder of the recordings folder.
+const SAVES_DIR: &str = "saved-runs";
+const SAVE_EXTENSION: &str = "spksave";
+
+/// A name as a plain file-name part.
+fn plain_name(name: &str) -> String {
+    let plain: String = name
+        .chars()
+        .take(60)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if plain.is_empty() { "run".into() } else { plain }
+}
+
+/// The saved runs in `dir`; their names and times are in their file names (`{stamp}-{name}-{ms}ms.spksave`).
+fn list_saves(dir: &Path) -> Vec<api::SavedRun> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut saves: Vec<api::SavedRun> = entries
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            let id = e.file_name().to_string_lossy().to_string();
+            let stem = id.strip_suffix(&format!(".{SAVE_EXTENSION}"))?;
+            let (_stamp, rest) = stem.split_once('-')?;
+            let (name, at) = rest.rsplit_once('-')?;
+            let at_ms = at.strip_suffix("ms")?.parse().ok()?;
+            Some(api::SavedRun {
+                name: name.to_string(),
+                at_ms,
+                bytes: e.metadata().ok()?.len() as f64,
+                id,
+            })
+        })
+        .collect();
+    saves.sort_by(|a, b| a.id.cmp(&b.id));
+    saves
+}
+
 fn list_recordings(root: &Path) -> Vec<api::Recording> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
     };
     let mut recordings: Vec<api::Recording> = entries
         .filter_map(Result::ok)
-        .filter(|e| e.path().is_dir())
+        .filter(|e| e.path().is_dir() && e.file_name() != SAVES_DIR)
         .map(|e| {
             let path = e.path();
             let mut files: Vec<api::RecordingFile> = std::fs::read_dir(&path)

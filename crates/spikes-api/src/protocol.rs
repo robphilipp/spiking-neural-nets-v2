@@ -322,6 +322,23 @@ pub enum Request {
         /// Where to.
         ms: f64,
     },
+    /// Saves a session's run so far (when ready: built, or stopped), to continue later with `openSave`.
+    SaveRun {
+        /// The session.
+        session: u32,
+        /// A name for it.
+        name: String,
+    },
+    /// Saved runs.
+    ListSaves,
+    /// Opens a saved run as a new session, ready at the saved time: start it to continue.
+    OpenSave {
+        /// The saved run (its id from `listSaves`).
+        id: String,
+        /// Worker threads (default 1, as for `build`).
+        #[serde(default)]
+        shards: Option<u32>,
+    },
 }
 
 /// How to build a network.
@@ -530,6 +547,31 @@ pub enum Response {
         /// One each.
         recordings: Vec<Recording>,
     },
+    /// A saved run.
+    Saved {
+        /// It.
+        save: SavedRun,
+    },
+    /// Saved runs.
+    Saves {
+        /// One each, oldest first.
+        saves: Vec<SavedRun>,
+    },
+}
+
+/// A saved run (see `saveRun`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SavedRun {
+    /// Id (the file name).
+    pub id: String,
+    /// The name it was given.
+    pub name: String,
+    /// The simulated time it was saved at.
+    pub at_ms: f64,
+    /// Size in bytes.
+    pub bytes: f64,
 }
 
 /// Where a session is in its life.

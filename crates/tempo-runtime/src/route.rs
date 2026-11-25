@@ -20,6 +20,7 @@ pub struct RouteEdge {
 /// The variation is a deterministic function of `(seed, sender, sequence number, edge position)`, so it is
 /// reproducible and does not depend on where the route is expanded. Delays never go below zero.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Jitter {
     /// No variation.
     #[default]
