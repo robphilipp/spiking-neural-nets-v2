@@ -390,3 +390,21 @@ fn noise_is_reproducible_and_absent_when_zero() {
         "no noise: the random stream doesn't matter"
     );
 }
+
+#[test]
+fn noise_never_takes_away_input_arriving_at_rest() {
+    // A quiet neuron sits at its floor (the resting potential): noise gathered while quiet can raise it but not
+    // push it below, so it never cancels input. (It used to: the floor was applied after adding the input, and
+    // after 250 quiet ms the noise is ~8 mV either way here; a ring network lost spikes to it and stopped.)
+    let noisy = NeuronParams {
+        noise_mv: 0.5,
+        ..NeuronParams::monostable_integrator(100.0)
+    };
+    let mut lowest = f64::MAX;
+    for seed in 0..200 {
+        let mut rig = Rig::new(noisy.clone());
+        rig.rng = Xoshiro256PlusPlus::seed_from_u64(seed);
+        lowest = lowest.min(rig.external(250.0, 3.0).membrane_mv);
+    }
+    assert!(lowest >= 3.0 - 1e-9, "input was lost to noise: {lowest} mV");
+}

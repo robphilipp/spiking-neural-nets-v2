@@ -611,7 +611,7 @@ impl Model<'_> {
         let p = self.neuron;
         let now = event.now;
         let dt = self.elapse(st, now);
-        let decayed = (st.u + wiener(p.noise_mv, dt, rng)) * decay(dt, p.decay_ms);
+        let decayed = ((st.u + wiener(p.noise_mv, dt, rng)) * decay(dt, p.decay_ms)).max(p.min_potential_mv);
         let threshold = p.threshold_mv * event.fx.threshold;
         let direct = event.fx.direct_mv;
         let Some(eta) = self.refractoriness(st, now) else {
@@ -691,7 +691,7 @@ impl Model<'_> {
         };
         let now = event.now;
         let dt = self.elapse(st, now);
-        let decayed = (st.u + wiener(p.noise_mv, dt, rng)) * decay(dt, p.decay_ms);
+        let decayed = ((st.u + wiener(p.noise_mv, dt, rng)) * decay(dt, p.decay_ms)).max(p.min_potential_mv);
         st.u = (event.value.unwrap_or(0.0) + decayed)
             .max(p.min_potential_mv)
             .min(p.threshold_mv * event.fx.threshold);
