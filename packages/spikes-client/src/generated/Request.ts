@@ -262,6 +262,10 @@ name: string, } | { "type": "listSaves" } | { "type": "openSave",
  */
 id: string, 
 /**
- * Worker threads (default 1, as for `build`).
+ * Worker threads (default 1, as for `build`); on each node, with `nodes`.
  */
-shards: number | null, };
+shards: number | null, 
+/**
+ * Node agents to build it on (as for `build`); none: the engine alone. It may have been saved on others.
+ */
+nodes: Array<string> | null, };

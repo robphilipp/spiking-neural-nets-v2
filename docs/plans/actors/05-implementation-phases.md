@@ -298,10 +298,13 @@ Snapshots (2026-11-24):
   the snapshot; `Engine::open_saved` / `Session::load_saved` rebuild it on any number of shards and restore it.
   Protocol: `saveRun`, `listSaves`, `openSave` (files in the recordings folder's `saved-runs/`). UI: Save on the Run
   page, Continue under Saved runs on the Recordings page.
-- Not yet: saving while paused (stop first), and saving or loading on a cluster (each node would save its part;
-  the coordinator merges them).
+- Clusters: each node saves its part (`SaveState`), the coordinator merges them; loading restores the whole
+  snapshot on every node, each taking its own actors and events. Inputs carry their start time to every node. A run
+  saved on 2 nodes or in one process continues exactly in one process, on 2 nodes or on 3 (`openSave` takes `nodes`;
+  the UI uses the Settings page's nodes).
+- Not yet: saving while paused (stop first).
 
-Next: snapshots on a cluster, the 10⁹-synapse network on a cluster.
+Next: the 10⁹-synapse network on a cluster.
 
 ## Benchmarks to keep from day one
 

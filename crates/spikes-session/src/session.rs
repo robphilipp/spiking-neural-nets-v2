@@ -963,6 +963,11 @@ impl Session {
     /// Adds a synthetic input that runs inside the simulation. Only while ready (actors can't be added during a
     /// run); a rebuild removes it.
     pub fn add_input(&self, input: InputSpec) -> Result<(), SessionError> {
+        self.add_input_at(input, None)
+    }
+
+    /// Adds a synthetic input starting at `start` (default: now). On a cluster's coordinator, every node adds it.
+    pub(crate) fn add_input_at(&self, input: InputSpec, start: Option<SimTime>) -> Result<(), SessionError> {
         self.not_replay("take input")?;
         let network = self.network();
         let input_copy = input.clone();
@@ -974,40 +979,65 @@ impl Session {
                 action: "add an input to",
             });
         };
-        let start = built.rt.now();
+        let start = start.unwrap_or_else(|| built.rt.now());
         spawn_input(&mut built.rt, &network, input, start)?;
         inner.inputs.push((input_copy.clone(), start));
         // Every node spawns it too, so the directories stay identical (it lives on one of them).
         if let Some(cluster) = inner.cluster.clone() {
             drop(inner);
-            cluster.add_input(&input_copy)?;
+            cluster.add_input(&input_copy, start)?;
         }
         Ok(())
     }
 
-    /// Saves the run so far: the description, how it was built, the inputs added and every neuron's, synapse's and
-    /// pending event's state. Allowed when ready (built, or stopped); [`Self::load_saved`] continues from it, also
-    /// on another number of shards.
-    ///
-    /// # Errors
-    /// Unless ready; for a replay, or a network built on a cluster (not supported yet).
-    pub fn save(&self) -> Result<Vec<u8>, SessionError> {
-        self.not_replay("save")?;
-        let mut guard = self.inner();
-        let inner = &mut *guard;
-        if inner.cluster.is_some() {
-            return Err(SessionError::Invalid(
-                "saving a network built on a cluster isn't supported yet".into(),
-            ));
-        }
-        let state = state_of(inner);
+    /// The part of a snapshot of the run held here (the whole run, unless this is a node of a cluster).
+    pub(crate) fn snapshot_here(&self) -> Result<tempo_runtime::Snapshot, SessionError> {
+        let mut inner = self.inner();
+        let state = state_of(&inner);
         let Stage::Ready(built) = &mut inner.phase else {
             return Err(SessionError::State { state, action: "save" });
         };
-        let snapshot = built
+        built
             .rt
             .snapshot(&spikes_network::snapshot_codec())
-            .map_err(|e| SessionError::Invalid(format!("couldn't save: {e}")))?;
+            .map_err(|e| SessionError::Invalid(format!("couldn't save: {e}")))
+    }
+
+    /// Restores a run's snapshot into the runtime here (on a node of a cluster: the actors and events it holds).
+    pub(crate) fn restore_here(&self, snapshot: &tempo_runtime::Snapshot) -> Result<(), SessionError> {
+        let mut inner = self.inner();
+        let state = state_of(&inner);
+        let Stage::Ready(built) = &mut inner.phase else {
+            return Err(SessionError::State {
+                state,
+                action: "load a saved run into",
+            });
+        };
+        built
+            .rt
+            .restore(&spikes_network::snapshot_codec(), snapshot)
+            .map_err(|e| SessionError::Invalid(format!("couldn't restore the saved run: {e}")))
+    }
+
+    /// Saves the run so far: the description, how it was built, the inputs added and every neuron's, synapse's and
+    /// pending event's state (on a cluster, every node's). Allowed when ready (built, or stopped);
+    /// [`Self::load_saved`] continues from it, also on another number of shards or nodes.
+    ///
+    /// # Errors
+    /// Unless ready; for a replay.
+    pub fn save(&self) -> Result<Vec<u8>, SessionError> {
+        self.not_replay("save")?;
+        let here = self.snapshot_here()?;
+        let cluster = self.coordinator();
+        let snapshot = match &cluster {
+            Some(cluster) => {
+                let mut parts = vec![here];
+                parts.extend(cluster.save_states()?);
+                tempo_runtime::Snapshot::merge(parts)
+            }
+            None => here,
+        };
+        let inner = self.inner();
         let saved = SavedRun {
             description: inner.text.clone(),
             seed: inner.settings.seed,
@@ -1017,16 +1047,18 @@ impl Session {
             inputs: inner.inputs.clone(),
             snapshot,
         };
+        drop(inner);
         let mut bytes = SAVED_MAGIC.to_vec();
         bytes.extend(postcard::to_stdvec(&saved).map_err(|e| SessionError::Invalid(e.to_string()))?);
         Ok(bytes)
     }
 
-    /// Continues a saved run (see [`Self::save`]): takes its description, builds it on `shards` shards, and restores
-    /// its state. The session is then ready, at the saved time. Allowed unless running.
+    /// Continues a saved run (see [`Self::save`]): takes its description, builds it on `shards` shards (on the
+    /// session's nodes, if it has any: see [`Self::set_nodes`]), and restores its state. The session is then ready,
+    /// at the saved time. Allowed unless running.
     ///
     /// # Errors
-    /// If the file isn't a saved run, or is damaged; for a replay, or a session building on a cluster.
+    /// If the file isn't a saved run, or is damaged; for a replay.
     pub fn load_saved(&self, bytes: &[u8], shards: usize) -> Result<Arc<NetworkInfo>, SessionError> {
         self.not_replay("load a saved run into")?;
         let body = bytes
@@ -1034,11 +1066,6 @@ impl Session {
             .ok_or_else(|| SessionError::Invalid("not a saved run".into()))?;
         let saved: SavedRun =
             postcard::from_bytes(body).map_err(|e| SessionError::Invalid(format!("the saved run is damaged: {e}")))?;
-        if !self.inner().nodes.is_empty() {
-            return Err(SessionError::Invalid(
-                "loading a saved run onto a cluster isn't supported yet".into(),
-            ));
-        }
         self.update_description(saved.description.clone())?;
         self.build(BuildSettings {
             seed: saved.seed,
@@ -1047,37 +1074,36 @@ impl Session {
             jitter: saved.jitter,
             record_weights: saved.record_weights,
         })?;
+        for (spec, start) in &saved.inputs {
+            self.add_input_at(spec.clone(), Some(*start))?;
+        }
+        self.restore_here(&saved.snapshot)?;
+        let cluster = self.coordinator();
+        if let Some(cluster) = &cluster {
+            cluster.restore_state(&saved.snapshot)?;
+        }
+        // Connections made or pruned before saving are in the neurons now.
         let mut guard = self.inner();
         let inner = &mut *guard;
-        let state = state_of(inner);
         let Stage::Ready(built) = &mut inner.phase else {
-            return Err(SessionError::State {
-                state,
-                action: "load a saved run into",
-            });
+            unreachable!("restored just now")
         };
-        for (spec, start) in &saved.inputs {
-            spawn_input(&mut built.rt, &inner.network, spec.clone(), *start)?;
-        }
-        built
-            .rt
-            .restore(&spikes_network::snapshot_codec(), &saved.snapshot)
-            .map_err(|e| SessionError::Invalid(format!("couldn't restore the saved run: {e}")))?;
-        inner.inputs = saved.inputs;
-        // Connections made or pruned before saving are in the neurons now.
         let net = built.net.as_ref().expect("a built network");
-        let count: u64 = net
-            .neurons
+        let here = spikes_record::synapse_rows(&built.rt, net);
+        let rows = match &cluster {
+            Some(cluster) => [here, cluster.synapses()?].concat(),
+            None => here,
+        };
+        let count = rows
             .iter()
-            .filter_map(|n| built.rt.actor::<NeuronActor>(n.id()))
-            .map(|a| a.pre.iter().filter(|&&p| p != tempo_runtime::ActorId::WORLD).count() as u64)
-            .sum();
-        let rows = if count <= crate::network::SYNAPSE_LIST_LIMIT {
-            spikes_record::synapse_rows(&built.rt, net)
+            .filter(|r| r.pre != tempo_runtime::ActorId::WORLD.raw())
+            .count() as u64;
+        let listed = if count <= crate::network::SYNAPSE_LIST_LIMIT {
+            rows
         } else {
             Vec::new()
         };
-        let mut info = NetworkInfo::new(net, &inner.description, &rows);
+        let mut info = NetworkInfo::new(net, &inner.description, &listed);
         info.synapse_count = count;
         let network = Arc::new(info);
         inner.network = Arc::clone(&network);

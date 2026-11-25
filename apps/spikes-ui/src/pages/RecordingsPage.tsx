@@ -27,6 +27,10 @@ export function RecordingsPage({ onOpen }: { onOpen: () => void }) {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [saves, setSaves] = useState<SavedRun[]>([]);
   const shards = useAppSelector((s) => s.project.project.run.shards);
+  const nodes = useAppSelector((s) => s.settings.nodes)
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   const refresh = useCallback(() => {
@@ -70,9 +74,9 @@ export function RecordingsPage({ onOpen }: { onOpen: () => void }) {
               </Heading>
               <Button
                 data-testid="continue-run"
-                title={`Open it as a new session on ${shards} shard${shards === 1 ? "" : "s"} (the Run page's setting), ready to continue`}
+                title={`Open it as a new session on ${shards} shard${shards === 1 ? "" : "s"}${nodes.length ? ` of each of ${nodes.length} nodes` : ""} (the Run page's and Settings' choices), ready to continue`}
                 onClick={attempt(async () => {
-                  const opened_ = await client!.openSave(s.id, shards);
+                  const opened_ = await client!.openSave(s.id, shards, nodes);
                   const [description, network] = await Promise.all([client!.getDescription(opened_.id), client!.getNetwork(opened_.id)]);
                   dispatch(opened({ id: opened_.id, name: opened_.name, description, state: opened_.state, simMs: opened_.simMs, network }));
                   onOpen();

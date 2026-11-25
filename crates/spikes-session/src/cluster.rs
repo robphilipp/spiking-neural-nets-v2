@@ -94,8 +94,11 @@ enum Request {
         jitter: WireJitter,
         record_weights: bool,
     },
-    /// Add a synthetic input (every node spawns it, so the directories stay identical).
-    AddInput(InputSpec),
+    /// Add a synthetic input starting at `start_ns` (every node spawns it, so the directories stay identical).
+    AddInput {
+        input: InputSpec,
+        start_ns: u64,
+    },
     /// Run until `end_ns`, following the coordinator's windows.
     Run {
         end_ns: u64,
@@ -132,6 +135,10 @@ enum Request {
     },
     /// The node's neurons' synapses, as they are now.
     Synapses,
+    /// The node's part of a snapshot of the run (see `tempo_runtime::Snapshot::merge`).
+    SaveState,
+    /// Restore a whole run's snapshot (the node takes its part).
+    RestoreState(Box<tempo_runtime::Snapshot>),
     /// Done: drop the network.
     Close,
 }
@@ -143,6 +150,7 @@ enum Response {
     Snapshot(NeuronSnapshot),
     Index(Option<u32>),
     Synapses(Vec<spikes_record::SynapseRow>),
+    State(Box<tempo_runtime::Snapshot>),
     Err(String),
 }
 
@@ -541,8 +549,27 @@ impl Coordinator {
         }
     }
 
-    pub(crate) fn add_input(&self, input: &InputSpec) -> Result<(), SessionError> {
-        self.each(&Request::AddInput(input.clone()))
+    pub(crate) fn add_input(&self, input: &InputSpec, start: SimTime) -> Result<(), SessionError> {
+        self.each(&Request::AddInput {
+            input: input.clone(),
+            start_ns: start.as_nanos(),
+        })
+    }
+
+    /// Every node's part of a snapshot of the run, in node order (after the coordinator's, node 0).
+    pub(crate) fn save_states(&self) -> Result<Vec<tempo_runtime::Snapshot>, SessionError> {
+        self.clients
+            .iter()
+            .map(|client| match client.call(&Request::SaveState)? {
+                Response::State(s) => Ok(*s),
+                other => Err(SessionError::Invalid(format!("unexpected reply {other:?}"))),
+            })
+            .collect()
+    }
+
+    /// Restores a run's snapshot on every node.
+    pub(crate) fn restore_state(&self, snapshot: &tempo_runtime::Snapshot) -> Result<(), SessionError> {
+        self.each(&Request::RestoreState(Box::new(snapshot.clone())))
     }
 
     pub(crate) fn observe(&self, node: usize, neurons: Vec<u32>, on: bool) -> Result<(), SessionError> {
@@ -847,8 +874,8 @@ fn handle(
             *session = Some(s);
             Response::Ok
         }
-        Request::AddInput(input) => {
-            built(session)?.add_input(input)?;
+        Request::AddInput { input, start_ns } => {
+            built(session)?.add_input_at(input, Some(SimTime::from_nanos(start_ns)))?;
             Response::Ok
         }
         Request::Run {
@@ -889,6 +916,11 @@ fn handle(
             Response::Ok
         }
         Request::Synapses => Response::Synapses(built(session)?.synapses_here()?),
+        Request::SaveState => Response::State(Box::new(built(session)?.snapshot_here()?)),
+        Request::RestoreState(snapshot) => {
+            built(session)?.restore_here(&snapshot)?;
+            Response::Ok
+        }
         Request::Close => {
             if let Some(s) = session.take() {
                 s.leave_cluster();

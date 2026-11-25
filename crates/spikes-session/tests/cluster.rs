@@ -278,3 +278,87 @@ fn a_network_generated_in_code_builds_on_nodes() {
     assert!(session.query_neuron(2).unwrap().last_event > tempo_runtime::SimTime::ZERO);
     engine.close(session.id()).unwrap();
 }
+
+const SAVED_NET: &str = "(
+POP=[
+    (nam=exc, cnt=120, csp=1 m/s, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=300 µm, sx2=300 µm, sx3=300 µm)),
+    (nam=inh, cnt=30, inh=t, REG=(cst=bx, px1=0, px2=0, px3=0, sx1=300 µm, sx2=300 µm, sx3=300 µm)),
+],
+RUL=[
+    (prp=exc, psp=exc, cnt=15, cnw=r0.5:1.5, lrn=stdp_hard),
+    (prp=inh, psp=exc, prb=0.2, cnw=1),
+    (prp=exc, psp=inh, cnt=8, cnw=1),
+],
+LRN=[(fnc=stdp_hard, ina=0.01, inp=10 ms, exa=0.02, exp=10 ms)],
+)";
+
+/// Builds the saved-run test network on `nodes` (none: this process), runs it with input and a connection made
+/// while running, and returns (the saved run at 200 ms, every neuron's state at 500 ms).
+fn saved_run(engine: &Engine, nodes: Vec<String>) -> (Vec<u8>, Vec<spikes_session::NeuronSnapshot>) {
+    let session = engine.create("saved", SAVED_NET).unwrap();
+    session.set_nodes(nodes).unwrap();
+    session
+        .build(BuildSettings {
+            seed: 9,
+            shards: 2,
+            ..BuildSettings::default()
+        })
+        .unwrap();
+    session
+        .add_input(InputSpec::Poisson {
+            targets: (0..120).collect(),
+            rate_hz: 3_000.0,
+            mv: 12.0,
+            duration: Some(SimDuration::from_millis(450)),
+        })
+        .unwrap();
+    run(&session, 150, None);
+    session.connect(3, 140, 2.0, None, Some("stdp_hard")).unwrap();
+    run(&session, 50, None);
+    let saved = session.save().unwrap();
+    run(&session, 300, None);
+    let neurons = neuron_states(&session);
+    (saved, neurons)
+}
+
+fn neuron_states(session: &Session) -> Vec<spikes_session::NeuronSnapshot> {
+    (0..session.network().neurons.len() as u32)
+        .map(|i| session.query_neuron(i).unwrap())
+        .collect()
+}
+
+#[test]
+fn a_run_saved_on_a_cluster_continues_anywhere() {
+    let engine = Engine::new();
+    let (local_save, expected) = saved_run(&engine, Vec::new());
+    assert!(
+        expected.iter().map(|n| n.spikes).sum::<u64>() > 1_000,
+        "the network is active"
+    );
+    let (cluster_save, on_cluster) = saved_run(&engine, agents(2));
+    assert_eq!(on_cluster, expected, "a cluster runs it exactly like one process");
+
+    // Saved on 2 nodes; saved in one process: continued in one process, on 2 nodes, on 3.
+    for (saved, what) in [
+        (&cluster_save, "saved on a cluster"),
+        (&local_save, "saved in one process"),
+    ] {
+        for nodes in [0, 2, 3] {
+            let session = engine.create("continued", "(NRN=[])").unwrap();
+            session.set_nodes(agents(nodes)).unwrap();
+            let network = session.load_saved(saved, 1).unwrap();
+            assert_eq!(
+                network.synapse_count,
+                expected_synapses(&network),
+                "{what}, {nodes} nodes"
+            );
+            run(&session, 300, None);
+            assert_eq!(neuron_states(&session), expected, "{what}, continued on {nodes} nodes");
+            session.leave_cluster();
+        }
+    }
+}
+
+fn expected_synapses(network: &spikes_session::NetworkInfo) -> u64 {
+    network.synapses.len() as u64
+}

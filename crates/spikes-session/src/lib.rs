@@ -117,8 +117,15 @@ impl Engine {
         session
     }
 
-    /// Opens a saved run (see [`Session::save`]) as a new session on `shards` shards, ready at the saved time.
-    pub fn open_saved(&self, name: impl Into<String>, bytes: &[u8], shards: usize) -> Result<Session, SessionError> {
+    /// Opens a saved run (see [`Session::save`]) as a new session on `shards` shards (of each of `nodes`, if any),
+    /// ready at the saved time.
+    pub fn open_saved(
+        &self,
+        name: impl Into<String>,
+        bytes: &[u8],
+        shards: usize,
+        nodes: Vec<String>,
+    ) -> Result<Session, SessionError> {
         let id = SessionId(self.next.fetch_add(1, Ordering::Relaxed));
         let session = Session::described(
             id,
@@ -126,6 +133,7 @@ impl Engine {
             String::new(),
             spikes_dna::NetworkDescription::default(),
         );
+        session.set_nodes(nodes)?;
         session.load_saved(bytes, shards)?;
         self.lock().insert(id, session.clone());
         Ok(session)

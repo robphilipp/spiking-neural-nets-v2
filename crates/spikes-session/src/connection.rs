@@ -542,7 +542,7 @@ impl Connection {
             Request::ListSaves => Ok(Response::Saves {
                 saves: list_saves(&self.recordings.join(SAVES_DIR)),
             }),
-            Request::OpenSave { id, shards } => {
+            Request::OpenSave { id, shards, nodes } => {
                 let save = list_saves(&self.recordings.join(SAVES_DIR))
                     .into_iter()
                     .find(|s| s.id == id)
@@ -550,7 +550,10 @@ impl Connection {
                 let bytes = std::fs::read(self.recordings.join(SAVES_DIR).join(&save.id))
                     .map_err(|e| error(ErrorCode::Io, e.to_string()))?;
                 let shards = shards.map_or(BuildSettings::default().shards, |n| n as usize);
-                let session = self.engine.open_saved(save.name, &bytes, shards).map_err(api_error)?;
+                let session = self
+                    .engine
+                    .open_saved(save.name, &bytes, shards, nodes.unwrap_or_default())
+                    .map_err(api_error)?;
                 self.watch(&session);
                 Ok(Response::Session {
                     session: summary(&session),

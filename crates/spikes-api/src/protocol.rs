@@ -335,9 +335,12 @@ pub enum Request {
     OpenSave {
         /// The saved run (its id from `listSaves`).
         id: String,
-        /// Worker threads (default 1, as for `build`).
+        /// Worker threads (default 1, as for `build`); on each node, with `nodes`.
         #[serde(default)]
         shards: Option<u32>,
+        /// Node agents to build it on (as for `build`); none: the engine alone. It may have been saved on others.
+        #[serde(default)]
+        nodes: Option<Vec<String>>,
     },
 }
 

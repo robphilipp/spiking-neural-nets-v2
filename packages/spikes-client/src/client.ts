@@ -260,9 +260,9 @@ export abstract class ProtocolClient {
     return (await this.expect({ type: "listSaves" }, "saves")).saves;
   }
 
-  /** Opens a saved run as a new session, ready at the saved time (start it to continue). */
-  async openSave(id: string, shards?: number): Promise<SessionSummary> {
-    return (await this.expect({ type: "openSave", id, shards: shards ?? null }, "session")).session;
+  /** Opens a saved run as a new session (on `nodes`, if any), ready at the saved time (start it to continue). */
+  async openSave(id: string, shards?: number, nodes?: string[]): Promise<SessionSummary> {
+    return (await this.expect({ type: "openSave", id, shards: shards ?? null, nodes: nodes ?? null }, "session")).session;
   }
 
   /** A replay: jumps to simulated time `ms` (not while running). */
