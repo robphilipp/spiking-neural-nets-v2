@@ -489,7 +489,9 @@ impl Session {
         let mut rt = Runtime::new(RuntimeConfig {
             seed: settings.seed,
             shards: settings.shards,
-            min_remote_delay: Some(settings.min_delay),
+            // Windows are as long as the shortest delay between shards: of connections (known when built), and of
+            // direct messages (inputs, modulator releases), declared here.
+            min_remote_delay: Some(spikes_network::direct_delay(&inner.description)),
             cluster: node.map(|n| n.placement.clone()),
             ..RuntimeConfig::default()
         });
@@ -822,6 +824,14 @@ impl Session {
                 state: state_of_phase(other),
                 action: "control the clock of",
             }),
+        }
+    }
+
+    /// The runtime's counters and its lookahead (the synchronization window length), when ready (not running).
+    pub fn runtime_stats(&self) -> Option<(tempo_runtime::Stats, SimDuration)> {
+        match &self.inner().phase {
+            Stage::Ready(built) => Some((built.rt.stats(), built.rt.lookahead())),
+            _ => None,
         }
     }
 
@@ -1836,7 +1846,7 @@ fn spawn_input(rt: &mut Runtime, network: &NetworkInfo, input: InputSpec, start:
                 .ok_or_else(|| SessionError::NotFound(format!("neuron {i}")))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let delay = SimDuration::from_millis(1);
+    let delay = spikes_network::INPUT_DELAY;
     match input {
         InputSpec::Poisson {
             rate_hz, mv, duration, ..

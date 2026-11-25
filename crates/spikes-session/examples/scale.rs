@@ -171,6 +171,14 @@ fn main() {
     assert!(session.wait_for_run(std::time::Duration::from_secs(3600)));
     let wall = t.elapsed().as_secs_f64();
     stage("ran", t);
+    if let Some((stats, lookahead)) = session.runtime_stats() {
+        println!(
+            "  lookahead {:.3} ms; {} windows ({:.0} per simulated second)",
+            lookahead.as_millis_f64(),
+            stats.windows,
+            stats.windows as f64 / seconds
+        );
+    }
     let spikes: u64 = (0..n as u32)
         .step_by(n / 1000)
         .map(|i| session.query_neuron(i).expect("query").spikes)

@@ -871,6 +871,10 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
         let leader = self.core.shard == 0;
         let mut clock = ClockView::new(shared.clock);
         let mut lookahead = plan.lookahead;
+        // On a cluster each node starts from its own lookahead; the first window's agreement (every node's edges
+        // count) sets where the run starts, and changes are reported from then on. (A change that comes with the
+        // run's first commands is then not reported on a cluster.)
+        let mut agreed_once = shared.link.is_none();
         let mut behind = false;
         let mut last_end = plan.start;
 
@@ -891,7 +895,8 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
                 };
             }
             let agreed = SimDuration::from_nanos(decision.lookahead);
-            if leader && agreed < lookahead {
+            // The lookahead is agreed by the whole cluster: report its change once (from the first node).
+            if leader && self.core.node == 0 && agreed_once && agreed < lookahead {
                 self.core.system.publish(
                     SimTime::from_nanos(decision.start),
                     SystemEvent::LookaheadChanged {
@@ -901,6 +906,7 @@ impl<M: Clone + 'static, E: Clone + 'static> Shard<M, E> {
                 );
             }
             lookahead = agreed;
+            agreed_once = true;
             self.core.lookahead_proposal = lookahead;
             let start = SimTime::from_nanos(decision.start);
             self.drain(shared, n, start.min(plan.end));

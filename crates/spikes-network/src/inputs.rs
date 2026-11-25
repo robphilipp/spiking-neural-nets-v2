@@ -10,6 +10,20 @@ use tempo_runtime::{Actor, ActorId, Ctx, SimDuration, SimTime};
 use crate::messages::{Event, InputMsg, NeuronMsg, NeuronRef, SimMsg, Tell};
 
 /// Sends `mv` to one random target at Poisson-distributed times, from `start` until `until`.
+/// The delay of the messages synthetic inputs send to their neurons.
+pub const INPUT_DELAY: SimDuration = SimDuration::from_millis(1);
+
+/// The shortest delay of any *direct* message a network built from `description` sends between neurons (inputs'
+/// messages, modulator releases): what the runtime's `min_remote_delay` must be at most. Connections don't count
+/// (their delays are known in advance).
+pub fn direct_delay(description: &spikes_dna::NetworkDescription) -> SimDuration {
+    description
+        .modulators
+        .iter()
+        .map(|m| SimDuration::from_millis_f64(m.latency_ms))
+        .fold(INPUT_DELAY, SimDuration::min)
+}
+
 #[derive(Clone, Debug)]
 pub struct PoissonInput {
     /// Mean rate in Hz.

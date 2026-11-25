@@ -25,7 +25,7 @@ pub mod neuron;
 pub mod snapshot;
 
 pub use build::{BuildOptions, Network, NewConnection, build};
-pub use inputs::{PeriodicInput, PoissonInput};
+pub use inputs::{INPUT_DELAY, PeriodicInput, PoissonInput, direct_delay};
 pub use messages::{
     Event, InputMsg, InputRef, ModulatorMsg, ModulatorRef, NeuronMsg, NeuronRef, Ref, ReplayMsg, SimMsg, Tell,
 };
