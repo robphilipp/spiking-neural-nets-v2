@@ -386,7 +386,9 @@ impl Connection {
                 self.session(session)?.prune(pre, post).map(done).map_err(api_error)
             }
             Request::QueryNeuron { session, neuron } => {
-                let n = self.session(session)?.query_neuron(neuron).map_err(api_error)?;
+                let session = self.session(session)?;
+                let now = session.sim_time();
+                let n = session.query_neuron(neuron).map_err(api_error)?;
                 Ok(Response::Neuron {
                     neuron: api::NeuronState {
                         membrane_mv: n.membrane_mv,
@@ -394,6 +396,7 @@ impl Connection {
                         rate_hz: n.rate_hz,
                         last_event_ms: ms_of(n.last_event),
                         last_spike_ms: n.last_spike.map(ms_of),
+                        now_ms: ms_of(now),
                         tonic: n.tonic,
                         spikes: u32::try_from(n.spikes).unwrap_or(u32::MAX),
                         synapses: n

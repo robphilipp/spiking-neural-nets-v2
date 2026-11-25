@@ -773,6 +773,8 @@ pub struct NeuronState {
     pub last_event_ms: f64,
     /// Time of the last spike.
     pub last_spike_ms: Option<f64>,
+    /// The session's simulated time when this was queried (e.g. for how long ago the last spike was).
+    pub now_ms: f64,
     /// Firing tonically.
     pub tonic: bool,
     /// Spikes so far.

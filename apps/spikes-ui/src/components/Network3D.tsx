@@ -3,6 +3,7 @@
 // rows). Small networks are instanced spheres;
 // big ones are point sprites (one vertex per neuron), so 100k+ neurons are one cheap draw call either way.
 
+import { lastSpikeText } from "../neuronText";
 import { cssColor, useThemeMode } from "../theme";
 import type { Frame, Network, NeuronState, SensorInfo } from "@spikes/client";
 import { useEffect, useRef, useState } from "react";
@@ -653,7 +654,7 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
                 <span className="text-muted-foreground">Spikes</span>
                 <span>{hoverState ? hoverState.spikes.toLocaleString() : "…"}</span>
                 <span className="text-muted-foreground">Last spike</span>
-                <span>{hoverState ? (hoverState.lastSpikeMs === null ? "—" : `${fmt(hoverState.lastSpikeMs)} ms`) : "…"}</span>
+                <span data-testid="tooltip-last-spike">{hoverState ? lastSpikeText(hoverState) : "…"}</span>
                 {hoverState?.tonic && (
                   <>
                     <span className="text-muted-foreground">Firing</span>

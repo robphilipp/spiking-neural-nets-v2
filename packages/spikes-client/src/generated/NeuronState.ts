@@ -26,6 +26,10 @@ lastEventMs: number,
  */
 lastSpikeMs: number | null, 
 /**
+ * The session's simulated time when this was queried (e.g. for how long ago the last spike was).
+ */
+nowMs: number, 
+/**
  * Firing tonically.
  */
 tonic: boolean, 

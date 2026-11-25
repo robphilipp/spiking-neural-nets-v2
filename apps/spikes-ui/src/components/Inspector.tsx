@@ -6,6 +6,7 @@ import { Choice, Field, Heading, NeuronPicker, Notice, NumberField, Panel, Row, 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { lastSpikeText } from "../neuronText";
 import { useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectInspect, useInspect, type WeightSeries } from "../live";
 import { useSession } from "../store";
@@ -161,7 +162,7 @@ export function Inspector(props: {
                 // The rate estimate is kept only for homeostatic plasticity (HIP); otherwise it stays 0.
                 ["Rate (homeostasis)", state?.rateHz ? `${fmt(state.rateHz, 1)} Hz` : "—"],
                 ["Spikes", String(state?.spikes ?? "—")],
-                ["Last spike", state?.lastSpikeMs == null ? "—" : `${fmt(state.lastSpikeMs, 1)} ms`],
+                ["Last spike", state ? lastSpikeText(state) : "—"],
                 ["Tonic", state?.tonic ? "yes" : "no"],
               ].map(([label, value]) => (
                 <Stat key={label} label={label!} value={value} />
