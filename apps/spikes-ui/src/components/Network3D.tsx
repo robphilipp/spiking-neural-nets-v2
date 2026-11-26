@@ -658,7 +658,9 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
               // Beside the pointer, on whichever side has room.
               left: hover.x + 16 + 220 > width ? undefined : hover.x + 16,
               right: hover.x + 16 + 220 > width ? width - hover.x + 16 : undefined,
-              top: Math.min(hover.y + 12, height - 150),
+              // Below the pointer in the top half, above it in the bottom half.
+              top: hover.y < height / 2 ? hover.y + 12 : undefined,
+              bottom: hover.y < height / 2 ? undefined : height - hover.y + 12,
             }}
           >
             <div className="mb-1 flex items-center gap-2 text-sm font-medium">

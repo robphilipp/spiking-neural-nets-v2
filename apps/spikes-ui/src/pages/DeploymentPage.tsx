@@ -7,7 +7,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Network3D } from "../components/Network3D";
 import { useConnection } from "../connection";
 import { useWidth } from "../hooks/useWidth";
-import { useLive } from "../live";
 import { useSession, useSettings } from "../store";
 import { useThemeMode } from "../theme";
 
@@ -16,6 +15,10 @@ const PALETTE = ["#0072b2", "#e69f00", "#009e73", "#cc79a7", "#56b4e9", "#d55e00
 const colorOf = (k: number) => PALETTE[k] ?? `hsl(${(k * 137.5) % 360} 60% 50%)`;
 
 type ColorBy = "node" | "shard" | "type";
+
+/** "none", or how many connections, and how many of them cross to or from other nodes. */
+const crossed = (n: number, cross: number, way: "from" | "to") =>
+  n === 0 ? "none" : `${n.toLocaleString()} (${cross === 0 ? "all on this node" : `${cross.toLocaleString()} ${way} other nodes`})`;
 
 const nodeLabel = (d: Deployment, k: number) => d.nodes[k]?.name || `node ${k}`;
 
@@ -93,11 +96,21 @@ export function DeploymentPage() {
     });
   }, [deployment, colorBy, shardBase, members, network, dark]);
 
-  const live = useLive((s) => s.view);
-  const queryState = useMemo(
-    () => (client && id !== null ? (neuron: number) => client.queryNeuron(id, neuron) : undefined),
-    [client, id],
-  );
+  // Each neuron's connections, and how many of them cross to or from another node (when the network lists its
+  // synapses).
+  const crossing = useMemo(() => {
+    if (!deployment || !network || network.synapses.length === 0) return null;
+    const n = network.neurons.length;
+    const counts = { in: new Uint32Array(n), inCross: new Uint32Array(n), out: new Uint32Array(n), outCross: new Uint32Array(n) };
+    for (const syn of network.synapses) {
+      const cross = deployment.neuronNodes[syn.pre] !== deployment.neuronNodes[syn.post] ? 1 : 0;
+      counts.in[syn.post]! += 1;
+      counts.inCross[syn.post]! += cross;
+      counts.out[syn.pre]! += 1;
+      counts.outCross[syn.pre]! += cross;
+    }
+    return counts;
+  }, [deployment, network]);
 
   if (id === null || !network) {
     return <Notice>Build the network (on the Network or Run page) to see where it runs.</Notice>;
@@ -121,6 +134,44 @@ export function DeploymentPage() {
     setMembers(new Set(picked.map((n) => n.index)));
   };
   const share = (n: number, of: number) => (of ? `${((100 * n) / of).toFixed(0)}%` : "—");
+  const describe = (i: number) => {
+    const k = d.neuronNodes[i]!;
+    const node = d.nodes[k];
+    const shard = d.neuronShards[i]!;
+    const pin = d.neuronPins[i];
+    const honoured = pin !== null && pin !== undefined && d.nodes.some((n) => n.name === pin);
+    const neuron = network.neurons[i]!;
+    return (
+      <div className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 tabular-nums" data-testid="neuron-tooltip-deployment">
+        <span className="text-muted-foreground">Node</span>
+        <span data-testid="tooltip-node">
+          <span className="mr-1.5 inline-block size-2 rounded-full" style={{ background: colorOf(k) }} />
+          {nodeLabel(d, k)}
+          {node?.address ? ` (${node.address})` : " (this engine)"}
+        </span>
+        <span className="text-muted-foreground">Shard</span>
+        <span>
+          {shard + 1} of {node?.shardNeurons.length ?? "?"}
+        </span>
+        <span className="text-muted-foreground">Population</span>
+        <span>{neuron.population || "—"}</span>
+        <span className="text-muted-foreground">Placed</span>
+        <span data-testid="tooltip-placed">{!pin ? "automatically" : honoured ? `pinned to ${pin}` : `pinned to ${pin} (ignored: no such node)`}</span>
+        {crossing && (
+          <>
+            <span className="text-muted-foreground">Incoming</span>
+            <span>
+              {crossed(crossing.in[i]!, crossing.inCross[i]!, "from")}
+            </span>
+            <span className="text-muted-foreground">Outgoing</span>
+            <span>
+              {crossed(crossing.out[i]!, crossing.outCross[i]!, "to")}
+            </span>
+          </>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="flex flex-col gap-3" data-testid="deployment">
@@ -265,15 +316,15 @@ export function DeploymentPage() {
         <div ref={ref}>
           <Network3D
             network={network}
-            frames={live?.frames ?? NEVER}
+            frames={NEVER}
             width={width}
             height={420}
             selected={selected}
             onPick={(i) => setSelected([i])}
             onRegion={setSelected}
-            queryState={queryState}
             tooltips={tooltips}
             colors={colors}
+            describe={describe}
             pickHint="click a neuron or shift-drag a region to show its connections; click a population above to pick it out."
           />
         </div>

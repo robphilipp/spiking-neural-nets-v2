@@ -19,6 +19,10 @@ neuronNodes: Array<number>,
  */
 neuronShards: Array<number>, 
 /**
+ * The node each neuron is pinned to (`node=`), if any, whether or not the pin could be honoured.
+ */
+neuronPins: Array<string | null>, 
+/**
  * Populations, sets, and pinned neurons listed alone, in description order.
  */
 groups: Array<DeployedGroup>, 

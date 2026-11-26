@@ -12,6 +12,9 @@ pub struct Deployment {
     pub neuron_nodes: Vec<u32>,
     /// Each neuron's shard on its node.
     pub neuron_shards: Vec<u16>,
+    /// The node each neuron is pinned to (`node=`; its own, its population's or a set's), if any, whether or not
+    /// the pin could be honoured.
+    pub neuron_pins: Vec<Option<String>>,
     /// The populations and sets, and neurons listed alone that are pinned, in description order.
     pub groups: Vec<DeployedGroup>,
     /// The nodes the description names (`nodes=[(name=…)]`).
@@ -152,6 +155,7 @@ impl Deployment {
             nodes,
             neuron_nodes: homes.iter().map(|h| h.0).collect(),
             neuron_shards: homes.iter().map(|h| h.1).collect(),
+            neuron_pins: description.pinned_nodes(),
             groups,
             declared_nodes: description.nodes.clone(),
             warnings,

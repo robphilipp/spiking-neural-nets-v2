@@ -690,6 +690,8 @@ pub struct Deployment {
     pub neuron_nodes: Vec<u32>,
     /// Each neuron's shard on its node.
     pub neuron_shards: Vec<u16>,
+    /// The node each neuron is pinned to (`node=`), if any, whether or not the pin could be honoured.
+    pub neuron_pins: Vec<Option<String>>,
     /// Populations, sets, and pinned neurons listed alone, in description order.
     pub groups: Vec<DeployedGroup>,
     /// The nodes the description names (`nodes=[(name=…)]`).

@@ -81,5 +81,21 @@ test("on a cluster, the Deployment page lists every node, where each population 
   // Spikes crossed from edge to the others.
   const links = page.getByTestId("deployment-links");
   await expect(links.locator("tbody tr").nth(2).locator("td").nth(1)).toHaveText(/^[1-9]/);
+  // A sensor's tooltip: where it runs and why, and how many of its connections cross nodes.
+  const view = page.getByTestId("network-3d");
+  await view.scrollIntoViewIfNeeded();
+  const b = (await view.boundingBox())!;
+  const tooltip = page.getByTestId("neuron-tooltip");
+  found: for (let y = b.y + b.height - 30; y > b.y + b.height / 2; y -= 4) {
+    for (let x = b.x + b.width * 0.3; x < b.x + b.width * 0.7; x += 6) {
+      await page.mouse.move(x, y);
+      if (await tooltip.filter({ hasText: "sensors-" }).count()) break found;
+    }
+  }
+  await expect(page.getByTestId("tooltip-node")).toHaveText("edge (127.0.0.1:17092)");
+  await expect(page.getByTestId("tooltip-placed")).toHaveText("pinned to edge");
+  await expect(tooltip).toContainText(/Outgoing\s*\d+ \(\d+ to other nodes\)/);
+  await expect(page.getByTestId("neuron-tooltip-state")).toHaveCount(0);
+  await view.screenshot({ path: "test-results/deployment-tooltip.png" });
   await page.getByTestId("deployment").screenshot({ path: "test-results/deployment-cluster.png" });
 });

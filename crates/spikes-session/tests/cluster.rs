@@ -420,6 +420,9 @@ fn a_population_pinned_to_a_named_node_runs_there() {
     assert_eq!(names, ["main", "", "edge"]);
     assert_eq!(d.nodes[2].address, two[1]);
     assert_eq!(d.neuron_nodes, nodes);
+    let sensor = network.by_name("sensors-0").unwrap() as usize;
+    assert_eq!(d.neuron_pins[sensor].as_deref(), Some("edge"));
+    assert_eq!(d.neuron_pins[network.by_name("cortex-0").unwrap() as usize], None);
     let neurons: u64 = d.nodes.iter().flat_map(|n| &n.shard_neurons).sum();
     assert_eq!(neurons, 220);
     let synapses: u64 = d.nodes.iter().map(|n| n.synapses).sum();

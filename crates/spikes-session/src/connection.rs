@@ -285,6 +285,7 @@ impl Connection {
                             .collect(),
                         neuron_nodes: d.neuron_nodes,
                         neuron_shards: d.neuron_shards,
+                        neuron_pins: d.neuron_pins,
                         groups: d
                             .groups
                             .into_iter()
