@@ -57,7 +57,7 @@ test("every plot pans and zooms, and Reset zoom puts them back", async ({
   await page.getByTestId("background").check();
   await page.getByTestId("build").click();
   await expect(page.getByText("69 neurons")).toBeVisible();
-  await page.getByLabel("Run for (s)").fill("3");
+  await page.getByLabel("Run for (s)").fill("25");
   await page.getByLabel("Run for (s)").blur();
   await page.getByLabel("As fast as possible").check();
   const session = Number(
@@ -73,7 +73,7 @@ test("every plot pans and zooms, and Reset zoom puts them back", async ({
       async () => (await client.listSessions()).find((s) => s.id === session),
       { timeout: 20_000 },
     )
-    .toMatchObject({ state: "ready", simMs: 3000 });
+    .toMatchObject({ state: "ready", simMs: 25000 });
   client.close();
   await page.mouse.move(0, 0);
   await expect

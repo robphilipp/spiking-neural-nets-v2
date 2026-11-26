@@ -25,7 +25,7 @@ import { useConnection } from "../connection";
 import { useWidth } from "../hooks/useWidth";
 import { stopInput, useActiveInput } from "../inputStreams";
 import { ChartControls } from "../components/ChartControls";
-import { useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
+import { useCadence, useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectLive, useLive } from "../live";
 import { useBehavior } from "../useBehavior";
 import { backgroundChanged, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
@@ -66,7 +66,7 @@ export function RunPage() {
   const tooltips = useSettings((s) => s.tooltips);
   const [stimulus, setStimulus] = useState({ prefix: "", mv: 10 });
   const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12, prefix: "" });
-  const [windowMs, setWindowMs] = useState(1000);
+  const [windowMs, setWindowMs] = useState(20_000);
   const timeDomain = useTimeDomain(windowMs);
   const [error, setError] = useState<string | null>(null);
   /** The last save (see the Recordings page's saved runs). */
@@ -150,7 +150,8 @@ export function RunPage() {
   useEffect(() => {
     if (stats) simTime(stats.simMs);
   }, [stats]);
-  const { bufferMs, updateMs, cadence, zoomResets } = useChartSettings();
+  const { bufferMs, updateMs, zoomResets } = useChartSettings();
+  const cadence = useCadence();
   // The 3D view's tooltip asks for a neuron's state (a replay's neurons have none).
   const queryState = useMemo(
     () => (client && id !== null && !replay ? (neuron: number) => client.queryNeuron(id, neuron) : undefined),

@@ -72,13 +72,25 @@ export const ZOOM_HELP = "Drag a chart to pan; hold shift and scroll to zoom.";
  * run that has ended, since no new data comes to scroll it forward.
  */
 export function useTimeDomain(windowMs: number): [number, number] {
-  const cadence = useChartSettings((s) => s.cadence);
+  const cadence = useCadence();
+  const running = useSession((s) => s.state === "running");
   const zoomResets = useChartSettings((s) => s.zoomResets);
   return useMemo(() => {
     const now = useSession.getState().simMs;
     return now > windowMs ? [now - windowMs, now] : [0, windowMs];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- recomputed whenever the charts remount
-  }, [windowMs, cadence, zoomResets]);
+  }, [windowMs, cadence, running, zoomResets]);
+}
+
+/**
+ * Whether the live charts' time axes move with cadence now: when the setting is on and the session is running.
+ * (Cadence moves an axis on between data arrivals; once a run stops or pauses no data comes, and the axis should
+ * stay where the data ends.) Charts remount when this changes, starting at the current simulated time.
+ */
+export function useCadence(setting?: boolean): boolean {
+  const cadence = useChartSettings((s) => s.cadence);
+  const running = useSession((s) => s.state === "running");
+  return (setting ?? cadence) && running;
 }
 
 /** The current settings (outside React). */
