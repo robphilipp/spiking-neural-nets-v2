@@ -70,6 +70,28 @@ test("the editor suggests keys and explains them", async ({ page }) => {
     await page.getByText("decay_time", { exact: true }).hover();
     await expect(help).toBeVisible({ timeout: 1500 });
   }).toPass({ timeout: 10_000 });
+  // With the details: the equation, and when it doesn't apply.
+  await expect(help).toContainText("u(t + Δ) = u(t) × e^(−Δ/τ)");
+  await expect(help).toContainText("for resonators, which use");
+  await page.screenshot({ path: "test-results/editor-hover.png" });
+  // A longer one, with a list.
+  const dynamics = page.locator(".monaco-hover").filter({ hasText: "leaky integrate-and-fire" });
+  await expect(async () => {
+    await page.mouse.move(0, 0);
+    await page.getByText("dynamics", { exact: true }).hover();
+    await expect(dynamics).toBeVisible({ timeout: 1500 });
+  }).toPass({ timeout: 10_000 });
+  await page.screenshot({ path: "test-results/editor-hover-dynamics.png" });
+  // An equation's symbols are defined under it.
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type("(learning_rules=[(name=l, rule=stdp_hard, potentiation=0.01, potentiation_time=20 ms)])");
+  const potentiation = page.locator(".monaco-hover").filter({ hasText: "how long before the receiver's new spike it arrived" });
+  await expect(async () => {
+    await page.mouse.move(0, 0);
+    await page.getByText("potentiation", { exact: true }).hover();
+    await expect(potentiation).toBeVisible({ timeout: 1500 });
+  }).toPass({ timeout: 10_000 });
+  await page.screenshot({ path: "test-results/editor-hover-symbols.png" });
 });
 
 test("open a .boo file and download it again (browser projects)", async ({ page }) => {

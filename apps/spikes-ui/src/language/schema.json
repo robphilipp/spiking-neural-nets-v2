@@ -9,7 +9,8 @@
         "value": {
           "type": "list",
           "record": "node"
-        }
+        },
+        "details": "The other machines this network can run on, by name. Naming them here lets you pin neurons, populations and sets to them with `node=` (for example, keep the sensor neurons on the machine the sensors are attached to).\n\nYou only give names here. Which machine each name means is set in **Settings → node agents** (`name=host:port`), so the same file works on different clusters.\n\n**Note:** on the engine alone, pins to other nodes are dropped (the Deployment page says so). On a cluster, a pin to a node that no agent is named refuses the build. `main` is the engine itself and can't be declared."
       },
       {
         "key": "neuron_types",
@@ -17,7 +18,8 @@
         "value": {
           "type": "list",
           "record": "neuronType"
-        }
+        },
+        "details": "Reusable sets of neuron settings. Define a type once (say `pyramidal` or `fast_inhibitory`), then give neurons and populations `type=` instead of repeating the same settings.\n\nA neuron or population can still override any setting of its type. A type can build on another with `extends`.\n\n**Note:** an override replaces the whole key. Writing `resonance=(frequency=20 Hz, …)` on a neuron replaces the type's entire `resonance`, so give every field you need."
       },
       {
         "key": "synapse_types",
@@ -25,7 +27,8 @@
         "value": {
           "type": "list",
           "record": "synapseType"
-        }
+        },
+        "details": "Reusable sets of synapse settings (weight, delay, learning, limits, …). Connections use one with `type=` and can override any of its settings. A type can build on another with `extends`.\n\n**Note:** every connection needs a `weight`, from the connection or its type. An override replaces the whole key (a connection's `limits=(…)` replaces the type's `limits`)."
       },
       {
         "key": "neurons",
@@ -33,7 +36,8 @@
         "value": {
           "type": "list",
           "record": "neuron"
-        }
+        },
+        "details": "Neurons defined one at a time, each with its own name and position. Use this for a handful of special neurons; use `populations` for groups.\n\nA network needs at least one neuron here or in `populations`. Neurons are numbered in the order written: these first, then each population's."
       },
       {
         "key": "populations",
@@ -41,7 +45,8 @@
         "value": {
           "type": "list",
           "record": "population"
-        }
+        },
+        "details": "Groups of neurons that share settings, placed in one go: at listed points, at random in a box or ball, on a grid, along a line or around a ring.\n\nNeurons are named `<name>-0`, `<name>-1`, … and the population's name stands for all of them in connections and sets."
       },
       {
         "key": "sets",
@@ -49,7 +54,8 @@
         "value": {
           "type": "list",
           "record": "set"
-        }
+        },
+        "details": "Named groups of neurons that can mix populations and single neurons. Use them to connect groups that aren't a single population, or to pin a group to a machine.\n\n**Note:** sets are read in order, so a set can include only sets defined above it."
       },
       {
         "key": "connections",
@@ -57,7 +63,8 @@
         "value": {
           "type": "list",
           "record": "connection"
-        }
+        },
+        "details": "The wiring: each connection makes synapses from some neurons (`from`) to others (`to`) by a pattern, with the synapse settings given (or taken from a synapse type).\n\n**Note:** random weights and random patterns come from the Run page's seed. The same seed builds exactly the same network, however many shards or machines run it. Moving a connection to another place in the list changes its random draws. Two connections between the same pair of neurons make two separate synapses."
       },
       {
         "key": "learning_rules",
@@ -65,7 +72,8 @@
         "value": {
           "type": "list",
           "record": "learningRule"
-        }
+        },
+        "details": "Spike-timing-dependent plasticity (STDP) rules, so synapses can strengthen or weaken with use. Define a rule here and give synapses `learning=<name>`. Without one, synapses don't learn (`flat`, built in)."
       },
       {
         "key": "stickiness",
@@ -73,7 +81,8 @@
         "value": {
           "type": "list",
           "record": "stickiness"
-        }
+        },
+        "details": "Functions that protect learned weights from fading. A synapse with `decay` slowly returns to its equilibrium weight; stickiness slows that return for synapses left alone for a long time. Give synapses `stickiness=<name>`. `none` is built in and is the default."
       },
       {
         "key": "modulators",
@@ -81,7 +90,8 @@
         "value": {
           "type": "list",
           "record": "modulator"
-        }
+        },
+        "details": "Neuromodulators such as dopamine or acetylcholine. Neurons that `releases` one send it out when they spike; it spreads through space and fades; neurons with `receptors` for it change how they respond (more or less excitable, faster or slower learning, reward-driven learning).\n\n**Note:** nothing is simulated on a clock. Each release reaches each neuron at a computed time and then fades exponentially. Releases are remembered for 60 s (or 20 clearance times, if longer)."
       }
     ]
   },
@@ -95,7 +105,8 @@
         "value": {
           "type": "name"
         },
-        "required": true
+        "required": true,
+        "details": "The name used in `node=` to pin neurons to this machine. Settings → node agents connects the name to an actual machine (`name=host:port`).\n\n**Values:** any name except `main`, which is the engine itself."
       }
     ]
   },
@@ -106,7 +117,7 @@
     "keys": [
       {
         "key": "dynamics",
-        "doc": "`monostable_integrator`; `bistable_integrator` (fires tonically once excited); `monostable_resonator`; `bistable_resonator` (a limit cycle).",
+        "doc": "How the neuron behaves: integrates or resonates, fires once or keeps firing.",
         "value": {
           "type": "choice",
           "values": [
@@ -116,7 +127,8 @@
             "bistable_resonator"
           ]
         },
-        "default": "monostable_integrator"
+        "default": "monostable_integrator",
+        "details": "Integrators add up their inputs; resonators respond to their rhythm. Monostable neurons fire once when they reach the threshold; bistable ones switch into steady firing.\n\n- `monostable_integrator` (default): the classic leaky integrate-and-fire neuron. Inputs add up and leak away (`decay_time`); reaching `threshold` fires one spike and resets it.\n- `bistable_integrator`: like the above, but reaching `tonic_on_threshold` switches it into **steady firing** at `tonic_rate`, which lasts until its potential has leaked below `tonic_off_threshold`. A memory of a strong input.\n- `monostable_resonator`: its potential rings at a frequency (`resonance`) as it fades. Inputs that arrive in step with the ringing build up; out-of-step inputs cancel. So it responds to input *rhythms*, not just input strength.\n- `bistable_resonator`: a resonator that, once it fires, keeps firing once per cycle until a well-timed input knocks it back to rest.\n\n**Ignored:** settings that don't belong to the chosen dynamics are ignored: `threshold` for bistable integrators; `resonance` for integrators; `decay_time` and `rise_time` for resonators; the `tonic_*` settings for everything but bistable integrators."
       },
       {
         "key": "inhibitory",
@@ -124,7 +136,8 @@
         "value": {
           "type": "bool"
         },
-        "default": "false"
+        "default": "false",
+        "details": "Makes this neuron's outgoing connections inhibitory: its spikes push the neurons it connects to *away* from firing instead of toward it.\n\nIt only sets the default; a connection's `sign=` can override it. It doesn't change how this neuron reacts to its own inputs. In the 3D view, inhibitory neurons have their own colour."
       },
       {
         "key": "threshold",
@@ -139,7 +152,8 @@
           "monostable_integrator",
           "monostable_resonator",
           "bistable_resonator"
-        ]
+        ],
+        "details": "How high the potential must get for the neuron to fire. A higher threshold needs more (or better-timed) input; a lower one makes the neuron fire more easily.\n\nThe neuron fires when\n\n`u + η + b + m ≥ θ × g`\n\n- `u`: the membrane potential\n- `η`: relative refractoriness, briefly negative after a spike\n- `b`: the excitability shift from intrinsic plasticity and homeostasis\n- `m`: direct excitation from modulators\n- `θ`: this threshold\n- `g`: the receptors' threshold gain (1 without modulators)\n\n**Note:** an integrator can only reach the threshold when an input arrives (or a modulator pushes it). A resonator can also cross on its own, as its ringing swings up after an input; that moment is computed exactly.\n\n**Ignored:** for `bistable_integrator`, which uses `tonic_on_threshold`."
       },
       {
         "key": "tonic_on_threshold",
@@ -152,7 +166,8 @@
         "default": "15 mV",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: the potential that switches the neuron into steady (tonic) firing. It takes the place of `threshold`.\n\n**Note:** the potential can't rise above this value. Extra input while the neuron fires steadily keeps it topped up (prolonging the firing) rather than raising it further.\n\n**Values:** keep it above `tonic_off_threshold`.\n\n**Ignored:** for other dynamics."
       },
       {
         "key": "tonic_off_threshold",
@@ -165,7 +180,8 @@
         "default": "10 mV",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: steady firing stops once the potential has leaked below this value. The lower it is, the longer the neuron keeps firing after its input stops.\n\nWithout further input, steady firing lasts about\n\n`decay_time × ln(tonic_on_threshold / tonic_off_threshold)`\n\n- `ln`: the natural logarithm. With the defaults (15 mV and 10 mV, 250 ms), about 100 ms.\n\n**Note:** the potential keeps leaking during steady firing, and inputs still add to it, so ongoing input extends the firing. The check happens at each steady spike.\n\n**Values:** keep it below `tonic_on_threshold`. At or above it, firing stops after one spike.\n\n**Ignored:** for other dynamics."
       },
       {
         "key": "tonic_rate",
@@ -178,7 +194,8 @@
         "default": "10 Hz",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: how fast the neuron fires while firing steadily, one spike every `1 / tonic_rate` (10 Hz: every 100 ms).\n\n**Note:** steady spikes ignore the refractory period and the rise time.\n\n**Values:** must be positive.\n\n**Ignored:** for other dynamics. A bistable resonator fires once per resonance cycle instead."
       },
       {
         "key": "refractory_period",
@@ -188,7 +205,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "20 ms"
+        "default": "20 ms",
+        "details": "A dead time after each spike, during which the neuron can't fire again. It caps how fast the neuron can fire (20 ms: at most about 50 Hz).\n\n**Note:** input that arrives during this time is **lost**, not saved for later. Integrators are held at `resting_potential`; resonators keep ringing but ignore inputs. Signals arriving then still count for learning (STDP depression). Afterwards, `relative_refractoriness` makes firing harder for a little longer.\n\n**Values:** 0 turns it off. Steady (tonic) firing ignores it."
       },
       {
         "key": "relative_refractoriness",
@@ -198,7 +216,8 @@
           "quantity": "flux",
           "unit": "µWb"
         },
-        "default": "0.08 µWb"
+        "default": "0.08 µWb",
+        "details": "Makes the neuron harder to fire just after the refractory period ends, easing off over time. It softens the hard cut-off of the refractory period.\n\nA term is added to the potential when it's compared with the threshold:\n\n`η(s) = −η₀ / s`\n\n- `η₀`: this setting (1 µWb is 1 mV·ms)\n- `s`: milliseconds since the refractory period ended\n\nWith the default 0.08 µWb, firing needs 0.08 mV more 1 ms after the refractory period, and 0.008 mV more after 10 ms. Small unless you raise it.\n\n**Values:** 0 turns it off."
       },
       {
         "key": "resting_potential",
@@ -208,7 +227,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0 mV"
+        "default": "0 mV",
+        "details": "Where the potential goes after a spike, and (for integrators) the lowest it can go.\n\n**Note:** integrators leak toward **0 mV**, not toward this value. With a negative resting potential, inhibition can pull the neuron below 0 down to this floor, so it then needs extra input to recover. With a positive one, the potential never drops below it. During the refractory period an integrator is held here.\n\nResonators reset here after a spike, but their ringing isn't limited by it."
       },
       {
         "key": "decay_time",
@@ -218,7 +238,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "250 ms"
+        "default": "250 ms",
+        "details": "How quickly an integrator forgets its input: the membrane time constant τ. With a long τ, inputs spread out in time still add up; with a short one, only inputs that arrive close together can make the neuron fire, so it acts as a coincidence detector.\n\nBetween inputs the potential leaks toward 0 mV:\n\n`u(t + Δ) = u(t) × e^(−Δ/τ)`\n\n- `u(t)`: the potential at time `t`\n- `Δ`: the time since then (until the next input)\n- `τ`: this setting, `decay_time`\n\nAfter τ, about 37% of the potential remains; after 3τ, about 5%.\n\n**Values:** 0 or less means no leak.\n\n**Ignored:** for resonators, which use `resonance.damping_time`."
       },
       {
         "key": "rise_time",
@@ -228,7 +249,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "2 ms"
+        "default": "2 ms",
+        "details": "For integrators: a short delay between reaching the threshold and the spike leaving, standing in for the time a real membrane takes to rise. An input that only just tips the neuron over fires it sooner than one that lifts it all the way from rest:\n\n`delay = rise_time × (min(θ, u_after) − u_before) / θ`\n\n- `delay`: how long after the input the spike leaves\n- `θ`: the threshold\n- `u_before`: the potential just before the input (counting the refractoriness, excitability and modulator terms of the threshold test)\n- `u_after`: the potential just after it\n\n**Values:** 0 fires at the moment of the input.\n\n**Ignored:** for resonators, and for steady (tonic) spikes."
       },
       {
         "key": "membrane_noise",
@@ -238,7 +260,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0.1 mV"
+        "default": "0.1 mV",
+        "details": "Random jitter in the potential, so identical neurons don't behave identically and firing isn't perfectly regular.\n\nThe noise grows with the time since the neuron's last event, like a random walk. At each event the potential gets\n\n`σ × √(Δ / 1 ms) × N(0, 1)`\n\n- `σ`: this setting\n- `Δ`: milliseconds since the neuron's previous event\n- `N(0, 1)`: a standard normal random number\n\n**Note:** noise is added only when something happens to the neuron, so it can't make a quiet integrator fire by itself. The random numbers come from the Run page's seed.\n\n**Values:** 0 turns it off."
       },
       {
         "key": "spike_potential",
@@ -248,7 +271,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "1 mV"
+        "default": "1 mV",
+        "details": "The size of the signal this neuron's spikes send. Each neuron it connects to receives\n\n`sign × weight × spike_potential`\n\n- `sign`: +1 for an excitatory synapse, −1 for an inhibitory one\n- `weight`: the synapse's current weight\n- `spike_potential`: this setting, on the sending neuron\n\n(scaled by the receiver's modulator gains, if any), after the connection's delay.\n\n**Tip:** with the default 1 mV, a synapse's weight is simply how many mV a spike adds to the receiver."
       },
       {
         "key": "conduction_speed",
@@ -258,7 +282,8 @@
           "quantity": "speed",
           "unit": "m/s"
         },
-        "default": "10 m/s"
+        "default": "10 m/s",
+        "details": "How fast this neuron's spikes travel along its axon. Together with the distance to each receiver, it sets how long spikes take to arrive:\n\n`arrival delay = delay + distance / conduction_speed`\n\n- `delay`: the synapse's own delay (0.5 ms by default)\n- `distance`: the straight-line distance between the two neurons\n\nAt 10 m/s, 100 µm takes 10 µs, small next to the synaptic delay. Slow it down (like unmyelinated axons, around 0.5 m/s) to make distance matter.\n\n**Note:** no connection is faster than the build's minimum delay of 100 µs, which keeps multi-shard runs efficient.\n\n**Values:** must be positive."
       },
       {
         "key": "intrinsic_plasticity",
@@ -266,7 +291,8 @@
         "value": {
           "type": "record",
           "record": "intrinsicPlasticity"
-        }
+        },
+        "details": "Lets a neuron become easier to fire the more it fires: a simple form of learning within the neuron itself (long-term potentiation of intrinsic excitability).\n\nThe neuron keeps an excitability shift `b` that is added to its potential when it's compared with the threshold, so a positive `b` works like a lower threshold. At each spike\n\n`b ← b + amplitude × e^(−(b + step))`\n\n- `b`: the excitability shift, in mV (0 to start with)\n- `amplitude`, `step`: settings of this record\n- `←`: “becomes”: the new `b` is computed from the old one\n\nso each increase is smaller than the last. Between spikes, `b` fades back toward 0 with `decay_time` (10 minutes by default).\n\n**Note:** off unless `amplitude` is non-zero. `homeostasis` adjusts the same `b`."
       },
       {
         "key": "homeostasis",
@@ -274,7 +300,8 @@
         "value": {
           "type": "record",
           "record": "homeostasis"
-        }
+        },
+        "details": "Keeps the neuron's firing rate near a target by adjusting its excitability: a neuron that fires too little becomes easier to fire, and one that fires too much becomes harder to fire. Useful to stop learning networks from going silent or running away.\n\nThe neuron estimates its own rate `r` and moves its excitability shift `b` (added to the potential when it's compared with the threshold) by\n\n`db/dt = strength × (target_rate − r)`\n\n- `b`: the excitability shift, in mV\n- `db/dt`: how fast `b` changes, in mV per second\n- `r`: the neuron's current estimate of its own firing rate, in Hz (see `window`)\n- `strength`, `target_rate`: settings of this record\n\nwithin `min_shift` and `max_shift`.\n\n**Note:** the same `b` also fades with `intrinsic_plasticity.decay_time` (10 minutes by default), even without `intrinsic_plasticity`. A neuron that never gets any input still can't fire, however excitable it becomes.\n\n**Tip:** set `max_shift`, or a long-silent neuron's excitability grows without limit."
       },
       {
         "key": "resonance",
@@ -286,7 +313,8 @@
         "only": [
           "monostable_resonator",
           "bistable_resonator"
-        ]
+        ],
+        "details": "Makes the neuron ring at a frequency, like a tuning fork, instead of simply leaking. Inputs that arrive in time with the ringing add up; inputs out of step cancel. So the neuron prefers inputs that repeat at its frequency.\n\nThe state is a damped oscillation (potential `u` plus a hidden partner `x`):\n\n`(x + i·u)(t + Δ) = (x + i·u)(t) × e^((−1/damping_time + i·2π·frequency) × Δ)`\n\n- `u`: the membrane potential (what's compared with the threshold)\n- `x`: its partner in the oscillation (when `u` is at a peak, `x` is 0, and vice versa)\n- `i`: the imaginary unit; the pair `x + i·u` turns in a circle as it shrinks\n- `t`: a moment; `Δ`: the time since then\n- `damping_time`, `frequency`: settings of this record\n\nIn other words: `u` swings up and down at `frequency`, and the swings shrink by `e^(−Δ/damping_time)`. Each input bumps `u`.\n\n**Values:** required for `monostable_resonator` and `bistable_resonator`.\n\n**Ignored:** for integrators."
       },
       {
         "key": "receptors",
@@ -294,7 +322,8 @@
         "value": {
           "type": "list",
           "record": "receptor"
-        }
+        },
+        "details": "How this neuron responds to neuromodulators, one entry per modulator. Each effect is proportional to the modulator's concentration `c` where the neuron is. When there's no modulator, nothing changes.\n\nWith several receptors, gains multiply and direct effects add. A gain never goes below zero.\n\n**Note:** the input gains change input from other neurons only. External input (sensors, background input, stimulation from the Run page) isn't scaled."
       },
       {
         "key": "releases",
@@ -302,7 +331,8 @@
         "value": {
           "type": "record",
           "record": "modulatorRelease"
-        }
+        },
+        "details": "Makes this neuron release a modulator each time it spikes, from where it is. The release spreads as the modulator describes (`reach`, `speed`, `latency`, `falloff`). It affects only neurons that have a receptor for it, the releasing neuron included.\n\n**Tip:** for reward learning, have a small group of “reward” neurons release dopamine, and give the learning neurons a receptor with three-factor learning."
       }
     ]
   },
@@ -317,7 +347,8 @@
         "value": {
           "type": "name"
         },
-        "required": true
+        "required": true,
+        "details": "The type's name, used in `type=` on neurons and populations, and in `extends` on other types.\n\n**Values:** unique among neuron types."
       },
       {
         "key": "extends",
@@ -325,11 +356,12 @@
         "value": {
           "type": "reference",
           "to": "neuronType"
-        }
+        },
+        "details": "Starts this type from another type's settings, so you only write what's different.\n\n**Note:** a setting given here replaces the base type's whole setting (a `resonance` here replaces the base's entire `resonance`). Chains of types are fine; a loop is an error."
       },
       {
         "key": "dynamics",
-        "doc": "`monostable_integrator`; `bistable_integrator` (fires tonically once excited); `monostable_resonator`; `bistable_resonator` (a limit cycle).",
+        "doc": "How the neuron behaves: integrates or resonates, fires once or keeps firing.",
         "value": {
           "type": "choice",
           "values": [
@@ -339,7 +371,8 @@
             "bistable_resonator"
           ]
         },
-        "default": "monostable_integrator"
+        "default": "monostable_integrator",
+        "details": "Integrators add up their inputs; resonators respond to their rhythm. Monostable neurons fire once when they reach the threshold; bistable ones switch into steady firing.\n\n- `monostable_integrator` (default): the classic leaky integrate-and-fire neuron. Inputs add up and leak away (`decay_time`); reaching `threshold` fires one spike and resets it.\n- `bistable_integrator`: like the above, but reaching `tonic_on_threshold` switches it into **steady firing** at `tonic_rate`, which lasts until its potential has leaked below `tonic_off_threshold`. A memory of a strong input.\n- `monostable_resonator`: its potential rings at a frequency (`resonance`) as it fades. Inputs that arrive in step with the ringing build up; out-of-step inputs cancel. So it responds to input *rhythms*, not just input strength.\n- `bistable_resonator`: a resonator that, once it fires, keeps firing once per cycle until a well-timed input knocks it back to rest.\n\n**Ignored:** settings that don't belong to the chosen dynamics are ignored: `threshold` for bistable integrators; `resonance` for integrators; `decay_time` and `rise_time` for resonators; the `tonic_*` settings for everything but bistable integrators."
       },
       {
         "key": "inhibitory",
@@ -347,7 +380,8 @@
         "value": {
           "type": "bool"
         },
-        "default": "false"
+        "default": "false",
+        "details": "Makes this neuron's outgoing connections inhibitory: its spikes push the neurons it connects to *away* from firing instead of toward it.\n\nIt only sets the default; a connection's `sign=` can override it. It doesn't change how this neuron reacts to its own inputs. In the 3D view, inhibitory neurons have their own colour."
       },
       {
         "key": "threshold",
@@ -362,7 +396,8 @@
           "monostable_integrator",
           "monostable_resonator",
           "bistable_resonator"
-        ]
+        ],
+        "details": "How high the potential must get for the neuron to fire. A higher threshold needs more (or better-timed) input; a lower one makes the neuron fire more easily.\n\nThe neuron fires when\n\n`u + η + b + m ≥ θ × g`\n\n- `u`: the membrane potential\n- `η`: relative refractoriness, briefly negative after a spike\n- `b`: the excitability shift from intrinsic plasticity and homeostasis\n- `m`: direct excitation from modulators\n- `θ`: this threshold\n- `g`: the receptors' threshold gain (1 without modulators)\n\n**Note:** an integrator can only reach the threshold when an input arrives (or a modulator pushes it). A resonator can also cross on its own, as its ringing swings up after an input; that moment is computed exactly.\n\n**Ignored:** for `bistable_integrator`, which uses `tonic_on_threshold`."
       },
       {
         "key": "tonic_on_threshold",
@@ -375,7 +410,8 @@
         "default": "15 mV",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: the potential that switches the neuron into steady (tonic) firing. It takes the place of `threshold`.\n\n**Note:** the potential can't rise above this value. Extra input while the neuron fires steadily keeps it topped up (prolonging the firing) rather than raising it further.\n\n**Values:** keep it above `tonic_off_threshold`.\n\n**Ignored:** for other dynamics."
       },
       {
         "key": "tonic_off_threshold",
@@ -388,7 +424,8 @@
         "default": "10 mV",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: steady firing stops once the potential has leaked below this value. The lower it is, the longer the neuron keeps firing after its input stops.\n\nWithout further input, steady firing lasts about\n\n`decay_time × ln(tonic_on_threshold / tonic_off_threshold)`\n\n- `ln`: the natural logarithm. With the defaults (15 mV and 10 mV, 250 ms), about 100 ms.\n\n**Note:** the potential keeps leaking during steady firing, and inputs still add to it, so ongoing input extends the firing. The check happens at each steady spike.\n\n**Values:** keep it below `tonic_on_threshold`. At or above it, firing stops after one spike.\n\n**Ignored:** for other dynamics."
       },
       {
         "key": "tonic_rate",
@@ -401,7 +438,8 @@
         "default": "10 Hz",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: how fast the neuron fires while firing steadily, one spike every `1 / tonic_rate` (10 Hz: every 100 ms).\n\n**Note:** steady spikes ignore the refractory period and the rise time.\n\n**Values:** must be positive.\n\n**Ignored:** for other dynamics. A bistable resonator fires once per resonance cycle instead."
       },
       {
         "key": "refractory_period",
@@ -411,7 +449,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "20 ms"
+        "default": "20 ms",
+        "details": "A dead time after each spike, during which the neuron can't fire again. It caps how fast the neuron can fire (20 ms: at most about 50 Hz).\n\n**Note:** input that arrives during this time is **lost**, not saved for later. Integrators are held at `resting_potential`; resonators keep ringing but ignore inputs. Signals arriving then still count for learning (STDP depression). Afterwards, `relative_refractoriness` makes firing harder for a little longer.\n\n**Values:** 0 turns it off. Steady (tonic) firing ignores it."
       },
       {
         "key": "relative_refractoriness",
@@ -421,7 +460,8 @@
           "quantity": "flux",
           "unit": "µWb"
         },
-        "default": "0.08 µWb"
+        "default": "0.08 µWb",
+        "details": "Makes the neuron harder to fire just after the refractory period ends, easing off over time. It softens the hard cut-off of the refractory period.\n\nA term is added to the potential when it's compared with the threshold:\n\n`η(s) = −η₀ / s`\n\n- `η₀`: this setting (1 µWb is 1 mV·ms)\n- `s`: milliseconds since the refractory period ended\n\nWith the default 0.08 µWb, firing needs 0.08 mV more 1 ms after the refractory period, and 0.008 mV more after 10 ms. Small unless you raise it.\n\n**Values:** 0 turns it off."
       },
       {
         "key": "resting_potential",
@@ -431,7 +471,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0 mV"
+        "default": "0 mV",
+        "details": "Where the potential goes after a spike, and (for integrators) the lowest it can go.\n\n**Note:** integrators leak toward **0 mV**, not toward this value. With a negative resting potential, inhibition can pull the neuron below 0 down to this floor, so it then needs extra input to recover. With a positive one, the potential never drops below it. During the refractory period an integrator is held here.\n\nResonators reset here after a spike, but their ringing isn't limited by it."
       },
       {
         "key": "decay_time",
@@ -441,7 +482,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "250 ms"
+        "default": "250 ms",
+        "details": "How quickly an integrator forgets its input: the membrane time constant τ. With a long τ, inputs spread out in time still add up; with a short one, only inputs that arrive close together can make the neuron fire, so it acts as a coincidence detector.\n\nBetween inputs the potential leaks toward 0 mV:\n\n`u(t + Δ) = u(t) × e^(−Δ/τ)`\n\n- `u(t)`: the potential at time `t`\n- `Δ`: the time since then (until the next input)\n- `τ`: this setting, `decay_time`\n\nAfter τ, about 37% of the potential remains; after 3τ, about 5%.\n\n**Values:** 0 or less means no leak.\n\n**Ignored:** for resonators, which use `resonance.damping_time`."
       },
       {
         "key": "rise_time",
@@ -451,7 +493,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "2 ms"
+        "default": "2 ms",
+        "details": "For integrators: a short delay between reaching the threshold and the spike leaving, standing in for the time a real membrane takes to rise. An input that only just tips the neuron over fires it sooner than one that lifts it all the way from rest:\n\n`delay = rise_time × (min(θ, u_after) − u_before) / θ`\n\n- `delay`: how long after the input the spike leaves\n- `θ`: the threshold\n- `u_before`: the potential just before the input (counting the refractoriness, excitability and modulator terms of the threshold test)\n- `u_after`: the potential just after it\n\n**Values:** 0 fires at the moment of the input.\n\n**Ignored:** for resonators, and for steady (tonic) spikes."
       },
       {
         "key": "membrane_noise",
@@ -461,7 +504,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0.1 mV"
+        "default": "0.1 mV",
+        "details": "Random jitter in the potential, so identical neurons don't behave identically and firing isn't perfectly regular.\n\nThe noise grows with the time since the neuron's last event, like a random walk. At each event the potential gets\n\n`σ × √(Δ / 1 ms) × N(0, 1)`\n\n- `σ`: this setting\n- `Δ`: milliseconds since the neuron's previous event\n- `N(0, 1)`: a standard normal random number\n\n**Note:** noise is added only when something happens to the neuron, so it can't make a quiet integrator fire by itself. The random numbers come from the Run page's seed.\n\n**Values:** 0 turns it off."
       },
       {
         "key": "spike_potential",
@@ -471,7 +515,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "1 mV"
+        "default": "1 mV",
+        "details": "The size of the signal this neuron's spikes send. Each neuron it connects to receives\n\n`sign × weight × spike_potential`\n\n- `sign`: +1 for an excitatory synapse, −1 for an inhibitory one\n- `weight`: the synapse's current weight\n- `spike_potential`: this setting, on the sending neuron\n\n(scaled by the receiver's modulator gains, if any), after the connection's delay.\n\n**Tip:** with the default 1 mV, a synapse's weight is simply how many mV a spike adds to the receiver."
       },
       {
         "key": "conduction_speed",
@@ -481,7 +526,8 @@
           "quantity": "speed",
           "unit": "m/s"
         },
-        "default": "10 m/s"
+        "default": "10 m/s",
+        "details": "How fast this neuron's spikes travel along its axon. Together with the distance to each receiver, it sets how long spikes take to arrive:\n\n`arrival delay = delay + distance / conduction_speed`\n\n- `delay`: the synapse's own delay (0.5 ms by default)\n- `distance`: the straight-line distance between the two neurons\n\nAt 10 m/s, 100 µm takes 10 µs, small next to the synaptic delay. Slow it down (like unmyelinated axons, around 0.5 m/s) to make distance matter.\n\n**Note:** no connection is faster than the build's minimum delay of 100 µs, which keeps multi-shard runs efficient.\n\n**Values:** must be positive."
       },
       {
         "key": "intrinsic_plasticity",
@@ -489,7 +535,8 @@
         "value": {
           "type": "record",
           "record": "intrinsicPlasticity"
-        }
+        },
+        "details": "Lets a neuron become easier to fire the more it fires: a simple form of learning within the neuron itself (long-term potentiation of intrinsic excitability).\n\nThe neuron keeps an excitability shift `b` that is added to its potential when it's compared with the threshold, so a positive `b` works like a lower threshold. At each spike\n\n`b ← b + amplitude × e^(−(b + step))`\n\n- `b`: the excitability shift, in mV (0 to start with)\n- `amplitude`, `step`: settings of this record\n- `←`: “becomes”: the new `b` is computed from the old one\n\nso each increase is smaller than the last. Between spikes, `b` fades back toward 0 with `decay_time` (10 minutes by default).\n\n**Note:** off unless `amplitude` is non-zero. `homeostasis` adjusts the same `b`."
       },
       {
         "key": "homeostasis",
@@ -497,7 +544,8 @@
         "value": {
           "type": "record",
           "record": "homeostasis"
-        }
+        },
+        "details": "Keeps the neuron's firing rate near a target by adjusting its excitability: a neuron that fires too little becomes easier to fire, and one that fires too much becomes harder to fire. Useful to stop learning networks from going silent or running away.\n\nThe neuron estimates its own rate `r` and moves its excitability shift `b` (added to the potential when it's compared with the threshold) by\n\n`db/dt = strength × (target_rate − r)`\n\n- `b`: the excitability shift, in mV\n- `db/dt`: how fast `b` changes, in mV per second\n- `r`: the neuron's current estimate of its own firing rate, in Hz (see `window`)\n- `strength`, `target_rate`: settings of this record\n\nwithin `min_shift` and `max_shift`.\n\n**Note:** the same `b` also fades with `intrinsic_plasticity.decay_time` (10 minutes by default), even without `intrinsic_plasticity`. A neuron that never gets any input still can't fire, however excitable it becomes.\n\n**Tip:** set `max_shift`, or a long-silent neuron's excitability grows without limit."
       },
       {
         "key": "resonance",
@@ -509,7 +557,8 @@
         "only": [
           "monostable_resonator",
           "bistable_resonator"
-        ]
+        ],
+        "details": "Makes the neuron ring at a frequency, like a tuning fork, instead of simply leaking. Inputs that arrive in time with the ringing add up; inputs out of step cancel. So the neuron prefers inputs that repeat at its frequency.\n\nThe state is a damped oscillation (potential `u` plus a hidden partner `x`):\n\n`(x + i·u)(t + Δ) = (x + i·u)(t) × e^((−1/damping_time + i·2π·frequency) × Δ)`\n\n- `u`: the membrane potential (what's compared with the threshold)\n- `x`: its partner in the oscillation (when `u` is at a peak, `x` is 0, and vice versa)\n- `i`: the imaginary unit; the pair `x + i·u` turns in a circle as it shrinks\n- `t`: a moment; `Δ`: the time since then\n- `damping_time`, `frequency`: settings of this record\n\nIn other words: `u` swings up and down at `frequency`, and the swings shrink by `e^(−Δ/damping_time)`. Each input bumps `u`.\n\n**Values:** required for `monostable_resonator` and `bistable_resonator`.\n\n**Ignored:** for integrators."
       },
       {
         "key": "receptors",
@@ -517,7 +566,8 @@
         "value": {
           "type": "list",
           "record": "receptor"
-        }
+        },
+        "details": "How this neuron responds to neuromodulators, one entry per modulator. Each effect is proportional to the modulator's concentration `c` where the neuron is. When there's no modulator, nothing changes.\n\nWith several receptors, gains multiply and direct effects add. A gain never goes below zero.\n\n**Note:** the input gains change input from other neurons only. External input (sensors, background input, stimulation from the Run page) isn't scaled."
       },
       {
         "key": "releases",
@@ -525,7 +575,8 @@
         "value": {
           "type": "record",
           "record": "modulatorRelease"
-        }
+        },
+        "details": "Makes this neuron release a modulator each time it spikes, from where it is. The release spreads as the modulator describes (`reach`, `speed`, `latency`, `falloff`). It affects only neurons that have a receptor for it, the releasing neuron included.\n\n**Tip:** for reward learning, have a small group of “reward” neurons release dopamine, and give the learning neurons a receptor with three-factor learning."
       }
     ]
   },
@@ -540,7 +591,8 @@
         "value": {
           "type": "name"
         },
-        "required": true
+        "required": true,
+        "details": "The neuron's name, used to connect it, to put it in sets, and in the raster and tooltips.\n\n**Values:** unique, and not the name of a population's neuron (`<population>-<i>`)."
       },
       {
         "key": "type",
@@ -548,7 +600,8 @@
         "value": {
           "type": "reference",
           "to": "neuronType"
-        }
+        },
+        "details": "A neuron type to take settings from. Settings written on the neuron replace the type's. Without a type, any setting not given takes its default."
       },
       {
         "key": "position",
@@ -556,7 +609,8 @@
         "value": {
           "type": "point"
         },
-        "required": true
+        "required": true,
+        "details": "Where the neuron is, in µm. Positions matter for timing and reach:\n\n- spikes take longer to reach distant neurons (`distance / conduction_speed`);\n- connections can be limited by distance (`within`);\n- modulators spread out from where they're released, and may weaken with distance.\n\n**Values:** `[x, y, z]`; or cylindrical `(r=…, phi=…, z=…)`; or spherical `(r=…, theta=…, phi=…)` with θ measured from the +z axis. Other length units are fine (`[0, 0, 1 mm]`)."
       },
       {
         "key": "node",
@@ -564,11 +618,12 @@
         "value": {
           "type": "reference",
           "to": "node"
-        }
+        },
+        "details": "Runs this neuron on a particular machine (a name from `nodes`, or `main` for the engine). Without it, the neuron is placed automatically.\n\n**Note:** a neuron's own pin wins over a set's. On the engine alone, the pin is ignored; on a cluster, pinning to a node that no agent is named refuses the build."
       },
       {
         "key": "dynamics",
-        "doc": "`monostable_integrator`; `bistable_integrator` (fires tonically once excited); `monostable_resonator`; `bistable_resonator` (a limit cycle).",
+        "doc": "How the neuron behaves: integrates or resonates, fires once or keeps firing.",
         "value": {
           "type": "choice",
           "values": [
@@ -578,7 +633,8 @@
             "bistable_resonator"
           ]
         },
-        "default": "monostable_integrator"
+        "default": "monostable_integrator",
+        "details": "Integrators add up their inputs; resonators respond to their rhythm. Monostable neurons fire once when they reach the threshold; bistable ones switch into steady firing.\n\n- `monostable_integrator` (default): the classic leaky integrate-and-fire neuron. Inputs add up and leak away (`decay_time`); reaching `threshold` fires one spike and resets it.\n- `bistable_integrator`: like the above, but reaching `tonic_on_threshold` switches it into **steady firing** at `tonic_rate`, which lasts until its potential has leaked below `tonic_off_threshold`. A memory of a strong input.\n- `monostable_resonator`: its potential rings at a frequency (`resonance`) as it fades. Inputs that arrive in step with the ringing build up; out-of-step inputs cancel. So it responds to input *rhythms*, not just input strength.\n- `bistable_resonator`: a resonator that, once it fires, keeps firing once per cycle until a well-timed input knocks it back to rest.\n\n**Ignored:** settings that don't belong to the chosen dynamics are ignored: `threshold` for bistable integrators; `resonance` for integrators; `decay_time` and `rise_time` for resonators; the `tonic_*` settings for everything but bistable integrators."
       },
       {
         "key": "inhibitory",
@@ -586,7 +642,8 @@
         "value": {
           "type": "bool"
         },
-        "default": "false"
+        "default": "false",
+        "details": "Makes this neuron's outgoing connections inhibitory: its spikes push the neurons it connects to *away* from firing instead of toward it.\n\nIt only sets the default; a connection's `sign=` can override it. It doesn't change how this neuron reacts to its own inputs. In the 3D view, inhibitory neurons have their own colour."
       },
       {
         "key": "threshold",
@@ -601,7 +658,8 @@
           "monostable_integrator",
           "monostable_resonator",
           "bistable_resonator"
-        ]
+        ],
+        "details": "How high the potential must get for the neuron to fire. A higher threshold needs more (or better-timed) input; a lower one makes the neuron fire more easily.\n\nThe neuron fires when\n\n`u + η + b + m ≥ θ × g`\n\n- `u`: the membrane potential\n- `η`: relative refractoriness, briefly negative after a spike\n- `b`: the excitability shift from intrinsic plasticity and homeostasis\n- `m`: direct excitation from modulators\n- `θ`: this threshold\n- `g`: the receptors' threshold gain (1 without modulators)\n\n**Note:** an integrator can only reach the threshold when an input arrives (or a modulator pushes it). A resonator can also cross on its own, as its ringing swings up after an input; that moment is computed exactly.\n\n**Ignored:** for `bistable_integrator`, which uses `tonic_on_threshold`."
       },
       {
         "key": "tonic_on_threshold",
@@ -614,7 +672,8 @@
         "default": "15 mV",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: the potential that switches the neuron into steady (tonic) firing. It takes the place of `threshold`.\n\n**Note:** the potential can't rise above this value. Extra input while the neuron fires steadily keeps it topped up (prolonging the firing) rather than raising it further.\n\n**Values:** keep it above `tonic_off_threshold`.\n\n**Ignored:** for other dynamics."
       },
       {
         "key": "tonic_off_threshold",
@@ -627,7 +686,8 @@
         "default": "10 mV",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: steady firing stops once the potential has leaked below this value. The lower it is, the longer the neuron keeps firing after its input stops.\n\nWithout further input, steady firing lasts about\n\n`decay_time × ln(tonic_on_threshold / tonic_off_threshold)`\n\n- `ln`: the natural logarithm. With the defaults (15 mV and 10 mV, 250 ms), about 100 ms.\n\n**Note:** the potential keeps leaking during steady firing, and inputs still add to it, so ongoing input extends the firing. The check happens at each steady spike.\n\n**Values:** keep it below `tonic_on_threshold`. At or above it, firing stops after one spike.\n\n**Ignored:** for other dynamics."
       },
       {
         "key": "tonic_rate",
@@ -640,7 +700,8 @@
         "default": "10 Hz",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: how fast the neuron fires while firing steadily, one spike every `1 / tonic_rate` (10 Hz: every 100 ms).\n\n**Note:** steady spikes ignore the refractory period and the rise time.\n\n**Values:** must be positive.\n\n**Ignored:** for other dynamics. A bistable resonator fires once per resonance cycle instead."
       },
       {
         "key": "refractory_period",
@@ -650,7 +711,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "20 ms"
+        "default": "20 ms",
+        "details": "A dead time after each spike, during which the neuron can't fire again. It caps how fast the neuron can fire (20 ms: at most about 50 Hz).\n\n**Note:** input that arrives during this time is **lost**, not saved for later. Integrators are held at `resting_potential`; resonators keep ringing but ignore inputs. Signals arriving then still count for learning (STDP depression). Afterwards, `relative_refractoriness` makes firing harder for a little longer.\n\n**Values:** 0 turns it off. Steady (tonic) firing ignores it."
       },
       {
         "key": "relative_refractoriness",
@@ -660,7 +722,8 @@
           "quantity": "flux",
           "unit": "µWb"
         },
-        "default": "0.08 µWb"
+        "default": "0.08 µWb",
+        "details": "Makes the neuron harder to fire just after the refractory period ends, easing off over time. It softens the hard cut-off of the refractory period.\n\nA term is added to the potential when it's compared with the threshold:\n\n`η(s) = −η₀ / s`\n\n- `η₀`: this setting (1 µWb is 1 mV·ms)\n- `s`: milliseconds since the refractory period ended\n\nWith the default 0.08 µWb, firing needs 0.08 mV more 1 ms after the refractory period, and 0.008 mV more after 10 ms. Small unless you raise it.\n\n**Values:** 0 turns it off."
       },
       {
         "key": "resting_potential",
@@ -670,7 +733,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0 mV"
+        "default": "0 mV",
+        "details": "Where the potential goes after a spike, and (for integrators) the lowest it can go.\n\n**Note:** integrators leak toward **0 mV**, not toward this value. With a negative resting potential, inhibition can pull the neuron below 0 down to this floor, so it then needs extra input to recover. With a positive one, the potential never drops below it. During the refractory period an integrator is held here.\n\nResonators reset here after a spike, but their ringing isn't limited by it."
       },
       {
         "key": "decay_time",
@@ -680,7 +744,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "250 ms"
+        "default": "250 ms",
+        "details": "How quickly an integrator forgets its input: the membrane time constant τ. With a long τ, inputs spread out in time still add up; with a short one, only inputs that arrive close together can make the neuron fire, so it acts as a coincidence detector.\n\nBetween inputs the potential leaks toward 0 mV:\n\n`u(t + Δ) = u(t) × e^(−Δ/τ)`\n\n- `u(t)`: the potential at time `t`\n- `Δ`: the time since then (until the next input)\n- `τ`: this setting, `decay_time`\n\nAfter τ, about 37% of the potential remains; after 3τ, about 5%.\n\n**Values:** 0 or less means no leak.\n\n**Ignored:** for resonators, which use `resonance.damping_time`."
       },
       {
         "key": "rise_time",
@@ -690,7 +755,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "2 ms"
+        "default": "2 ms",
+        "details": "For integrators: a short delay between reaching the threshold and the spike leaving, standing in for the time a real membrane takes to rise. An input that only just tips the neuron over fires it sooner than one that lifts it all the way from rest:\n\n`delay = rise_time × (min(θ, u_after) − u_before) / θ`\n\n- `delay`: how long after the input the spike leaves\n- `θ`: the threshold\n- `u_before`: the potential just before the input (counting the refractoriness, excitability and modulator terms of the threshold test)\n- `u_after`: the potential just after it\n\n**Values:** 0 fires at the moment of the input.\n\n**Ignored:** for resonators, and for steady (tonic) spikes."
       },
       {
         "key": "membrane_noise",
@@ -700,7 +766,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0.1 mV"
+        "default": "0.1 mV",
+        "details": "Random jitter in the potential, so identical neurons don't behave identically and firing isn't perfectly regular.\n\nThe noise grows with the time since the neuron's last event, like a random walk. At each event the potential gets\n\n`σ × √(Δ / 1 ms) × N(0, 1)`\n\n- `σ`: this setting\n- `Δ`: milliseconds since the neuron's previous event\n- `N(0, 1)`: a standard normal random number\n\n**Note:** noise is added only when something happens to the neuron, so it can't make a quiet integrator fire by itself. The random numbers come from the Run page's seed.\n\n**Values:** 0 turns it off."
       },
       {
         "key": "spike_potential",
@@ -710,7 +777,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "1 mV"
+        "default": "1 mV",
+        "details": "The size of the signal this neuron's spikes send. Each neuron it connects to receives\n\n`sign × weight × spike_potential`\n\n- `sign`: +1 for an excitatory synapse, −1 for an inhibitory one\n- `weight`: the synapse's current weight\n- `spike_potential`: this setting, on the sending neuron\n\n(scaled by the receiver's modulator gains, if any), after the connection's delay.\n\n**Tip:** with the default 1 mV, a synapse's weight is simply how many mV a spike adds to the receiver."
       },
       {
         "key": "conduction_speed",
@@ -720,7 +788,8 @@
           "quantity": "speed",
           "unit": "m/s"
         },
-        "default": "10 m/s"
+        "default": "10 m/s",
+        "details": "How fast this neuron's spikes travel along its axon. Together with the distance to each receiver, it sets how long spikes take to arrive:\n\n`arrival delay = delay + distance / conduction_speed`\n\n- `delay`: the synapse's own delay (0.5 ms by default)\n- `distance`: the straight-line distance between the two neurons\n\nAt 10 m/s, 100 µm takes 10 µs, small next to the synaptic delay. Slow it down (like unmyelinated axons, around 0.5 m/s) to make distance matter.\n\n**Note:** no connection is faster than the build's minimum delay of 100 µs, which keeps multi-shard runs efficient.\n\n**Values:** must be positive."
       },
       {
         "key": "intrinsic_plasticity",
@@ -728,7 +797,8 @@
         "value": {
           "type": "record",
           "record": "intrinsicPlasticity"
-        }
+        },
+        "details": "Lets a neuron become easier to fire the more it fires: a simple form of learning within the neuron itself (long-term potentiation of intrinsic excitability).\n\nThe neuron keeps an excitability shift `b` that is added to its potential when it's compared with the threshold, so a positive `b` works like a lower threshold. At each spike\n\n`b ← b + amplitude × e^(−(b + step))`\n\n- `b`: the excitability shift, in mV (0 to start with)\n- `amplitude`, `step`: settings of this record\n- `←`: “becomes”: the new `b` is computed from the old one\n\nso each increase is smaller than the last. Between spikes, `b` fades back toward 0 with `decay_time` (10 minutes by default).\n\n**Note:** off unless `amplitude` is non-zero. `homeostasis` adjusts the same `b`."
       },
       {
         "key": "homeostasis",
@@ -736,7 +806,8 @@
         "value": {
           "type": "record",
           "record": "homeostasis"
-        }
+        },
+        "details": "Keeps the neuron's firing rate near a target by adjusting its excitability: a neuron that fires too little becomes easier to fire, and one that fires too much becomes harder to fire. Useful to stop learning networks from going silent or running away.\n\nThe neuron estimates its own rate `r` and moves its excitability shift `b` (added to the potential when it's compared with the threshold) by\n\n`db/dt = strength × (target_rate − r)`\n\n- `b`: the excitability shift, in mV\n- `db/dt`: how fast `b` changes, in mV per second\n- `r`: the neuron's current estimate of its own firing rate, in Hz (see `window`)\n- `strength`, `target_rate`: settings of this record\n\nwithin `min_shift` and `max_shift`.\n\n**Note:** the same `b` also fades with `intrinsic_plasticity.decay_time` (10 minutes by default), even without `intrinsic_plasticity`. A neuron that never gets any input still can't fire, however excitable it becomes.\n\n**Tip:** set `max_shift`, or a long-silent neuron's excitability grows without limit."
       },
       {
         "key": "resonance",
@@ -748,7 +819,8 @@
         "only": [
           "monostable_resonator",
           "bistable_resonator"
-        ]
+        ],
+        "details": "Makes the neuron ring at a frequency, like a tuning fork, instead of simply leaking. Inputs that arrive in time with the ringing add up; inputs out of step cancel. So the neuron prefers inputs that repeat at its frequency.\n\nThe state is a damped oscillation (potential `u` plus a hidden partner `x`):\n\n`(x + i·u)(t + Δ) = (x + i·u)(t) × e^((−1/damping_time + i·2π·frequency) × Δ)`\n\n- `u`: the membrane potential (what's compared with the threshold)\n- `x`: its partner in the oscillation (when `u` is at a peak, `x` is 0, and vice versa)\n- `i`: the imaginary unit; the pair `x + i·u` turns in a circle as it shrinks\n- `t`: a moment; `Δ`: the time since then\n- `damping_time`, `frequency`: settings of this record\n\nIn other words: `u` swings up and down at `frequency`, and the swings shrink by `e^(−Δ/damping_time)`. Each input bumps `u`.\n\n**Values:** required for `monostable_resonator` and `bistable_resonator`.\n\n**Ignored:** for integrators."
       },
       {
         "key": "receptors",
@@ -756,7 +828,8 @@
         "value": {
           "type": "list",
           "record": "receptor"
-        }
+        },
+        "details": "How this neuron responds to neuromodulators, one entry per modulator. Each effect is proportional to the modulator's concentration `c` where the neuron is. When there's no modulator, nothing changes.\n\nWith several receptors, gains multiply and direct effects add. A gain never goes below zero.\n\n**Note:** the input gains change input from other neurons only. External input (sensors, background input, stimulation from the Run page) isn't scaled."
       },
       {
         "key": "releases",
@@ -764,7 +837,8 @@
         "value": {
           "type": "record",
           "record": "modulatorRelease"
-        }
+        },
+        "details": "Makes this neuron release a modulator each time it spikes, from where it is. The release spreads as the modulator describes (`reach`, `speed`, `latency`, `falloff`). It affects only neurons that have a receptor for it, the releasing neuron included.\n\n**Tip:** for reward learning, have a small group of “reward” neurons release dopamine, and give the learning neurons a receptor with three-factor learning."
       }
     ]
   },
@@ -779,7 +853,8 @@
         "value": {
           "type": "name"
         },
-        "required": true
+        "required": true,
+        "details": "The population's name. Its neurons are called `<name>-0`, `<name>-1`, … (unless `positions` names them), and the name on its own stands for all of them in `from`, `to` and `members`.\n\n**Values:** unique among populations, sets and neurons."
       },
       {
         "key": "type",
@@ -787,21 +862,24 @@
         "value": {
           "type": "reference",
           "to": "neuronType"
-        }
+        },
+        "details": "A neuron type for all of the population's neurons. Settings written on the population replace the type's."
       },
       {
         "key": "count",
         "doc": "How many neurons (for `random`, `line`, `ring`).",
         "value": {
           "type": "number"
-        }
+        },
+        "details": "How many neurons the population has.\n\n**Values:** a whole number from 1 to 100,000,000. Needed for `random`, `line` and `ring`. Leave it out for `positions` and `grid`, which set the count themselves."
       },
       {
         "key": "positions",
         "doc": "These points, in order; or `[(name=…, at=…), …]` to name the neurons too.",
         "value": {
           "type": "points"
-        }
+        },
+        "details": "Places the neurons at exactly these points, in order. Write `[[x, y, z], …]` for neurons named `<name>-0`, `<name>-1`, …, or `[(name=…, at=…), …]` to name each one.\n\n**Note:** the number of points is the population's size; don't give `count`."
       },
       {
         "key": "random",
@@ -809,7 +887,8 @@
         "value": {
           "type": "record",
           "record": "randomPlacement"
-        }
+        },
+        "details": "Scatters `count` neurons at random, evenly, inside a box (`box=(…)`) or a ball (`ball=(…)`).\n\n**Note:** the positions depend only on the population's name and `seed`. Changing the Run page's seed or other parts of the file doesn't move them."
       },
       {
         "key": "grid",
@@ -817,7 +896,8 @@
         "value": {
           "type": "record",
           "record": "grid"
-        }
+        },
+        "details": "Places neurons on a regular 3D grid: `shape` says how many along each axis, `spacing` how far apart, `origin` where the first one is.\n\n**Note:** neurons are numbered along x first, then y, then z. The size is nx × ny × nz; don't give `count`."
       },
       {
         "key": "line",
@@ -825,7 +905,8 @@
         "value": {
           "type": "record",
           "record": "line"
-        }
+        },
+        "details": "Places `count` neurons evenly along a straight line from `from` to `to`, with one neuron at each end. A single neuron sits at `from`."
       },
       {
         "key": "ring",
@@ -833,7 +914,8 @@
         "value": {
           "type": "record",
           "record": "ring"
-        }
+        },
+        "details": "Places `count` neurons evenly around a circle. Neuron `i` (counting from 0) is at angle `start_angle + 360° × i / count`."
       },
       {
         "key": "seed",
@@ -841,7 +923,8 @@
         "value": {
           "type": "number"
         },
-        "default": "1"
+        "default": "1",
+        "details": "Chooses a different random arrangement for `random` placement. Two populations with the same seed still get different positions, because the name is mixed in.\n\n**Values:** a whole number (default 1).\n\n**Ignored:** for other placements. It never affects the run itself."
       },
       {
         "key": "node",
@@ -849,11 +932,12 @@
         "value": {
           "type": "reference",
           "to": "node"
-        }
+        },
+        "details": "Runs all of the population's neurons on one machine (a name from `nodes`, or `main`). Without it, they're spread over the machines automatically.\n\n**Ignored:** on the engine alone."
       },
       {
         "key": "dynamics",
-        "doc": "`monostable_integrator`; `bistable_integrator` (fires tonically once excited); `monostable_resonator`; `bistable_resonator` (a limit cycle).",
+        "doc": "How the neuron behaves: integrates or resonates, fires once or keeps firing.",
         "value": {
           "type": "choice",
           "values": [
@@ -863,7 +947,8 @@
             "bistable_resonator"
           ]
         },
-        "default": "monostable_integrator"
+        "default": "monostable_integrator",
+        "details": "Integrators add up their inputs; resonators respond to their rhythm. Monostable neurons fire once when they reach the threshold; bistable ones switch into steady firing.\n\n- `monostable_integrator` (default): the classic leaky integrate-and-fire neuron. Inputs add up and leak away (`decay_time`); reaching `threshold` fires one spike and resets it.\n- `bistable_integrator`: like the above, but reaching `tonic_on_threshold` switches it into **steady firing** at `tonic_rate`, which lasts until its potential has leaked below `tonic_off_threshold`. A memory of a strong input.\n- `monostable_resonator`: its potential rings at a frequency (`resonance`) as it fades. Inputs that arrive in step with the ringing build up; out-of-step inputs cancel. So it responds to input *rhythms*, not just input strength.\n- `bistable_resonator`: a resonator that, once it fires, keeps firing once per cycle until a well-timed input knocks it back to rest.\n\n**Ignored:** settings that don't belong to the chosen dynamics are ignored: `threshold` for bistable integrators; `resonance` for integrators; `decay_time` and `rise_time` for resonators; the `tonic_*` settings for everything but bistable integrators."
       },
       {
         "key": "inhibitory",
@@ -871,7 +956,8 @@
         "value": {
           "type": "bool"
         },
-        "default": "false"
+        "default": "false",
+        "details": "Makes this neuron's outgoing connections inhibitory: its spikes push the neurons it connects to *away* from firing instead of toward it.\n\nIt only sets the default; a connection's `sign=` can override it. It doesn't change how this neuron reacts to its own inputs. In the 3D view, inhibitory neurons have their own colour."
       },
       {
         "key": "threshold",
@@ -886,7 +972,8 @@
           "monostable_integrator",
           "monostable_resonator",
           "bistable_resonator"
-        ]
+        ],
+        "details": "How high the potential must get for the neuron to fire. A higher threshold needs more (or better-timed) input; a lower one makes the neuron fire more easily.\n\nThe neuron fires when\n\n`u + η + b + m ≥ θ × g`\n\n- `u`: the membrane potential\n- `η`: relative refractoriness, briefly negative after a spike\n- `b`: the excitability shift from intrinsic plasticity and homeostasis\n- `m`: direct excitation from modulators\n- `θ`: this threshold\n- `g`: the receptors' threshold gain (1 without modulators)\n\n**Note:** an integrator can only reach the threshold when an input arrives (or a modulator pushes it). A resonator can also cross on its own, as its ringing swings up after an input; that moment is computed exactly.\n\n**Ignored:** for `bistable_integrator`, which uses `tonic_on_threshold`."
       },
       {
         "key": "tonic_on_threshold",
@@ -899,7 +986,8 @@
         "default": "15 mV",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: the potential that switches the neuron into steady (tonic) firing. It takes the place of `threshold`.\n\n**Note:** the potential can't rise above this value. Extra input while the neuron fires steadily keeps it topped up (prolonging the firing) rather than raising it further.\n\n**Values:** keep it above `tonic_off_threshold`.\n\n**Ignored:** for other dynamics."
       },
       {
         "key": "tonic_off_threshold",
@@ -912,7 +1000,8 @@
         "default": "10 mV",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: steady firing stops once the potential has leaked below this value. The lower it is, the longer the neuron keeps firing after its input stops.\n\nWithout further input, steady firing lasts about\n\n`decay_time × ln(tonic_on_threshold / tonic_off_threshold)`\n\n- `ln`: the natural logarithm. With the defaults (15 mV and 10 mV, 250 ms), about 100 ms.\n\n**Note:** the potential keeps leaking during steady firing, and inputs still add to it, so ongoing input extends the firing. The check happens at each steady spike.\n\n**Values:** keep it below `tonic_on_threshold`. At or above it, firing stops after one spike.\n\n**Ignored:** for other dynamics."
       },
       {
         "key": "tonic_rate",
@@ -925,7 +1014,8 @@
         "default": "10 Hz",
         "only": [
           "bistable_integrator"
-        ]
+        ],
+        "details": "For bistable integrators: how fast the neuron fires while firing steadily, one spike every `1 / tonic_rate` (10 Hz: every 100 ms).\n\n**Note:** steady spikes ignore the refractory period and the rise time.\n\n**Values:** must be positive.\n\n**Ignored:** for other dynamics. A bistable resonator fires once per resonance cycle instead."
       },
       {
         "key": "refractory_period",
@@ -935,7 +1025,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "20 ms"
+        "default": "20 ms",
+        "details": "A dead time after each spike, during which the neuron can't fire again. It caps how fast the neuron can fire (20 ms: at most about 50 Hz).\n\n**Note:** input that arrives during this time is **lost**, not saved for later. Integrators are held at `resting_potential`; resonators keep ringing but ignore inputs. Signals arriving then still count for learning (STDP depression). Afterwards, `relative_refractoriness` makes firing harder for a little longer.\n\n**Values:** 0 turns it off. Steady (tonic) firing ignores it."
       },
       {
         "key": "relative_refractoriness",
@@ -945,7 +1036,8 @@
           "quantity": "flux",
           "unit": "µWb"
         },
-        "default": "0.08 µWb"
+        "default": "0.08 µWb",
+        "details": "Makes the neuron harder to fire just after the refractory period ends, easing off over time. It softens the hard cut-off of the refractory period.\n\nA term is added to the potential when it's compared with the threshold:\n\n`η(s) = −η₀ / s`\n\n- `η₀`: this setting (1 µWb is 1 mV·ms)\n- `s`: milliseconds since the refractory period ended\n\nWith the default 0.08 µWb, firing needs 0.08 mV more 1 ms after the refractory period, and 0.008 mV more after 10 ms. Small unless you raise it.\n\n**Values:** 0 turns it off."
       },
       {
         "key": "resting_potential",
@@ -955,7 +1047,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0 mV"
+        "default": "0 mV",
+        "details": "Where the potential goes after a spike, and (for integrators) the lowest it can go.\n\n**Note:** integrators leak toward **0 mV**, not toward this value. With a negative resting potential, inhibition can pull the neuron below 0 down to this floor, so it then needs extra input to recover. With a positive one, the potential never drops below it. During the refractory period an integrator is held here.\n\nResonators reset here after a spike, but their ringing isn't limited by it."
       },
       {
         "key": "decay_time",
@@ -965,7 +1058,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "250 ms"
+        "default": "250 ms",
+        "details": "How quickly an integrator forgets its input: the membrane time constant τ. With a long τ, inputs spread out in time still add up; with a short one, only inputs that arrive close together can make the neuron fire, so it acts as a coincidence detector.\n\nBetween inputs the potential leaks toward 0 mV:\n\n`u(t + Δ) = u(t) × e^(−Δ/τ)`\n\n- `u(t)`: the potential at time `t`\n- `Δ`: the time since then (until the next input)\n- `τ`: this setting, `decay_time`\n\nAfter τ, about 37% of the potential remains; after 3τ, about 5%.\n\n**Values:** 0 or less means no leak.\n\n**Ignored:** for resonators, which use `resonance.damping_time`."
       },
       {
         "key": "rise_time",
@@ -975,7 +1069,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "2 ms"
+        "default": "2 ms",
+        "details": "For integrators: a short delay between reaching the threshold and the spike leaving, standing in for the time a real membrane takes to rise. An input that only just tips the neuron over fires it sooner than one that lifts it all the way from rest:\n\n`delay = rise_time × (min(θ, u_after) − u_before) / θ`\n\n- `delay`: how long after the input the spike leaves\n- `θ`: the threshold\n- `u_before`: the potential just before the input (counting the refractoriness, excitability and modulator terms of the threshold test)\n- `u_after`: the potential just after it\n\n**Values:** 0 fires at the moment of the input.\n\n**Ignored:** for resonators, and for steady (tonic) spikes."
       },
       {
         "key": "membrane_noise",
@@ -985,7 +1080,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0.1 mV"
+        "default": "0.1 mV",
+        "details": "Random jitter in the potential, so identical neurons don't behave identically and firing isn't perfectly regular.\n\nThe noise grows with the time since the neuron's last event, like a random walk. At each event the potential gets\n\n`σ × √(Δ / 1 ms) × N(0, 1)`\n\n- `σ`: this setting\n- `Δ`: milliseconds since the neuron's previous event\n- `N(0, 1)`: a standard normal random number\n\n**Note:** noise is added only when something happens to the neuron, so it can't make a quiet integrator fire by itself. The random numbers come from the Run page's seed.\n\n**Values:** 0 turns it off."
       },
       {
         "key": "spike_potential",
@@ -995,7 +1091,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "1 mV"
+        "default": "1 mV",
+        "details": "The size of the signal this neuron's spikes send. Each neuron it connects to receives\n\n`sign × weight × spike_potential`\n\n- `sign`: +1 for an excitatory synapse, −1 for an inhibitory one\n- `weight`: the synapse's current weight\n- `spike_potential`: this setting, on the sending neuron\n\n(scaled by the receiver's modulator gains, if any), after the connection's delay.\n\n**Tip:** with the default 1 mV, a synapse's weight is simply how many mV a spike adds to the receiver."
       },
       {
         "key": "conduction_speed",
@@ -1005,7 +1102,8 @@
           "quantity": "speed",
           "unit": "m/s"
         },
-        "default": "10 m/s"
+        "default": "10 m/s",
+        "details": "How fast this neuron's spikes travel along its axon. Together with the distance to each receiver, it sets how long spikes take to arrive:\n\n`arrival delay = delay + distance / conduction_speed`\n\n- `delay`: the synapse's own delay (0.5 ms by default)\n- `distance`: the straight-line distance between the two neurons\n\nAt 10 m/s, 100 µm takes 10 µs, small next to the synaptic delay. Slow it down (like unmyelinated axons, around 0.5 m/s) to make distance matter.\n\n**Note:** no connection is faster than the build's minimum delay of 100 µs, which keeps multi-shard runs efficient.\n\n**Values:** must be positive."
       },
       {
         "key": "intrinsic_plasticity",
@@ -1013,7 +1111,8 @@
         "value": {
           "type": "record",
           "record": "intrinsicPlasticity"
-        }
+        },
+        "details": "Lets a neuron become easier to fire the more it fires: a simple form of learning within the neuron itself (long-term potentiation of intrinsic excitability).\n\nThe neuron keeps an excitability shift `b` that is added to its potential when it's compared with the threshold, so a positive `b` works like a lower threshold. At each spike\n\n`b ← b + amplitude × e^(−(b + step))`\n\n- `b`: the excitability shift, in mV (0 to start with)\n- `amplitude`, `step`: settings of this record\n- `←`: “becomes”: the new `b` is computed from the old one\n\nso each increase is smaller than the last. Between spikes, `b` fades back toward 0 with `decay_time` (10 minutes by default).\n\n**Note:** off unless `amplitude` is non-zero. `homeostasis` adjusts the same `b`."
       },
       {
         "key": "homeostasis",
@@ -1021,7 +1120,8 @@
         "value": {
           "type": "record",
           "record": "homeostasis"
-        }
+        },
+        "details": "Keeps the neuron's firing rate near a target by adjusting its excitability: a neuron that fires too little becomes easier to fire, and one that fires too much becomes harder to fire. Useful to stop learning networks from going silent or running away.\n\nThe neuron estimates its own rate `r` and moves its excitability shift `b` (added to the potential when it's compared with the threshold) by\n\n`db/dt = strength × (target_rate − r)`\n\n- `b`: the excitability shift, in mV\n- `db/dt`: how fast `b` changes, in mV per second\n- `r`: the neuron's current estimate of its own firing rate, in Hz (see `window`)\n- `strength`, `target_rate`: settings of this record\n\nwithin `min_shift` and `max_shift`.\n\n**Note:** the same `b` also fades with `intrinsic_plasticity.decay_time` (10 minutes by default), even without `intrinsic_plasticity`. A neuron that never gets any input still can't fire, however excitable it becomes.\n\n**Tip:** set `max_shift`, or a long-silent neuron's excitability grows without limit."
       },
       {
         "key": "resonance",
@@ -1033,7 +1133,8 @@
         "only": [
           "monostable_resonator",
           "bistable_resonator"
-        ]
+        ],
+        "details": "Makes the neuron ring at a frequency, like a tuning fork, instead of simply leaking. Inputs that arrive in time with the ringing add up; inputs out of step cancel. So the neuron prefers inputs that repeat at its frequency.\n\nThe state is a damped oscillation (potential `u` plus a hidden partner `x`):\n\n`(x + i·u)(t + Δ) = (x + i·u)(t) × e^((−1/damping_time + i·2π·frequency) × Δ)`\n\n- `u`: the membrane potential (what's compared with the threshold)\n- `x`: its partner in the oscillation (when `u` is at a peak, `x` is 0, and vice versa)\n- `i`: the imaginary unit; the pair `x + i·u` turns in a circle as it shrinks\n- `t`: a moment; `Δ`: the time since then\n- `damping_time`, `frequency`: settings of this record\n\nIn other words: `u` swings up and down at `frequency`, and the swings shrink by `e^(−Δ/damping_time)`. Each input bumps `u`.\n\n**Values:** required for `monostable_resonator` and `bistable_resonator`.\n\n**Ignored:** for integrators."
       },
       {
         "key": "receptors",
@@ -1041,7 +1142,8 @@
         "value": {
           "type": "list",
           "record": "receptor"
-        }
+        },
+        "details": "How this neuron responds to neuromodulators, one entry per modulator. Each effect is proportional to the modulator's concentration `c` where the neuron is. When there's no modulator, nothing changes.\n\nWith several receptors, gains multiply and direct effects add. A gain never goes below zero.\n\n**Note:** the input gains change input from other neurons only. External input (sensors, background input, stimulation from the Run page) isn't scaled."
       },
       {
         "key": "releases",
@@ -1049,7 +1151,8 @@
         "value": {
           "type": "record",
           "record": "modulatorRelease"
-        }
+        },
+        "details": "Makes this neuron release a modulator each time it spikes, from where it is. The release spreads as the modulator describes (`reach`, `speed`, `latency`, `falloff`). It affects only neurons that have a receptor for it, the releasing neuron included.\n\n**Tip:** for reward learning, have a small group of “reward” neurons release dopamine, and give the learning neurons a receptor with three-factor learning."
       }
     ]
   },
@@ -1063,7 +1166,8 @@
         "value": {
           "type": "name"
         },
-        "required": true
+        "required": true,
+        "details": "This neuron's name, instead of `<population>-<i>`. Must be unique."
       },
       {
         "key": "at",
@@ -1071,7 +1175,8 @@
         "value": {
           "type": "point"
         },
-        "required": true
+        "required": true,
+        "details": "Where this neuron is, written like any position: `[x, y, z]` in µm."
       }
     ]
   },
@@ -1085,7 +1190,8 @@
         "value": {
           "type": "record",
           "record": "box"
-        }
+        },
+        "details": "A rectangular box: `corner` is its lowest corner, `size` its lengths along x, y and z. Neurons are spread evenly through it."
       },
       {
         "key": "ball",
@@ -1093,7 +1199,8 @@
         "value": {
           "type": "record",
           "record": "ball"
-        }
+        },
+        "details": "A ball: `center` and `radius`. Neurons are spread evenly through its volume."
       }
     ]
   },
@@ -1107,7 +1214,8 @@
         "value": {
           "type": "point"
         },
-        "required": true
+        "required": true,
+        "details": "The box's lowest corner: the smallest x, y and z, in µm."
       },
       {
         "key": "size",
@@ -1115,7 +1223,8 @@
         "value": {
           "type": "point"
         },
-        "required": true
+        "required": true,
+        "details": "The box's lengths along x, y and z, in µm.\n\n**Values:** none negative. A length of 0 flattens the box (a sheet or a line)."
       }
     ]
   },
@@ -1129,7 +1238,8 @@
         "value": {
           "type": "point"
         },
-        "required": true
+        "required": true,
+        "details": "The ball's centre, in µm."
       },
       {
         "key": "radius",
@@ -1139,7 +1249,8 @@
           "quantity": "length",
           "unit": "µm"
         },
-        "required": true
+        "required": true,
+        "details": "The ball's radius, in µm.\n\n**Values:** must be positive."
       }
     ]
   },
@@ -1153,7 +1264,8 @@
         "value": {
           "type": "point"
         },
-        "default": "[0, 0, 0]"
+        "default": "[0, 0, 0]",
+        "details": "Where the first neuron of the grid is (default `[0, 0, 0]`)."
       },
       {
         "key": "spacing",
@@ -1161,7 +1273,8 @@
         "value": {
           "type": "point"
         },
-        "required": true
+        "required": true,
+        "details": "The distance between neighbouring neurons along x, y and z, in µm: `[dx, dy, dz]`.\n\n**Note:** a spacing of 0 stacks that axis's neurons in the same place."
       },
       {
         "key": "shape",
@@ -1169,7 +1282,8 @@
         "value": {
           "type": "point"
         },
-        "required": true
+        "required": true,
+        "details": "How many neurons along x, y and z: `[10, 10, 1]` is a flat 10 × 10 sheet of 100 neurons.\n\n**Values:** three whole numbers of at least 1, with a product of at most 100,000,000."
       }
     ]
   },
@@ -1183,7 +1297,8 @@
         "value": {
           "type": "point"
         },
-        "required": true
+        "required": true,
+        "details": "Where the first neuron is."
       },
       {
         "key": "to",
@@ -1191,7 +1306,8 @@
         "value": {
           "type": "point"
         },
-        "required": true
+        "required": true,
+        "details": "Where the last neuron is (when `count` is 2 or more)."
       }
     ]
   },
@@ -1205,7 +1321,8 @@
         "value": {
           "type": "point"
         },
-        "default": "[0, 0, 0]"
+        "default": "[0, 0, 0]",
+        "details": "The circle's centre (default `[0, 0, 0]`)."
       },
       {
         "key": "radius",
@@ -1215,7 +1332,8 @@
           "quantity": "length",
           "unit": "µm"
         },
-        "required": true
+        "required": true,
+        "details": "The circle's radius, in µm."
       },
       {
         "key": "axis",
@@ -1228,7 +1346,8 @@
             "z"
           ]
         },
-        "default": "z"
+        "default": "z",
+        "details": "Which axis the circle goes around, which sets the plane it lies in: `z` (default) lies flat in the x–y plane, `x` in the y–z plane, `y` in the z–x plane."
       },
       {
         "key": "start_angle",
@@ -1238,7 +1357,8 @@
           "quantity": "angle",
           "unit": "rad"
         },
-        "default": "0"
+        "default": "0",
+        "details": "Where around the circle the first neuron is. Measured in the circle's plane, from its first axis (x, for the default `axis=z`).\n\n**Values:** radians, or degrees with `deg` (`90 deg`)."
       }
     ]
   },
@@ -1252,7 +1372,8 @@
         "value": {
           "type": "name"
         },
-        "required": true
+        "required": true,
+        "details": "The set's name, used in `from`, `to`, and the `members` of later sets.\n\n**Values:** unique among sets, populations and neurons."
       },
       {
         "key": "members",
@@ -1260,7 +1381,8 @@
         "value": {
           "type": "ids"
         },
-        "required": true
+        "required": true,
+        "details": "The neurons in the set: populations, earlier sets, neuron names and ranges of names, or a list of them. A neuron listed twice is included once.\n\nRanges add numbers to a name: `input-1{1:7:3}` is `input-11`, `input-14` and `input-17` (start:end:step, end included), and `inhib-{1,3,5}` is `inhib-1`, `inhib-3` and `inhib-5`."
       },
       {
         "key": "node",
@@ -1268,7 +1390,8 @@
         "value": {
           "type": "reference",
           "to": "node"
-        }
+        },
+        "details": "Runs the set's neurons on one machine (a name from `nodes`), except neurons pinned by themselves or by their population.\n\n**Note:** if a neuron is in several pinned sets, the first set wins.\n\n**Ignored:** on the engine alone."
       }
     ]
   },
@@ -1278,23 +1401,25 @@
     "keys": [
       {
         "key": "step",
-        "doc": "Threshold shift added at each spike.",
+        "doc": "Offset b₀ in each spike's increment, amplitude·e^(−(b + b₀)).",
         "value": {
           "type": "quantity",
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0 mV"
+        "default": "0 mV",
+        "details": "Shrinks every increase in excitability: each spike raises the neuron's excitability shift `b` (in mV, added to its potential when it's compared with the threshold) by `amplitude × e^(−(b + step))`, so a larger step means smaller increases (`e^(−step)` times smaller).\n\n**Note:** despite its name, it isn't added to `b`. It has no effect while `amplitude` is 0."
       },
       {
         "key": "amplitude",
-        "doc": "Learning amplitude.",
+        "doc": "Excitability gained per spike (0: off).",
         "value": {
           "type": "quantity",
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0 mV"
+        "default": "0 mV",
+        "details": "How much easier to fire the neuron becomes with each spike, in mV. Each spike raises the excitability shift `b` by `amplitude × e^(−(b + step))`, and `b` is added to the potential when it's compared with the threshold.\n\n**Values:** 0 (the default) turns it off. Positive values make neurons that fire more likely to fire again."
       },
       {
         "key": "decay_time",
@@ -1304,7 +1429,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "10 min"
+        "default": "10 min",
+        "details": "How long gained excitability lasts. Between spikes, `b` fades back toward 0:\n\n`b ← b × e^(−Δ/τ)`\n\n- `b`: the excitability shift\n- `Δ`: the time since the neuron's previous event\n- `τ`: this setting, `decay_time`\n\nThe default, 10 minutes, makes it long-lasting.\n\n**Note:** it also applies to the shift built up by `homeostasis`."
       }
     ]
   },
@@ -1320,7 +1446,8 @@
           "quantity": "frequency",
           "unit": "Hz"
         },
-        "required": true
+        "required": true,
+        "details": "The frequency the neuron rings at. Inputs about `1 / frequency` apart add up best (at 20 Hz, every 50 ms); inputs at other intervals partly cancel. A bistable resonator fires once per cycle while firing steadily.\n\n**Values:** must be positive."
       },
       {
         "key": "damping_time",
@@ -1330,7 +1457,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "required": true
+        "required": true,
+        "details": "How long the ringing lasts: its size fades as `e^(−Δ/τ)`. When this is several cycles long, the neuron is sharply tuned to its frequency. When it's short, the ringing dies before it matters, and the neuron behaves more like an integrator.\n\n**Values:** 0 or less means the ringing never fades."
       },
       {
         "key": "limit_cycle",
@@ -1339,7 +1467,8 @@
           "type": "quantity",
           "quantity": "potential",
           "unit": "mV"
-        }
+        },
+        "details": "For bistable resonators: the size, in mV, of the steady oscillation the neuron settles into once it fires. It fires once per cycle, at the peak.\n\n**Values:** required for bistable resonators, and larger than `separatrix`.\n\n**Ignored:** for monostable resonators."
       },
       {
         "key": "separatrix",
@@ -1348,7 +1477,8 @@
           "type": "quantity",
           "quantity": "potential",
           "unit": "mV"
-        }
+        },
+        "details": "For bistable resonators: how hard it is to stop the steady firing. An input pulse knocks the oscillation off its cycle. If that leaves it smaller than this radius (in mV), steady firing stops and the neuron rings down to rest. Otherwise it carries on, but with its timing shifted.\n\n**Tip:** a smaller separatrix needs a bigger or better-timed inhibitory pulse to stop the firing.\n\n**Values:** required for bistable resonators, and smaller than `limit_cycle`."
       }
     ]
   },
@@ -1364,7 +1494,8 @@
           "quantity": "frequency",
           "unit": "Hz"
         },
-        "required": true
+        "required": true,
+        "details": "The firing rate the neuron is nudged toward. Below it the neuron becomes more excitable; above it, less.\n\n**Values:** required, in Hz."
       },
       {
         "key": "strength",
@@ -1372,7 +1503,8 @@
         "value": {
           "type": "number"
         },
-        "required": true
+        "required": true,
+        "details": "How hard the neuron is nudged toward its target rate, in mV of excitability per Hz of error per second:\n\n`db/dt = strength × (target_rate − r)`\n\n- `b`: the excitability shift, in mV\n- `db/dt`: how fast it changes, in mV per second\n- `r`: the neuron's estimate of its firing rate, in Hz\n- `target_rate`: the rate aimed for\n\nStronger corrects faster but can overshoot and oscillate.\n\n**Tip:** start well below 1.\n\n**Values:** required."
       },
       {
         "key": "window",
@@ -1382,7 +1514,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "1 s"
+        "default": "1 s",
+        "details": "How long the neuron averages its firing over when estimating its rate (the time constant of the estimate). Each spike adds `1 / window` to the estimate, which then fades.\n\n**Note:** longer windows give a steadier estimate but react more slowly.\n\n**Values:** default 1 s."
       },
       {
         "key": "min_shift",
@@ -1391,7 +1524,8 @@
           "type": "quantity",
           "quantity": "potential",
           "unit": "mV"
-        }
+        },
+        "details": "The least excitable the neuron can become, as a limit on the shift `b` in mV. Stops a fast-firing neuron from being shut down completely.\n\n**Values:** default unlimited."
       },
       {
         "key": "max_shift",
@@ -1400,7 +1534,8 @@
           "type": "quantity",
           "quantity": "potential",
           "unit": "mV"
-        }
+        },
+        "details": "The most excitable the neuron can become, as a limit on the shift `b` in mV.\n\n**Tip:** worth setting. Otherwise a neuron that stays silent keeps becoming more excitable, and eventually fires at the slightest input.\n\n**Values:** default unlimited."
       }
     ]
   },
@@ -1415,7 +1550,8 @@
           "type": "reference",
           "to": "modulator"
         },
-        "required": true
+        "required": true,
+        "details": "Which modulator (from `modulators`) this receptor responds to. Its concentration at the neuron, `c`, drives the effects below.\n\n**Values:** required."
       },
       {
         "key": "excitatory_gain",
@@ -1423,7 +1559,8 @@
         "value": {
           "type": "number"
         },
-        "default": "0"
+        "default": "0",
+        "details": "Turns excitatory input up or down while the modulator is present. Excitatory input from other neurons is multiplied by\n\n`max(0, 1 + excitatory_gain × c)`\n\n- `c`: the modulator's concentration at the neuron (0 when there's none)\n- `max(0, …)`: never below 0, so input is never reversed\n\nPositive values amplify it; negative ones damp it, down to nothing.\n\n**Note:** external input (sensors, background input, stimulation) isn't affected."
       },
       {
         "key": "inhibitory_gain",
@@ -1431,7 +1568,8 @@
         "value": {
           "type": "number"
         },
-        "default": "0"
+        "default": "0",
+        "details": "Turns inhibitory input up or down while the modulator is present. Inhibitory input from other neurons is multiplied by\n\n`max(0, 1 + inhibitory_gain × c)`\n\n- `c`: the modulator's concentration at the neuron\n\n**Note:** external input isn't affected."
       },
       {
         "key": "threshold_gain",
@@ -1439,7 +1577,8 @@
         "value": {
           "type": "number"
         },
-        "default": "0"
+        "default": "0",
+        "details": "Raises or lowers the threshold while the modulator is present. The threshold (or a bistable integrator's tonic thresholds) is multiplied by\n\n`max(0, 1 + threshold_gain × c)`\n\n- `c`: the modulator's concentration at the neuron\n\nNegative values make the neuron easier to fire; positive values make it harder."
       },
       {
         "key": "plasticity_gain",
@@ -1447,7 +1586,8 @@
         "value": {
           "type": "number"
         },
-        "default": "0"
+        "default": "0",
+        "details": "Speeds up or slows down learning on the neuron's incoming synapses while the modulator is present. STDP weight changes are multiplied by\n\n`max(0, 1 + plasticity_gain × c)`\n\n- `c`: the modulator's concentration at the neuron\n\n**Note:** without the modulator, learning runs at its normal rate. With a negative gain, learning stops once the concentration reaches `−1 / plasticity_gain`.\n\n**Ignored:** with three-factor learning (`eligibility_time`), which has its own rate."
       },
       {
         "key": "eligibility_time",
@@ -1456,14 +1596,16 @@
           "type": "quantity",
           "quantity": "time",
           "unit": "ms"
-        }
+        },
+        "details": "Turns on **reward-based (three-factor) learning**, together with `learning_rate`. Spike timing alone no longer changes the weights. Instead it *marks* the synapses involved (an eligibility trace), and the marks fade with this time constant. Weights only change while the modulator (the reward signal) is present:\n\n`Δw = learning_rate × ∫ e(t) × c(t) dt`\n\n- `Δw`: the change in the synapse's weight\n- `e(t)`: the synapse's eligibility trace at time `t`: the STDP changes it has collected, fading with `eligibility_time`\n- `c(t)`: the modulator's concentration at the neuron at time `t`\n- `∫ … dt`: summed over time (in seconds), so both the size and the duration of the reward count\n\nSo a reward that arrives within roughly this time after some activity reinforces that activity.\n\n**Values:** give both `eligibility_time` and `learning_rate`, or neither.\n\n**Note:** synapses need a `learning` rule to be marked at all. Only the neuron's first three-factor receptor is used."
       },
       {
         "key": "learning_rate",
         "doc": "Three-factor learning: weight change per unit eligibility × concentration × second.",
         "value": {
           "type": "number"
-        }
+        },
+        "details": "For reward-based learning (with `eligibility_time`): how much the weights change per unit of eligibility × concentration × second.\n\n**Values:** negative values make the modulator act as punishment instead of reward.\n\n**Note:** changes still respect the synapse's `limits`."
       },
       {
         "key": "direct_potential",
@@ -1473,7 +1615,8 @@
           "quantity": "potential",
           "unit": "mV"
         },
-        "default": "0 mV"
+        "default": "0 mV",
+        "details": "Lets the modulator excite (positive) or inhibit (negative) the neuron directly, as if it were an input. While present, `direct_potential × c` is added to the potential when it's compared with the threshold, where `c` is the modulator's concentration at the neuron. It rises and fades with the modulator.\n\n**Note:** it can make the neuron fire between inputs (the moment is computed exactly), but not during the refractory period."
       }
     ]
   },
@@ -1488,7 +1631,8 @@
           "type": "reference",
           "to": "modulator"
         },
-        "required": true
+        "required": true,
+        "details": "Which modulator (from `modulators`) this neuron releases at each spike.\n\n**Values:** required."
       },
       {
         "key": "amount",
@@ -1496,7 +1640,8 @@
         "value": {
           "type": "number"
         },
-        "default": "1"
+        "default": "1",
+        "details": "How much modulator each spike releases (default 1): the concentration added where it's released, before any weakening with distance.\n\n**Note:** concentrations have no unit; receptor gains are per unit of concentration."
       }
     ]
   },
@@ -1509,14 +1654,16 @@
         "doc": "Initial weight: a number, `uniform(low, high)` or `normal(mean, sd)`.",
         "value": {
           "type": "weight"
-        }
+        },
+        "details": "How strong the connection is. Each spike that arrives through it changes the receiver's potential by\n\n`sign × weight × spike_potential`\n\n- `sign`: +1 for excitatory, −1 for inhibitory (see `sign`)\n- `spike_potential`: the sending neuron's setting\n\n(with the default spike_potential of 1 mV, the weight is that change in mV).\n\n**Values:** a number, or a random value per synapse: `uniform(low, high)` or `normal(mean, sd)`. Random weights are drawn when the network is built, from the Run page's seed. A negative weight reverses the connection's effect.\n\n**Note:** required, on the connection or its synapse type. Learning, decay and noise change it during a run; `limits` keeps it in bounds."
       },
       {
         "key": "equilibrium",
         "doc": "The weight decay relaxes toward (default: the initial weight).",
         "value": {
           "type": "weight"
-        }
+        },
+        "details": "The weight that `decay` slowly pulls the synapse back to, so learned changes fade toward it.\n\n**Values:** default: the synapse's own starting weight. A distribution draws a separate value for each synapse.\n\n**Ignored:** without `decay`."
       },
       {
         "key": "sign",
@@ -1527,7 +1674,8 @@
             "excitatory",
             "inhibitory"
           ]
-        }
+        },
+        "details": "Whether the connection excites (`excitatory`) or inhibits (`inhibitory`) the receiver.\n\n**Values:** default: inhibitory if the sending neuron is `inhibitory`, excitatory otherwise. Setting it lets one neuron make both kinds of connection."
       },
       {
         "key": "delay",
@@ -1537,7 +1685,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "0.5 ms"
+        "default": "0.5 ms",
+        "details": "The time a spike takes to cross the synapse. The total time from spike to arrival is\n\n`delay + distance / conduction_speed`\n\n- `delay`: this setting\n- `distance`: the straight-line distance between the two neurons' positions\n- `conduction_speed`: the sending neuron's setting\n\nand never less than 100 µs (the build's minimum delay).\n\nDelays shape timing-dependent behaviour: STDP, resonance, and waves of activity. Longer delays also let shards run more in parallel.\n\n**Values:** default 0.5 ms; not negative."
       },
       {
         "key": "learning",
@@ -1545,7 +1694,8 @@
         "value": {
           "type": "reference",
           "to": "learning"
-        }
+        },
+        "details": "The STDP rule (a name from `learning_rules`) that changes this synapse's weight according to spike timing.\n\n**Values:** default `flat`, no learning.\n\n**Note:** if the receiving neuron has a three-factor receptor, the rule's changes mark the synapse for reward-based learning instead of changing it directly."
       },
       {
         "key": "stickiness",
@@ -1553,7 +1703,8 @@
         "value": {
           "type": "reference",
           "to": "stickiness"
-        }
+        },
+        "details": "A stickiness function (a name from `stickiness`) that protects this synapse's weight from `decay` when it's left alone for a long time. Synapses that are used often decay as usual.\n\n**Values:** default `none`.\n\n**Ignored:** without `decay`."
       },
       {
         "key": "decay",
@@ -1561,7 +1712,8 @@
         "value": {
           "type": "record",
           "record": "decay"
-        }
+        },
+        "details": "Makes the weight drift back toward `equilibrium` over time, so learning fades unless it's refreshed:\n\n`w ← w_eq + (w − w_eq) × e^(−Δ/τ)`\n\n- `w`: the weight; `←` means the new weight is computed from the old one\n- `w_eq`: the `equilibrium` weight\n- `Δ`: the time since the synapse was last used\n- `τ`: the decay's `time`\n\n**Note:** applied whenever the synapse is next used (a spike arrives or the receiver fires), covering the time since its last use.\n\n**Values:** default no decay."
       },
       {
         "key": "limits",
@@ -1569,7 +1721,8 @@
         "value": {
           "type": "record",
           "record": "limits"
-        }
+        },
+        "details": "Keeps the weight within `min` and `max`. It's re-applied after every change: learning, decay and noise.\n\n**Note:** the bounds also shape learning. `stdp_hard` and `stdp_alpha` stop at them, and `stdp_soft` slows down as the weight gets close.\n\n**Values:** default no limits."
       },
       {
         "key": "release",
@@ -1577,7 +1730,8 @@
         "value": {
           "type": "record",
           "record": "release"
-        }
+        },
+        "details": "Makes the synapse **unreliable**, like a real one: each arriving spike gets through only with some probability, which rises with recent use (facilitation) and falls as the synapse runs out of vesicles (depletion):\n\n`p = 1 − e^(−C × V)`\n\n- `p`: the probability that a spike gets through\n- `C`: facilitation, which grows with recent spikes (see `facilitation_base`)\n- `V`: available vesicles, used up by recent releases (see `depletion_base`)\n\nWith large `C × V`, `p` is close to 1; as `V` runs out, `p` falls toward 0.\n\n**Values:** `release=()` uses standard settings (C₀ = 5, V₀ = 10). With these the synapse nearly always transmits, until a burst wears it out. Default: no `release`, every spike gets through.\n\n**Note:** a spike that isn't released has no effect at all, not even on learning. Random numbers come from the Run page's seed."
       },
       {
         "key": "weight_noise",
@@ -1585,7 +1739,8 @@
         "value": {
           "type": "number"
         },
-        "default": "0"
+        "default": "0",
+        "details": "Random drift of the weight over time. At each use, the weight changes by\n\n`σ × √(Δ / 1 ms) × N(0, 1)`\n\n- `σ`: this setting\n- `Δ`: the time since the synapse was last used\n- `N(0, 1)`: a standard normal random number (from the Run page's seed)\n\nbefore any decay, and is then clamped to the `limits`.\n\n**Tip:** without `decay` or `limits`, the weight wanders without bound.\n\n**Values:** default 0, no noise."
       }
     ]
   },
@@ -1599,7 +1754,8 @@
         "value": {
           "type": "name"
         },
-        "required": true
+        "required": true,
+        "details": "The type's name, used in `type=` on connections and in `extends` on other synapse types.\n\n**Values:** unique."
       },
       {
         "key": "extends",
@@ -1607,21 +1763,24 @@
         "value": {
           "type": "reference",
           "to": "synapseType"
-        }
+        },
+        "details": "Starts this type from another synapse type's settings, so you only write what's different. A setting given here replaces the base's whole setting.\n\n**Note:** a loop of types is an error."
       },
       {
         "key": "weight",
         "doc": "Initial weight: a number, `uniform(low, high)` or `normal(mean, sd)`.",
         "value": {
           "type": "weight"
-        }
+        },
+        "details": "How strong the connection is. Each spike that arrives through it changes the receiver's potential by\n\n`sign × weight × spike_potential`\n\n- `sign`: +1 for excitatory, −1 for inhibitory (see `sign`)\n- `spike_potential`: the sending neuron's setting\n\n(with the default spike_potential of 1 mV, the weight is that change in mV).\n\n**Values:** a number, or a random value per synapse: `uniform(low, high)` or `normal(mean, sd)`. Random weights are drawn when the network is built, from the Run page's seed. A negative weight reverses the connection's effect.\n\n**Note:** required, on the connection or its synapse type. Learning, decay and noise change it during a run; `limits` keeps it in bounds."
       },
       {
         "key": "equilibrium",
         "doc": "The weight decay relaxes toward (default: the initial weight).",
         "value": {
           "type": "weight"
-        }
+        },
+        "details": "The weight that `decay` slowly pulls the synapse back to, so learned changes fade toward it.\n\n**Values:** default: the synapse's own starting weight. A distribution draws a separate value for each synapse.\n\n**Ignored:** without `decay`."
       },
       {
         "key": "sign",
@@ -1632,7 +1791,8 @@
             "excitatory",
             "inhibitory"
           ]
-        }
+        },
+        "details": "Whether the connection excites (`excitatory`) or inhibits (`inhibitory`) the receiver.\n\n**Values:** default: inhibitory if the sending neuron is `inhibitory`, excitatory otherwise. Setting it lets one neuron make both kinds of connection."
       },
       {
         "key": "delay",
@@ -1642,7 +1802,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "0.5 ms"
+        "default": "0.5 ms",
+        "details": "The time a spike takes to cross the synapse. The total time from spike to arrival is\n\n`delay + distance / conduction_speed`\n\n- `delay`: this setting\n- `distance`: the straight-line distance between the two neurons' positions\n- `conduction_speed`: the sending neuron's setting\n\nand never less than 100 µs (the build's minimum delay).\n\nDelays shape timing-dependent behaviour: STDP, resonance, and waves of activity. Longer delays also let shards run more in parallel.\n\n**Values:** default 0.5 ms; not negative."
       },
       {
         "key": "learning",
@@ -1650,7 +1811,8 @@
         "value": {
           "type": "reference",
           "to": "learning"
-        }
+        },
+        "details": "The STDP rule (a name from `learning_rules`) that changes this synapse's weight according to spike timing.\n\n**Values:** default `flat`, no learning.\n\n**Note:** if the receiving neuron has a three-factor receptor, the rule's changes mark the synapse for reward-based learning instead of changing it directly."
       },
       {
         "key": "stickiness",
@@ -1658,7 +1820,8 @@
         "value": {
           "type": "reference",
           "to": "stickiness"
-        }
+        },
+        "details": "A stickiness function (a name from `stickiness`) that protects this synapse's weight from `decay` when it's left alone for a long time. Synapses that are used often decay as usual.\n\n**Values:** default `none`.\n\n**Ignored:** without `decay`."
       },
       {
         "key": "decay",
@@ -1666,7 +1829,8 @@
         "value": {
           "type": "record",
           "record": "decay"
-        }
+        },
+        "details": "Makes the weight drift back toward `equilibrium` over time, so learning fades unless it's refreshed:\n\n`w ← w_eq + (w − w_eq) × e^(−Δ/τ)`\n\n- `w`: the weight; `←` means the new weight is computed from the old one\n- `w_eq`: the `equilibrium` weight\n- `Δ`: the time since the synapse was last used\n- `τ`: the decay's `time`\n\n**Note:** applied whenever the synapse is next used (a spike arrives or the receiver fires), covering the time since its last use.\n\n**Values:** default no decay."
       },
       {
         "key": "limits",
@@ -1674,7 +1838,8 @@
         "value": {
           "type": "record",
           "record": "limits"
-        }
+        },
+        "details": "Keeps the weight within `min` and `max`. It's re-applied after every change: learning, decay and noise.\n\n**Note:** the bounds also shape learning. `stdp_hard` and `stdp_alpha` stop at them, and `stdp_soft` slows down as the weight gets close.\n\n**Values:** default no limits."
       },
       {
         "key": "release",
@@ -1682,7 +1847,8 @@
         "value": {
           "type": "record",
           "record": "release"
-        }
+        },
+        "details": "Makes the synapse **unreliable**, like a real one: each arriving spike gets through only with some probability, which rises with recent use (facilitation) and falls as the synapse runs out of vesicles (depletion):\n\n`p = 1 − e^(−C × V)`\n\n- `p`: the probability that a spike gets through\n- `C`: facilitation, which grows with recent spikes (see `facilitation_base`)\n- `V`: available vesicles, used up by recent releases (see `depletion_base`)\n\nWith large `C × V`, `p` is close to 1; as `V` runs out, `p` falls toward 0.\n\n**Values:** `release=()` uses standard settings (C₀ = 5, V₀ = 10). With these the synapse nearly always transmits, until a burst wears it out. Default: no `release`, every spike gets through.\n\n**Note:** a spike that isn't released has no effect at all, not even on learning. Random numbers come from the Run page's seed."
       },
       {
         "key": "weight_noise",
@@ -1690,7 +1856,8 @@
         "value": {
           "type": "number"
         },
-        "default": "0"
+        "default": "0",
+        "details": "Random drift of the weight over time. At each use, the weight changes by\n\n`σ × √(Δ / 1 ms) × N(0, 1)`\n\n- `σ`: this setting\n- `Δ`: the time since the synapse was last used\n- `N(0, 1)`: a standard normal random number (from the Run page's seed)\n\nbefore any decay, and is then clamped to the `limits`.\n\n**Tip:** without `decay` or `limits`, the weight wanders without bound.\n\n**Values:** default 0, no noise."
       }
     ]
   },
@@ -1706,7 +1873,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "required": true
+        "required": true,
+        "details": "How quickly the weight returns to equilibrium: after this time, about two-thirds of any learned change has faded (after three times as long, 95%).\n\n**Values:** required.\n\n**Note:** with `stickiness`, synapses left alone fade more slowly."
       }
     ]
   },
@@ -1720,7 +1888,8 @@
         "value": {
           "type": "number"
         },
-        "required": true
+        "required": true,
+        "details": "The lowest the weight can go.\n\n**Values:** required; not above `max`.\n\n**Note:** a starting weight below it is raised to it the first time the synapse is used."
       },
       {
         "key": "max",
@@ -1728,7 +1897,8 @@
         "value": {
           "type": "number"
         },
-        "required": true
+        "required": true,
+        "details": "The highest the weight can go.\n\n**Values:** required; not below `min`."
       }
     ]
   },
@@ -1738,11 +1908,12 @@
     "keys": [
       {
         "key": "facilitation_base",
-        "doc": "Facilitation base.",
+        "doc": "Facilitation base C₀.",
         "value": {
           "type": "number"
         },
-        "default": "1"
+        "default": "5",
+        "details": "C₀, how reliable the synapse is when it hasn't been used recently. Higher means more spikes get through. Recent spikes add to it:\n\n`C = C₀ + Σ facilitation_step × e^(−Δ/facilitation_time)`\n\n- `C`: the current facilitation\n- `C₀`: this setting\n- `Σ`: a sum over every earlier spike that arrived at the synapse (released or not)\n- `Δ`: how long ago that spike arrived\n\n**Values:** default 5."
       },
       {
         "key": "facilitation_step",
@@ -1750,7 +1921,8 @@
         "value": {
           "type": "number"
         },
-        "default": "0.1"
+        "default": "0.1",
+        "details": "How much each arriving spike (released or not) boosts reliability for the next ones. This is what makes bursts more likely to get through.\n\n**Values:** default 0.1."
       },
       {
         "key": "facilitation_time",
@@ -1760,23 +1932,26 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "100 ms"
+        "default": "100 ms",
+        "details": "How long the boost from a spike lasts (its time constant).\n\n**Values:** default 100 ms."
       },
       {
         "key": "depletion_base",
-        "doc": "Depletion (available vesicles) base.",
+        "doc": "Available vesicles V₀ when rested.",
         "value": {
           "type": "number"
         },
-        "default": "1"
+        "default": "10",
+        "details": "V₀, the vesicles available when the synapse is fully rested. Each release uses some up:\n\n`V = max(0, V₀ − Σ depletion_step × e^(−Δ/depletion_time))`\n\n- `V`: the vesicles available now\n- `V₀`: this setting\n- `Σ`: a sum over every earlier successful release\n- `Δ`: how long ago that release was\n\nWhen none are left, nothing is released.\n\n**Values:** default 10."
       },
       {
         "key": "depletion_step",
-        "doc": "Depletion per signal.",
+        "doc": "Depletion per release.",
         "value": {
           "type": "number"
         },
-        "default": "0.1"
+        "default": "1",
+        "details": "How many vesicles each successful release uses. With the defaults (V₀ = 10, step 1), about ten releases in quick succession exhaust the synapse.\n\n**Values:** default 1."
       },
       {
         "key": "depletion_time",
@@ -1786,7 +1961,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "100 ms"
+        "default": "100 ms",
+        "details": "How quickly used vesicles are replaced (time constant). Longer means a burst leaves the synapse weak for longer.\n\n**Values:** default 100 ms."
       }
     ]
   },
@@ -1800,7 +1976,8 @@
         "value": {
           "type": "ids"
         },
-        "required": true
+        "required": true,
+        "details": "The neurons that send: populations, sets, neuron names or ranges of names (`in-{1:5:1}`), or a list of them.\n\n**Note:** for `one_to_one`, the order written pairs them with the receivers. Random patterns choose among them."
       },
       {
         "key": "to",
@@ -1808,7 +1985,8 @@
         "value": {
           "type": "ids"
         },
-        "required": true
+        "required": true,
+        "details": "The neurons that receive. Written like `from`. The synapses belong to these neurons."
       },
       {
         "key": "pattern",
@@ -1822,21 +2000,24 @@
             "random"
           ]
         },
-        "default": "all_to_all"
+        "default": "all_to_all",
+        "details": "Which senders connect to which receivers:\n\n- `all_to_all` (default): every sender to every receiver.\n- `one_to_one`: the first sender to the first receiver, the second to the second, and so on. Needs as many senders as receivers.\n- `fan_in`: each receiver gets `count` different senders, picked at random (all of them, if there are fewer).\n- `random`: each sender–receiver pair is connected with `probability`.\n\n**Note:** a neuron never connects to itself unless `self=true`. `within` drops pairs that are too far apart (random patterns then choose only among nearby senders). Random choices come from the Run page's seed."
       },
       {
         "key": "count",
         "doc": "`fan_in`: inputs per receiver.",
         "value": {
           "type": "number"
-        }
+        },
+        "details": "For `fan_in`: how many senders each receiver gets. If fewer are available (after `within` and `self`), the receiver gets all of them.\n\n**Values:** a whole number; required for `fan_in`, and an error with other patterns."
       },
       {
         "key": "probability",
         "doc": "`random`: the probability of each pair.",
         "value": {
           "type": "number"
-        }
+        },
+        "details": "For `random`: the chance that each sender–receiver pair is connected. Each receiver gets about `probability × number of senders` connections.\n\n**Values:** from 0 to 1; required for `random`, and an error with other patterns."
       },
       {
         "key": "within",
@@ -1845,7 +2026,8 @@
           "type": "quantity",
           "quantity": "length",
           "unit": "µm"
-        }
+        },
+        "details": "Only connects neurons at most this far apart (in µm, measured between their positions). Use it for local wiring, such as each neuron connecting only to its neighbours.\n\n**Note:** for `fan_in` and `random`, the random choice is made only among senders within range.\n\n**Values:** default: any distance."
       },
       {
         "key": "self",
@@ -1853,7 +2035,8 @@
         "value": {
           "type": "bool"
         },
-        "default": "false"
+        "default": "false",
+        "details": "Lets a neuron that is in both `from` and `to` connect to itself (an autapse).\n\n**Values:** default false."
       },
       {
         "key": "type",
@@ -1861,21 +2044,24 @@
         "value": {
           "type": "reference",
           "to": "synapseType"
-        }
+        },
+        "details": "A synapse type to take settings from. Settings written on the connection replace the type's."
       },
       {
         "key": "weight",
         "doc": "Initial weight: a number, `uniform(low, high)` or `normal(mean, sd)`.",
         "value": {
           "type": "weight"
-        }
+        },
+        "details": "How strong the connection is. Each spike that arrives through it changes the receiver's potential by\n\n`sign × weight × spike_potential`\n\n- `sign`: +1 for excitatory, −1 for inhibitory (see `sign`)\n- `spike_potential`: the sending neuron's setting\n\n(with the default spike_potential of 1 mV, the weight is that change in mV).\n\n**Values:** a number, or a random value per synapse: `uniform(low, high)` or `normal(mean, sd)`. Random weights are drawn when the network is built, from the Run page's seed. A negative weight reverses the connection's effect.\n\n**Note:** required, on the connection or its synapse type. Learning, decay and noise change it during a run; `limits` keeps it in bounds."
       },
       {
         "key": "equilibrium",
         "doc": "The weight decay relaxes toward (default: the initial weight).",
         "value": {
           "type": "weight"
-        }
+        },
+        "details": "The weight that `decay` slowly pulls the synapse back to, so learned changes fade toward it.\n\n**Values:** default: the synapse's own starting weight. A distribution draws a separate value for each synapse.\n\n**Ignored:** without `decay`."
       },
       {
         "key": "sign",
@@ -1886,7 +2072,8 @@
             "excitatory",
             "inhibitory"
           ]
-        }
+        },
+        "details": "Whether the connection excites (`excitatory`) or inhibits (`inhibitory`) the receiver.\n\n**Values:** default: inhibitory if the sending neuron is `inhibitory`, excitatory otherwise. Setting it lets one neuron make both kinds of connection."
       },
       {
         "key": "delay",
@@ -1896,7 +2083,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "0.5 ms"
+        "default": "0.5 ms",
+        "details": "The time a spike takes to cross the synapse. The total time from spike to arrival is\n\n`delay + distance / conduction_speed`\n\n- `delay`: this setting\n- `distance`: the straight-line distance between the two neurons' positions\n- `conduction_speed`: the sending neuron's setting\n\nand never less than 100 µs (the build's minimum delay).\n\nDelays shape timing-dependent behaviour: STDP, resonance, and waves of activity. Longer delays also let shards run more in parallel.\n\n**Values:** default 0.5 ms; not negative."
       },
       {
         "key": "learning",
@@ -1904,7 +2092,8 @@
         "value": {
           "type": "reference",
           "to": "learning"
-        }
+        },
+        "details": "The STDP rule (a name from `learning_rules`) that changes this synapse's weight according to spike timing.\n\n**Values:** default `flat`, no learning.\n\n**Note:** if the receiving neuron has a three-factor receptor, the rule's changes mark the synapse for reward-based learning instead of changing it directly."
       },
       {
         "key": "stickiness",
@@ -1912,7 +2101,8 @@
         "value": {
           "type": "reference",
           "to": "stickiness"
-        }
+        },
+        "details": "A stickiness function (a name from `stickiness`) that protects this synapse's weight from `decay` when it's left alone for a long time. Synapses that are used often decay as usual.\n\n**Values:** default `none`.\n\n**Ignored:** without `decay`."
       },
       {
         "key": "decay",
@@ -1920,7 +2110,8 @@
         "value": {
           "type": "record",
           "record": "decay"
-        }
+        },
+        "details": "Makes the weight drift back toward `equilibrium` over time, so learning fades unless it's refreshed:\n\n`w ← w_eq + (w − w_eq) × e^(−Δ/τ)`\n\n- `w`: the weight; `←` means the new weight is computed from the old one\n- `w_eq`: the `equilibrium` weight\n- `Δ`: the time since the synapse was last used\n- `τ`: the decay's `time`\n\n**Note:** applied whenever the synapse is next used (a spike arrives or the receiver fires), covering the time since its last use.\n\n**Values:** default no decay."
       },
       {
         "key": "limits",
@@ -1928,7 +2119,8 @@
         "value": {
           "type": "record",
           "record": "limits"
-        }
+        },
+        "details": "Keeps the weight within `min` and `max`. It's re-applied after every change: learning, decay and noise.\n\n**Note:** the bounds also shape learning. `stdp_hard` and `stdp_alpha` stop at them, and `stdp_soft` slows down as the weight gets close.\n\n**Values:** default no limits."
       },
       {
         "key": "release",
@@ -1936,7 +2128,8 @@
         "value": {
           "type": "record",
           "record": "release"
-        }
+        },
+        "details": "Makes the synapse **unreliable**, like a real one: each arriving spike gets through only with some probability, which rises with recent use (facilitation) and falls as the synapse runs out of vesicles (depletion):\n\n`p = 1 − e^(−C × V)`\n\n- `p`: the probability that a spike gets through\n- `C`: facilitation, which grows with recent spikes (see `facilitation_base`)\n- `V`: available vesicles, used up by recent releases (see `depletion_base`)\n\nWith large `C × V`, `p` is close to 1; as `V` runs out, `p` falls toward 0.\n\n**Values:** `release=()` uses standard settings (C₀ = 5, V₀ = 10). With these the synapse nearly always transmits, until a burst wears it out. Default: no `release`, every spike gets through.\n\n**Note:** a spike that isn't released has no effect at all, not even on learning. Random numbers come from the Run page's seed."
       },
       {
         "key": "weight_noise",
@@ -1944,7 +2137,8 @@
         "value": {
           "type": "number"
         },
-        "default": "0"
+        "default": "0",
+        "details": "Random drift of the weight over time. At each use, the weight changes by\n\n`σ × √(Δ / 1 ms) × N(0, 1)`\n\n- `σ`: this setting\n- `Δ`: the time since the synapse was last used\n- `N(0, 1)`: a standard normal random number (from the Run page's seed)\n\nbefore any decay, and is then clamped to the `limits`.\n\n**Tip:** without `decay` or `limits`, the weight wanders without bound.\n\n**Values:** default 0, no noise."
       }
     ]
   },
@@ -1959,7 +2153,8 @@
         "value": {
           "type": "name"
         },
-        "required": true
+        "required": true,
+        "details": "The rule's name, used in synapses' `learning=`.\n\n**Values:** unique, and not `flat` (built in: no learning)."
       },
       {
         "key": "rule",
@@ -1972,7 +2167,8 @@
             "stdp_alpha"
           ]
         },
-        "required": true
+        "required": true,
+        "details": "Which spike-timing rule to use. All three follow the same idea: a synapse that helped make the receiver fire gets stronger, and one whose spike came just after the receiver fired gets weaker.\n\n- **Strengthening**, when the receiver fires: every spike that arrived through the synapse since the receiver last fired counts, more the closer it was to this spike.\n- **Weakening**, when a spike arrives soon after the receiver fired (without making it fire again): more the sooner it came.\n\nThe rules differ in their timing windows and in how they treat the weight limits:\n\n- `stdp_hard`: exponential windows; changes simply stop at the synapse's `limits`.\n- `stdp_soft`: like `stdp_hard`, but changes shrink as the weight approaches a limit, so weights settle smoothly. Without `limits` it behaves like `stdp_hard`.\n- `stdp_alpha`: an alpha-shaped window (`baseline`, `time`, `rate`).\n\n**Note:** a receiver's `plasticity_gain` scales the changes. With three-factor learning, they become marks for reward-based learning instead."
       },
       {
         "key": "depression",
@@ -1984,7 +2180,8 @@
         "only": [
           "stdp_hard",
           "stdp_soft"
-        ]
+        ],
+        "details": "For `stdp_hard` and `stdp_soft`: how much a badly timed spike weakens the synapse. A spike arriving Δ after the receiver fired, without making it fire again, changes the weight by\n\n`−depression × e^(−Δ/depression_time)`\n\n- `Δ`: the time between the receiver's last spike and this spike's arrival\n- `depression`, `depression_time`: settings of this rule\n\nFor `stdp_soft`, the change is also multiplied by `w − min`: the weight's distance above its lower limit.\n\n**Values:** required; in weight units, so choose it relative to your weights."
       },
       {
         "key": "depression_time",
@@ -1998,7 +2195,8 @@
         "only": [
           "stdp_hard",
           "stdp_soft"
-        ]
+        ],
+        "details": "For `stdp_hard` and `stdp_soft`: how long after the receiver fires a spike still weakens the synapse (the window's time constant). Spikes arriving several times later than this barely matter.\n\n**Values:** required."
       },
       {
         "key": "potentiation",
@@ -2010,7 +2208,8 @@
         "only": [
           "stdp_hard",
           "stdp_soft"
-        ]
+        ],
+        "details": "For `stdp_hard` and `stdp_soft`: how much well-timed spikes strengthen the synapse. When the receiver fires, the weight changes by\n\n`potentiation × Σ e^(−d/potentiation_time)`\n\n- `Σ`: a sum over every spike that came through this synapse since the receiver's previous spike\n- `d`: for each of those spikes, how long before the receiver's new spike it arrived (so recent inputs count most)\n- `potentiation`, `potentiation_time`: settings of this rule\n\nFor `stdp_soft`, the change is also multiplied by `max − w`: the weight's distance below its upper limit.\n\n**Values:** required; in weight units."
       },
       {
         "key": "potentiation_time",
@@ -2024,7 +2223,8 @@
         "only": [
           "stdp_hard",
           "stdp_soft"
-        ]
+        ],
+        "details": "For `stdp_hard` and `stdp_soft`: how far before the receiver's spike an input still counts for strengthening (the window's time constant). Inputs much earlier than this barely count.\n\n**Values:** required."
       },
       {
         "key": "baseline",
@@ -2035,7 +2235,8 @@
         "required": true,
         "only": [
           "stdp_alpha"
-        ]
+        ],
+        "details": "For `stdp_alpha`: the window's value far from the spike, β. The window is\n\n`α(t) = max(β, e × (1 − β) × x × e^(−x) + β)`, with `x = (t₀ − t) / time`\n\n- `α(t)`: the window's value for a spike `t` away from the receiver's spike\n- `β`: this setting, `baseline`\n- `e`: Euler's number, 2.718…\n- `t₀`: a shift, computed from `β`, that makes α(0) = 0 (no change for exactly simultaneous spikes)\n- `time`: this rule's `time` setting\n\nStrengthening sums the window over the inputs since the receiver's previous spike; weakening uses `α(Δ) × e^(−Δ/time)` for a spike arriving Δ after the receiver's spike. Both are multiplied by `rate`.\n\n**Note:** a negative baseline makes poorly timed pairings weaken the synapse.\n\n**Values:** required."
       },
       {
         "key": "time",
@@ -2048,7 +2249,8 @@
         "required": true,
         "only": [
           "stdp_alpha"
-        ]
+        ],
+        "details": "For `stdp_alpha`: the width of the timing window. The window peaks about this long from the spike and fades after a few times this.\n\n**Values:** required."
       },
       {
         "key": "rate",
@@ -2059,7 +2261,8 @@
         "required": true,
         "only": [
           "stdp_alpha"
-        ]
+        ],
+        "details": "For `stdp_alpha`: scales every weight change. Strengthening is never negative and weakening never positive.\n\n**Values:** required; in weight units."
       }
     ]
   },
@@ -2073,7 +2276,8 @@
         "value": {
           "type": "name"
         },
-        "required": true
+        "required": true,
+        "details": "The function's name, used in synapses' `stickiness=`.\n\n**Values:** unique; `none` is built in."
       },
       {
         "key": "time",
@@ -2083,7 +2287,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "required": true
+        "required": true,
+        "details": "How long a synapse must be left alone before its weight starts to stick. Over a gap Δ, the decay factor `d` becomes\n\n`d + (1 − d) × s(Δ)`, with `s(Δ) = 2 × (1 / (1 + e^(−Δ/time)) − ½)`\n\n- `d`: the fraction of the distance to equilibrium the weight would keep under plain `decay` (`e^(−Δ/τ)`)\n- `Δ`: the time since the synapse was last used\n- `s(Δ)`: the stickiness, from 0 to 1\n- `time`: this setting\n\n`s` runs from 0 for short gaps (normal decay) to 1 for gaps much longer than this time (no decay at all). So synapses that are used often decay normally, while one that isn't used for a long time keeps its weight.\n\n**Values:** required."
       }
     ]
   },
@@ -2097,7 +2302,8 @@
         "value": {
           "type": "name"
         },
-        "required": true
+        "required": true,
+        "details": "The modulator's name, used by `receptors` and `releases`.\n\n**Values:** unique."
       },
       {
         "key": "clearance_time",
@@ -2107,7 +2313,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "required": true
+        "required": true,
+        "details": "How quickly the modulator is cleared away after a release. Each release that reaches a neuron adds\n\n`c(t) = amplitude × e^(−(t − arrival) / clearance_time)`\n\n- `c(t)`: that release's concentration at the neuron at time `t`\n- `amplitude`: the released `amount`, weakened by `falloff` over the distance\n- `arrival`: when the release reached the neuron (after `latency` and travel at `speed`)\n\nand the concentration is the sum of all of them. Longer clearance lets releases overlap and build up; shorter makes each one a brief pulse.\n\n**Values:** required; positive."
       },
       {
         "key": "reach",
@@ -2116,7 +2323,8 @@
           "type": "quantity",
           "quantity": "length",
           "unit": "µm"
-        }
+        },
+        "details": "How far a release spreads, in µm. Neurons farther than this from the releasing neuron aren't affected at all. Use it for local signalling.\n\n**Values:** default: everywhere."
       },
       {
         "key": "speed",
@@ -2125,7 +2333,8 @@
           "type": "quantity",
           "quantity": "speed",
           "unit": "m/s"
-        }
+        },
+        "details": "How fast a release spreads. A neuron at distance `d` (from the releasing neuron) receives it `latency + d / speed` after the spike.\n\n**Values:** default: instantly."
       },
       {
         "key": "latency",
@@ -2135,7 +2344,8 @@
           "quantity": "time",
           "unit": "ms"
         },
-        "default": "1 ms"
+        "default": "1 ms",
+        "details": "The delay between a spike and its release starting to spread.\n\n**Note:** with several shards, the shortest latency in the network (or 1 ms, whichever is less) limits how far ahead shards can run independently. Very short latencies therefore slow down multi-shard runs.\n\n**Values:** default 1 ms."
       },
       {
         "key": "falloff",
@@ -2144,7 +2354,8 @@
           "type": "quantity",
           "quantity": "length",
           "unit": "µm"
-        }
+        },
+        "details": "Weakens releases with distance. A neuron at distance `d` receives\n\n`amount × e^(−d / falloff)`\n\n- `amount`: what the releasing neuron releases (its `releases.amount`)\n- `d`: the distance between the releasing neuron and the receiving one\n\nso at a distance of `falloff`, about a third of the release arrives.\n\n**Values:** default: no weakening (full strength everywhere within `reach`)."
       }
     ]
   }

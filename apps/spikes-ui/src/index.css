@@ -143,3 +143,16 @@
     @apply font-sans;
     }
 }
+/* The editor's hover help (parameter details): the page's reset removes list markers; give them back, and let long
+   help be a little wider. (Monaco sizes its height; long help scrolls, and the hover's edge drags to resize it.) */
+.monaco-hover .markdown-hover ul {
+  list-style: disc;
+  padding-left: 1.25em;
+  margin: 0.25em 0;
+}
+.monaco-hover .markdown-hover li {
+  margin: 0.15em 0;
+}
+.monaco-editor .monaco-hover {
+  max-width: min(720px, 90vw) !important;
+}

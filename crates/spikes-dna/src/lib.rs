@@ -13,6 +13,7 @@ pub mod description;
 mod migrate;
 mod neurons;
 pub mod schema;
+mod schema_details;
 mod syntax;
 pub mod units;
 

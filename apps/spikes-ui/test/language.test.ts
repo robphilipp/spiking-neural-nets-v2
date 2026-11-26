@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { applicableKeys, hover, scan, suggestions } from "../src/language/spikes";
+import { applicableKeys, hover, scan, schema, suggestions } from "../src/language/spikes";
 
 const at = (text: string) => {
   const offset = text.indexOf("|");
@@ -105,6 +105,28 @@ describe("hover", () => {
     const h = hover(text, text.indexOf("decay_time") + 1);
     expect(h?.markdown).toContain("decay time constant");
     expect(h?.markdown).toContain("default 250 ms");
+  });
+
+  it("gives the details: equations, what it applies to and when it's ignored", () => {
+    const text = "(neurons=[(name=a, decay_time=250 ms)])";
+    const md = hover(text, text.indexOf("decay_time") + 1)!.markdown;
+    expect(md).toContain("u(t + Δ) = u(t) × e^(−Δ/τ)");
+    expect(md).toContain("for resonators, which use");
+    // Keys inherited from shared settings get the same details (a population's threshold is a neuron setting).
+    const pop = "(populations=[(name=p, count=2, line=(from=[0,0,0], to=[1,0,0]), threshold=10 mV)])";
+    expect(hover(pop, pop.indexOf("threshold") + 1)!.markdown).toContain("u + η + b + m ≥ θ × g");
+  });
+
+  it("defines the symbols in its equations", () => {
+    const text = "(learning_rules=[(name=l, rule=stdp_hard, potentiation=0.01, potentiation_time=20 ms)])";
+    const md = hover(text, text.indexOf("potentiation") + 1)!.markdown;
+    expect(md).toContain("potentiation × Σ e^(−d/potentiation_time)");
+    expect(md).toMatch(/- `d`: .*how long before the receiver's new spike it arrived/);
+    expect(md).toMatch(/- `Σ`: a sum over every spike/);
+  });
+
+  it("every key has details", () => {
+    for (const r of schema) for (const k of r.keys) expect(k.details, `${r.name}.${k.key}`).toBeTruthy();
   });
 
   it("knows which record a key belongs to", () => {

@@ -27,6 +27,8 @@ export interface Key {
   required?: boolean;
   only?: string[];
   hidden?: boolean;
+  /** What it does in detail (markdown): equations, limits, when it applies and when it's ignored. */
+  details?: string;
 }
 
 export interface RecordSchema {
@@ -258,6 +260,9 @@ export interface Suggestion {
   kind: "key" | "record" | "value" | "snippet";
 }
 
+/** A key's help: its one-line description, then the details. */
+const fullDoc = (k: Key) => (k.details ? `${k.doc}\n\n${k.details}` : k.doc);
+
 /** How a key's value is described in one line, e.g. `time (ms), default 20 ms`. */
 export function describeValue(k: Key): string {
   const v = k.value;
@@ -322,7 +327,7 @@ export function suggestions(text: string, offset: number): Suggestion[] {
             : v.type === "list"
               ? `${k.key}=[\n\t${recordSnippet(v.record)}\n]`
               : `${k.key}=${placeholder(k, 1)}`;
-        return { label: k.key, insert, detail: describeValue(k), doc: k.doc, kind: v.type === "record" || v.type === "list" ? "record" : "key" };
+        return { label: k.key, insert, detail: describeValue(k), doc: fullDoc(k), kind: v.type === "record" || v.type === "list" ? "record" : "key" };
       });
   }
   // A value.
@@ -362,5 +367,6 @@ export function hover(text: string, offset: number): { markdown: string; start: 
   const record = recordSchema(ctx.node.record)!;
   const lines = [`**${k.key}** · ${record.name}`, "", k.doc, "", `*${describeValue(k)}*`];
   if (k.only) lines.push("", `Only for ${record.kind_key ?? "dynamics"} = ${k.only.join(", ")}`);
+  if (k.details) lines.push("", "---", "", k.details);
   return { markdown: lines.join("\n"), start, end };
 }

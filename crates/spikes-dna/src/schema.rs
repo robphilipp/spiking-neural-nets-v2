@@ -217,8 +217,7 @@ pub static RECORDS: &[RecordSchema] = &[
         keys: &[
             key(
                 "dynamics",
-                "`monostable_integrator`; `bistable_integrator` (fires tonically once excited); `monostable_resonator`; \
-                 `bistable_resonator` (a limit cycle).",
+                "How the neuron behaves: integrates or resonates, fires once or keeps firing.",
                 Value::Choice { values: DYNAMICS },
             )
             .default("monostable_integrator"),
@@ -432,8 +431,8 @@ pub static RECORDS: &[RecordSchema] = &[
         kind_key: None,
         extends: None,
         keys: &[
-            key("step", "Threshold shift added at each spike.", MV).default("0 mV"),
-            key("amplitude", "Learning amplitude.", MV).default("0 mV"),
+            key("step", "Offset b₀ in each spike's increment, amplitude·e^(−(b + b₀)).", MV).default("0 mV"),
+            key("amplitude", "Excitability gained per spike (0: off).", MV).default("0 mV"),
             key("decay_time", "Decay time constant between spikes.", MS).default("10 min"),
         ],
     },
@@ -565,11 +564,11 @@ pub static RECORDS: &[RecordSchema] = &[
         kind_key: None,
         extends: None,
         keys: &[
-            key("facilitation_base", "Facilitation base.", Value::Number).default("1"),
+            key("facilitation_base", "Facilitation base C₀.", Value::Number).default("5"),
             key("facilitation_step", "Facilitation added per signal.", Value::Number).default("0.1"),
             key("facilitation_time", "Facilitation decay time constant.", MS).default("100 ms"),
-            key("depletion_base", "Depletion (available vesicles) base.", Value::Number).default("1"),
-            key("depletion_step", "Depletion per signal.", Value::Number).default("0.1"),
+            key("depletion_base", "Available vesicles V₀ when rested.", Value::Number).default("10"),
+            key("depletion_step", "Depletion per release.", Value::Number).default("1"),
             key("depletion_time", "Depletion recovery time constant.", MS).default("100 ms"),
         ],
     },
@@ -678,7 +677,38 @@ pub struct MergedRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind_key: Option<&'static str>,
     /// Its keys, extended ones included.
-    pub keys: Vec<&'static Key>,
+    pub keys: Vec<MergedKey>,
+}
+
+/// A key with its long help.
+#[derive(Debug, Serialize)]
+pub struct MergedKey {
+    #[serde(flatten)]
+    pub key: &'static Key,
+    /// What it does in detail (markdown): see [`crate::schema_details`].
+    pub details: &'static str,
+}
+
+/// The long help of `key`, defined by record `owner`.
+fn details(owner: &str, key: &str) -> &'static str {
+    crate::schema_details::DETAILS
+        .iter()
+        .find(|(r, k, _)| *r == owner && *k == key)
+        .map_or("", |(_, _, d)| d)
+}
+
+/// Every key a record accepts, with the record that defines it.
+fn owned_keys(name: &str) -> Vec<(&'static str, &'static Key)> {
+    let r = record(name);
+    let mut keys: Vec<(&'static str, &'static Key)> = r.keys.iter().map(|k| (r.name, k)).collect();
+    if let Some((base, excluded)) = r.extends {
+        keys.extend(
+            owned_keys(base)
+                .into_iter()
+                .filter(|(_, k)| !excluded.contains(&k.key) && !r.keys.iter().any(|own| own.key == k.key)),
+        );
+    }
+    keys
 }
 
 /// Every record with its keys merged (what `schema.json` holds).
@@ -689,7 +719,13 @@ pub fn merged() -> Vec<MergedRecord> {
             name: r.name,
             doc: r.doc,
             kind_key: r.kind_key,
-            keys: all_keys(r.name),
+            keys: owned_keys(r.name)
+                .into_iter()
+                .map(|(owner, key)| MergedKey {
+                    key,
+                    details: details(owner, key.key),
+                })
+                .collect(),
         })
         .collect()
 }
