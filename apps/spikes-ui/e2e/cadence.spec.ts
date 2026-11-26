@@ -17,7 +17,7 @@ async function still(page: Page) {
   }
 }
 
-test("with cadence on, the charts stop scrolling when the run stops or pauses", async ({ page }) => {
+test("with cadence on, the charts stop scrolling when the run stops or pauses, and keep their zoom", async ({ page }) => {
   test.setTimeout(90_000);
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
@@ -45,8 +45,26 @@ test("with cadence on, the charts stop scrolling when the run stops or pauses", 
   await page.waitForTimeout(500);
   expect(await look(rate)).not.toBe(moving);
 
+  // The charts' canvases, marked: a chart drawn anew (losing its zoom) would have a new one.
+  const mark = () =>
+    page.evaluate(() => {
+      for (const id of ["raster", "rate", "weight-trend"]) (document.querySelector(`[data-testid="${id}"] canvas`) as HTMLElement).dataset.mark = "kept";
+    });
+  const kept = () =>
+    page.evaluate(() =>
+      ["raster", "rate", "weight-trend"].every((id) => (document.querySelector(`[data-testid="${id}"] canvas`) as HTMLElement | null)?.dataset.mark === "kept"),
+    );
+  await mark();
+
   await page.getByTestId("pause").click();
   await expect(page.getByTestId("state")).toHaveText("paused");
+  await still(page);
+
+  // A step while paused shows its data, then the charts hold still again.
+  const raster = page.getByTestId("raster");
+  const before = await look(raster);
+  await page.getByRole("button", { name: "Step 10 ms" }).click();
+  await expect.poll(() => look(raster)).not.toBe(before);
   await still(page);
 
   await page.getByRole("button", { name: "Resume" }).click();
@@ -55,5 +73,6 @@ test("with cadence on, the charts stop scrolling when the run stops or pauses", 
   await page.getByTestId("stop").click();
   await expect(page.getByTestId("state")).toHaveText("ready");
   await still(page);
+  expect(await kept()).toBe(true);
   await page.getByTestId("weights").screenshot({ path: "test-results/cadence-stopped.png" });
 });

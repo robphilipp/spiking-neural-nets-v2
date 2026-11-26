@@ -25,7 +25,7 @@ import { useConnection } from "../connection";
 import { useWidth } from "../hooks/useWidth";
 import { stopInput, useActiveInput } from "../inputStreams";
 import { ChartControls } from "../components/ChartControls";
-import { useCadence, useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
+import { useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectLive, useLive } from "../live";
 import { useBehavior } from "../useBehavior";
 import { backgroundChanged, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
@@ -150,8 +150,7 @@ export function RunPage() {
   useEffect(() => {
     if (stats) simTime(stats.simMs);
   }, [stats]);
-  const { bufferMs, updateMs, zoomResets } = useChartSettings();
-  const cadence = useCadence();
+  const { bufferMs, updateMs, cadence, zoomResets } = useChartSettings();
   // The 3D view's tooltip asks for a neuron's state (a replay's neurons have none).
   const queryState = useMemo(
     () => (client && id !== null && !replay ? (neuron: number) => client.queryNeuron(id, neuron) : undefined),

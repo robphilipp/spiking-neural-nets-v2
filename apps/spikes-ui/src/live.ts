@@ -16,6 +16,7 @@ import {
   TimeSeriesDataSource,
 } from "stream-charts";
 import { create } from "zustand";
+import { RunGate } from "./runGate";
 import { chartSettings, useChartSettings } from "./chartSettings";
 import { useSession } from "./store";
 
@@ -59,15 +60,15 @@ export function chartData(names: string[], time: number, points: Map<string, Dat
 
 const sameNeurons = (a: Neuron[], b: Neuron[]) => a.length === b.length && a.every((n, i) => n.index === b[i]!.index && n.name === b[i]!.name);
 
-/** A time-series data source fed by `frames`, started. */
-function source(initialData: TimeSeries[], frames: Observable<Frame>, convert: (frame: Frame) => TimeSeriesChartData): TimeSeriesDataSource {
-  const s = new TimeSeriesDataSource({
-    initialData,
-    generator: () => frames.pipe(map(convert)),
-    dropDataAfter: chartSettings().keepMs,
-  });
-  s.start();
-  return s;
+/** A time-series data source fed by `frames`, running while `gate` lets it (see {@link RunGate}). */
+function source(initialData: TimeSeries[], frames: Observable<Frame>, convert: (frame: Frame) => TimeSeriesChartData, gate: RunGate): TimeSeriesDataSource {
+  return gate.add(
+    new TimeSeriesDataSource({
+      initialData,
+      generator: () => frames.pipe(map(convert)),
+      dropDataAfter: chartSettings().keepMs,
+    }),
+  );
 }
 
 /** Series named `names`, with the data `old` had for them (copied), or what `fill` gives. */
@@ -141,6 +142,7 @@ export class LiveView {
   private readonly spikeTimes: Array<[number, number]> = [];
   private lastRateMs = -1;
   private readonly unfollow: () => void;
+  private readonly gate = new RunGate();
   private disposed = false;
 
   private constructor(
@@ -148,7 +150,7 @@ export class LiveView {
     private readonly session: number,
     private readonly neurons: number,
   ) {
-    this.rate = source([emptySeries<Datum>("rate")], this.whole, (f) => this.rateData(f));
+    this.rate = source([emptySeries<Datum>("rate")], this.whole, (f) => this.rateData(f), this.gate);
     this.raster = new BehaviorSubject(this.rasterSource([], []));
     // Settings apply as they change: retention to the data sources, the update period to the raster's frames.
     this.unfollow = useChartSettings.subscribe((s, before) => {
@@ -183,7 +185,7 @@ export class LiveView {
 
   private rasterSource(series: TimeSeries[], neurons: Neuron[]): TimeSeriesDataSource {
     const names = new Map(neurons.map((n) => [n.index, n.name]));
-    return source(series, this.selected, (f) => rasterData(f, names));
+    return source(series, this.selected, (f) => rasterData(f, names), this.gate);
   }
 
   /** Shows these neurons in the raster, keeping what it showed of the ones it already had. */
@@ -193,7 +195,11 @@ export class LiveView {
     this.selection = neurons;
     // The engine sends the new neurons' spikes from now on...
     if (this.rasterViewer) await this.rasterViewer.update(this.rasterView());
-    else this.rasterViewer = await this.client.attach(this.session, this.rasterView(), (f) => this.selected.next(f));
+    else
+      this.rasterViewer = await this.client.attach(this.session, this.rasterView(), (f) => {
+        this.gate.arrived();
+        this.selected.next(f);
+      });
     if (this.disposed || turn !== this.selecting) return;
     // ...and their past is what the raster had, or (for neurons new to it) the whole-network stream's.
     const old = this.raster.value;
@@ -204,6 +210,7 @@ export class LiveView {
       (_, i) => this.history.since(neurons[i]!.index, from).map((t) => ({ x: t, y: neurons[i]!.index })),
     );
     this.raster.next(this.rasterSource(series, neurons));
+    this.gate.remove(old);
     old.dispose();
   }
 
@@ -219,6 +226,7 @@ export class LiveView {
   }
 
   private onWhole(frame: Frame) {
+    this.gate.arrived();
     this.history.record(frame);
     this.whole.next(frame);
     const now = performance.now();
@@ -245,6 +253,7 @@ export class LiveView {
     if (this.disposed) return;
     this.disposed = true;
     this.unfollow();
+    this.gate.dispose();
     await Promise.allSettled([this.wholeViewer, this.rasterViewer].map((v) => v?.detach()));
     this.raster.value.dispose();
     this.raster.complete();
@@ -296,6 +305,7 @@ export class InspectView {
   private latest = new Map<string, number>();
   private following = 0;
   private readonly unfollow: () => void;
+  private readonly gate = new RunGate();
   private disposed = false;
 
   constructor(
@@ -327,12 +337,12 @@ export class InspectView {
 
   private membraneSource(series: TimeSeries[], neurons: Neuron[]): TimeSeriesDataSource {
     const names = new Map(neurons.map((n) => [n.index, n.name]));
-    return source(series, this.frames, (f) => membraneData(f, names));
+    return source(series, this.frames, (f) => membraneData(f, names), this.gate);
   }
 
   private weightSource(series: TimeSeries[], synapses: WeightSeries[]): TimeSeriesDataSource {
     const byKey = new Map(synapses.map((s) => [`${s.post}:${s.synapse}`, s]));
-    return source(series, this.frames, (f) => this.weightData(f, byKey));
+    return source(series, this.frames, (f) => this.weightData(f, byKey), this.gate);
   }
 
   /** Follows these neurons and synapses, keeping what was shown of the ones already followed. */
@@ -344,12 +354,18 @@ export class InspectView {
     this.neurons = neurons;
     this.synapses = synapses;
     if (this.viewer) await this.viewer.update(this.view());
-    else this.viewer = await this.client.attach(this.session, this.view(), (f) => this.frames.next(f));
+    else
+      this.viewer = await this.client.attach(this.session, this.view(), (f) => {
+        this.gate.arrived();
+        this.frames.next(f);
+      });
     if (this.disposed || turn !== this.following) return;
     this.latest = new Map(synapses.map((s) => [s.name, this.latest.get(s.name) ?? s.weight]));
     const [oldMembrane, oldWeights] = [this.membrane.value, this.weights.value];
     this.membrane.next(this.membraneSource(carried(oldMembrane, neurons.map((n) => n.name)), neurons));
     this.weights.next(this.weightSource(carried(oldWeights, synapses.map((s) => s.name)), synapses));
+    this.gate.remove(oldMembrane);
+    this.gate.remove(oldWeights);
     oldMembrane.dispose();
     oldWeights.dispose();
   }
@@ -373,6 +389,7 @@ export class InspectView {
     if (this.disposed) return;
     this.disposed = true;
     this.unfollow();
+    this.gate.dispose();
     await this.viewer?.detach().catch(() => {});
     for (const s of [this.membrane, this.weights]) {
       s.value.dispose();

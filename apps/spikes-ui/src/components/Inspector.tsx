@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { lastSpikeText } from "../neuronText";
-import { useCadence, useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
+import { useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectInspect, useInspect, type WeightSeries } from "../live";
 import { useSession } from "../store";
 import { useBehavior } from "../useBehavior";
@@ -96,9 +96,7 @@ export function Inspector(props: {
   }, [view, picked, incoming]);
   const membrane = useBehavior(view?.membrane);
   const weightSource = useBehavior(view?.weights);
-  const { bufferMs, updateMs, zoomResets } = useChartSettings();
-  const cadence = useCadence();
-  const membraneCadence = useCadence(true);
+  const { bufferMs, updateMs, cadence, zoomResets } = useChartSettings();
 
   // The first picked neuron's state, twice a second (a replay has none: its neurons were recorded).
   useEffect(() => {
@@ -175,12 +173,12 @@ export function Inspector(props: {
           <div>
             <Heading className="mb-1">Membrane potential (mV)</Heading>
             <Legend names={membraneNames} />
-            {/* A continuous signal: its time axis moves smoothly (cadence) while running, whatever the other charts do. */}
+            {/* A continuous signal: its time axis moves smoothly (cadence), whatever the other charts do. */}
             {membrane && (
-              <Chart key={`${windowMs}:${membraneCadence}:${zoomResets}`} chartId={3} width={width} height={200} dataSource={membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membrane.seriesList().map((s) => s.name))} windowingTime={bufferMs} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
+              <Chart key={`${windowMs}:${zoomResets}`} chartId={3} width={width} height={200} dataSource={membrane} color={colors.color} backgroundColor={colors.backgroundColor} seriesStyles={styles(membrane.seriesList().map((s) => s.name))} windowingTime={bufferMs} dataUpdatePeriod={16} margin={{ left: labelWidth, right: 20, bottom: 48 }}>
                 <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={timeDomain} label="t (ms)" />
                 <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-1, 15]} label="mV" autoScale />
-                <ScatterPlot withCadence={membraneCadence} {...ZOOM} />
+                <ScatterPlot withCadence {...ZOOM} />
               </Chart>
             )}
           </div>

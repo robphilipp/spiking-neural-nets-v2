@@ -6,6 +6,7 @@ import { BehaviorSubject, map, Subject } from "rxjs";
 import { type Datum, emptySeries, TimeSeriesDataSource } from "stream-charts";
 import { chartSettings, useChartSettings } from "./chartSettings";
 import { chartData, releaseOnSessionChange, viewStore } from "./live";
+import { RunGate } from "./runGate";
 
 /** The series of the weight trend chart. */
 export const WEIGHT_SERIES = ["mean", "median", "10th percentile", "90th percentile"] as const;
@@ -43,6 +44,7 @@ export class WeightsView {
   private lastT = 0;
   private dirty = true;
   private disposed = false;
+  private readonly gate = new RunGate();
   private readonly unfollow: () => void;
 
   private constructor(network: Network) {
@@ -50,7 +52,7 @@ export class WeightsView {
     if (network.synapses.length === network.synapseCount) {
       for (const s of network.synapses) this.weights.set(key(s.post, s.synapse), s.weight);
     }
-    this.trend = new TimeSeriesDataSource({
+    this.trend = this.gate.add(new TimeSeriesDataSource({
       initialData: WEIGHT_SERIES.map((n) => emptySeries<Datum>(n)),
       generator: () =>
         this.points.pipe(
@@ -68,7 +70,7 @@ export class WeightsView {
           ),
         ),
       dropDataAfter: chartSettings().keepMs,
-    });
+    }));
     this.unfollow = useChartSettings.subscribe((s, before) => {
       if (s.keepMs !== before.keepMs) this.trend.setDropDataAfter(s.keepMs);
       if (s.updateMs !== before.updateMs) void this.viewer?.update(WeightsView.view()).catch(() => {});
@@ -87,12 +89,13 @@ export class WeightsView {
 
   static async attach(client: ProtocolClient, session: number, network: Network): Promise<WeightsView> {
     const view = new WeightsView(network);
-    view.trend.start();
+    view.gate.arrived();
     view.publish(0, true);
     view.viewer = await client.attach(
       session,
       WeightsView.view(),
       (f) => {
+        view.gate.arrived();
         const w = f.weights;
         if (w) {
           for (let i = 0; i < w.post.length; i++) {
@@ -190,6 +193,7 @@ export class WeightsView {
     if (this.disposed) return;
     this.disposed = true;
     this.unfollow();
+    this.gate.dispose();
     await this.viewer?.detach().catch(() => {});
     this.trend.dispose();
   }
