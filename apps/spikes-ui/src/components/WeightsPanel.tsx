@@ -11,7 +11,7 @@ import {
 } from "stream-charts";
 import { Heading, Panel, Stat } from "@/components/kit";
 import type { ChartColors } from "../theme";
-import { useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
+import { useChartSettings, useChartKey, useTimeDomain, ZOOM } from "../chartSettings";
 import { useSession } from "../store";
 import { useBehavior } from "../useBehavior";
 import {
@@ -180,6 +180,7 @@ export function WeightsPanel(props: {
   const { client, session, network, width, labelWidth, colors, windowMs } =
     props;
   const timeDomain = useTimeDomain(windowMs);
+  const chartKey = useChartKey(windowMs);
   // The view lives in a store (one per session and build), so adding a connection doesn't restart it.
   const build = useSession((s) => s.build);
   useEffect(
@@ -260,7 +261,7 @@ export function WeightsPanel(props: {
         </p>
       )}
       <div className="flex flex-wrap gap-4">
-        <div data-testid="weight-trend">
+        <div data-testid="weight-trend" data-time-domain={timeDomain.join(",")}>
           <div className="mb-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
             {WEIGHT_SERIES.map((name, i) => (
               <span key={name} className="flex items-center gap-1">
@@ -274,7 +275,7 @@ export function WeightsPanel(props: {
           </div>
           {view && (
             <Chart
-              key={`${windowMs}:${cadence}:${zoomResets}`}
+              key={chartKey}
               chartId={5}
               width={trendWidth}
               height={220}

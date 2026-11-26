@@ -73,17 +73,27 @@ export const ZOOM_HELP = "Drag a chart to pan; hold shift and scroll to zoom.";
 
 /**
  * A live chart's time axis when it mounts: the window that ends at the current simulated time. A chart remounts when
- * its zoom is reset or the time window or cadence changes; starting at [0, window] would then show the start of a
- * run that has ended, since no new data comes to scroll it forward.
+ * its zoom is reset, the time window or cadence changes, or the network is built anew (Build, Reset: time starts
+ * over at 0); starting at [0, window] would show the start of a run that has ended, since no new data comes to
+ * scroll it forward. (Charts key on {@link useChartKey}, so they remount whenever this changes.)
  */
 export function useTimeDomain(windowMs: number): [number, number] {
   const cadence = useChartSettings((s) => s.cadence);
   const zoomResets = useChartSettings((s) => s.zoomResets);
+  const build = useSession((s) => s.build);
   return useMemo(() => {
     const now = useSession.getState().simMs;
     return now > windowMs ? [now - windowMs, now] : [0, windowMs];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- recomputed whenever the charts remount
-  }, [windowMs, cadence, zoomResets]);
+  }, [windowMs, cadence, zoomResets, build]);
+}
+
+/** A live chart's React key: it remounts (taking up {@link useTimeDomain}'s axis) when any of these change. */
+export function useChartKey(windowMs: number): string {
+  const cadence = useChartSettings((s) => s.cadence);
+  const zoomResets = useChartSettings((s) => s.zoomResets);
+  const build = useSession((s) => s.build);
+  return `${windowMs}:${cadence}:${zoomResets}:${build}`;
 }
 
 /** The current settings (outside React). */

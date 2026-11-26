@@ -184,8 +184,9 @@ export function simTime(simMs: number) {
   useSession.setState({ simMs });
 }
 
+/** A network was built (or reset to as built): its run starts at time 0. */
 export function built(network: Network) {
-  useSession.setState({ network, state: "ready", build: ++builds });
+  useSession.setState({ network, state: "ready", simMs: 0, build: ++builds });
 }
 
 /** Connections were added or pruned (the run state doesn't change). */
