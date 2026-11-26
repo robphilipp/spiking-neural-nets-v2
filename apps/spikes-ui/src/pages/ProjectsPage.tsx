@@ -33,11 +33,22 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
     }
   };
 
-  const open = async (dir: string) => {
-    const { project: p, description: text } = await readProject(dir);
+  /** A folder without project.toml and with several networks: which to open. */
+  const [choose, setChoose] = useState<{ folder: string; networks: string[] } | null>(null);
+
+  const open = async (dir: string, network?: string) => {
+    setChoose(null);
+    const read = await readProject(dir, network);
+    if (read.kind === "choose") return setChoose({ folder: dir, networks: read.networks });
+    const { project: p, description: text, saved } = read;
     forget(); // a new engine session is created when the network is applied
-    projectOpened({ folder: dir, project: p, description: text });
+    projectOpened({ folder: dir, project: p, description: text, saved });
     setDescription({ name: p.name, description: text });
+    if (!text) {
+      // Nothing to show on the Network page: say so here.
+      setMessage({ ok: true, text: `${dir} has no project.toml or .boo file: a new project there, with an empty network (Save writes them).` });
+      return;
+    }
     onOpened();
   };
 
@@ -146,6 +157,24 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
               <Download data-icon="inline-start" />
               Download project.toml
             </Button>
+          </div>
+        )}
+        {choose && (
+          <div className="flex flex-col gap-2 rounded-md border p-3" data-testid="choose-network">
+            <p className="text-sm">
+              {choose.folder} has no project.toml, and {choose.networks.length} networks. Which is the project's? (Save then writes its
+              project.toml.)
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {choose.networks.map((n) => (
+                <Button key={n} size="sm" variant="outline" onClick={attempt(() => open(choose.folder, n))}>
+                  {n}
+                </Button>
+              ))}
+              <Button size="sm" variant="ghost" onClick={() => setChoose(null)}>
+                Cancel
+              </Button>
+            </div>
           </div>
         )}
         {message && (

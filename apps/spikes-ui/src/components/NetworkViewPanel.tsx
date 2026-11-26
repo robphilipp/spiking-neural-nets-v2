@@ -1,13 +1,12 @@
-import { type NetworkPreview, SpikesError } from "@spikes/client";
+import { SpikesError } from "@spikes/client";
 import { ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { NEVER } from "rxjs";
-import { create } from "zustand";
 import { Toggle } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { useConnection } from "../connection";
 import { useWidth } from "../hooks/useWidth";
-import { parseFailed, updateSettings, useSession, useSettings } from "../store";
+import { parseFailed, updateSettings, usePreview, useSession, useSettings } from "../store";
 import { Network3D } from "./Network3D";
 
 const OPEN_KEY = "spikes.networkView.open";
@@ -32,9 +31,6 @@ function remember(key: string, value: unknown) {
     // Not remembered: fine.
   }
 }
-
-/** The last preview and the text it was made from (kept while the page is away). */
-const usePreview = create<{ preview: NetworkPreview | null; text: string | null }>(() => ({ preview: null, text: null }));
 
 const count = (n: number, inhibitory: number) =>
   n === 0 ? "none" : inhibitory === 0 ? `${n} excitatory` : inhibitory === n ? `${n} inhibitory` : `${n} (${inhibitory} inhibitory, ${n - inhibitory} excitatory)`;

@@ -1,0 +1,8 @@
+name = "ring-even-spaced"
+network = "network.boo"
+
+[run]
+seed = 1
+shards = 2
+speed = 1
+

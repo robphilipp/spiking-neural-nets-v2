@@ -1,0 +1,8 @@
+name = "wta learning"
+network = "wta-learning.boo"
+
+[run]
+seed = 7
+shards = 4
+speed = 2
+duration_s = 30

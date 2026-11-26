@@ -2,7 +2,7 @@
 // and the session this window works with. Components read them with selectors (`useSession((s) => s.id)`); anything
 // can change them through the actions exported here. (The live charts have stores of their own: see `charts/`.)
 
-import type { Network, SourceError, State as SessionState } from "@spikes/client";
+import type { Network, NetworkPreview, SourceError, State as SessionState } from "@spikes/client";
 import { create } from "zustand";
 import { DEFAULT_RUN, type Background, newProject, type Project, type RunSettings } from "./project";
 import type { ThemeChoice } from "./theme";
@@ -80,12 +80,13 @@ rememberIn(useProject, RECENT_KEY, (s) => s.recent);
 
 const withRecent = (recent: string[], folder: string) => [folder, ...recent.filter((f) => f !== folder)].slice(0, 10);
 
-export function projectOpened({ folder, project, description }: { folder: string; project: Project; description: string }) {
+/** `saved`: whether the folder has project.toml (without it, the project shows as unsaved until it's saved). */
+export function projectOpened({ folder, project, description, saved }: { folder: string; project: Project; description: string; saved: boolean }) {
   useProject.setState((s) => ({
     folder,
     project,
     savedDescription: description,
-    savedProject: JSON.stringify(project),
+    savedProject: saved ? JSON.stringify(project) : null,
     recent: withRecent(s.recent, folder),
   }));
 }
@@ -197,8 +198,17 @@ export function opened(s: {
   replayEndMs?: number | null;
 }) {
   useSession.setState({ ...initialSession, ...s, replayEndMs: s.replayEndMs ?? null, applied: s.description, build: ++builds }, true);
+  usePreview.setState(noPreview);
 }
 
 export function forget() {
   useSession.setState(initialSession, true);
+  usePreview.setState(noPreview);
 }
+
+// ----- the Network page's 3D preview -----
+
+/** The Network page's last preview and the text it was made from (kept while the page is away; dropped when another
+ *  network takes the window: a project opened, a new or other session). */
+const noPreview = { preview: null, text: null };
+export const usePreview = create<{ preview: NetworkPreview | null; text: string | null }>(() => noPreview);

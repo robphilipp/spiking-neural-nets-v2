@@ -125,6 +125,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        // (after fs: it restores the folders picked in earlier runs into fs's scope)
+        .plugin(tauri_plugin_persisted_scope::init())
         .setup(|app| {
             let recordings = app
                 .path()

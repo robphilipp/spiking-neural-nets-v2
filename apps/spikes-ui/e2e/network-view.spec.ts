@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { join } from "node:path";
 
 test("the Network page's 3D view previews the text as written, without applying it", async ({ page }) => {
   await page.goto("/");
@@ -62,4 +63,31 @@ test("the Network page's 3D view previews the text as written, without applying 
   // Collapsing hides the view.
   await toggle.click();
   await expect(panel.getByTestId("network-3d")).toHaveCount(0);
+});
+
+test("opening another network clears the Network page's preview and the Run page", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click();
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "pinned-nodes", exact: true }).click();
+  await page.getByTestId("apply").click();
+  await expect(page.getByText("Applied.")).toBeVisible();
+  await page.getByTestId("network-view-update").click();
+  await expect(page.getByTestId("network-view-status")).toHaveText("220 neurons · 3,000 connections");
+  await page.getByTestId("nav-run").click();
+  await page.getByTestId("build").click();
+  await expect(page.getByText("220 neurons")).toBeVisible();
+  await expect(page.getByTestId("network-3d").locator("canvas")).toBeVisible();
+
+  // Open a .boo file (as a project): its text in the editor, no preview of the old network, nothing built.
+  await page.getByTestId("nav-projects").click();
+  await page.getByTestId("file-input").setInputFiles(join(process.cwd(), "..", "..", "test-data", "networks", "ring.boo"));
+  await expect(page.locator(".monaco-editor")).toContainText("hidden-101");
+  await expect(page.getByTestId("network-view-status")).toHaveText("Update to see the network as written");
+  await expect(page.getByTestId("network-view-panel").getByTestId("network-3d")).toHaveCount(0);
+  await expect(page.getByTestId("session-picker")).toContainText("not on the engine yet");
+  await page.getByTestId("nav-run").click();
+  await expect(page.getByTestId("network-3d")).toHaveCount(0);
+  await expect(page.getByText("220 neurons")).toHaveCount(0);
 });

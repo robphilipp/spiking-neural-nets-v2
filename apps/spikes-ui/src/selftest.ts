@@ -5,6 +5,7 @@
 import { type Frame, spikeCount } from "@spikes/client";
 import { invoke } from "@tauri-apps/api/core";
 import { appDataDir, join } from "@tauri-apps/api/path";
+import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
 import { examples } from "./examples";
 import { readProject, writeProject } from "./files";
 import { newProject } from "./project";
@@ -27,9 +28,27 @@ export async function selftest(): Promise<void> {
       "(neurons=[(name=a, position=[0, 0, 0])])",
     );
     const back = await readProject(folder);
+    // A folder of networks without project.toml: one is the project's network; with several, which is asked.
+    const loose = await join(await appDataDir(), "selftest-networks");
+    await mkdir(loose, { recursive: true });
+    await writeTextFile(await join(loose, "one.boo"), "(neurons=[(name=one, position=[0, 0, 0])])");
+    const single = await readProject(loose);
+    await writeTextFile(await join(loose, "two.boo"), "(neurons=[(name=two, position=[0, 0, 0])])");
+    const several = await readProject(loose);
+    const chosen = await readProject(loose, "two.boo");
     const projectOk =
+      back.kind === "project" &&
+      back.saved &&
       JSON.stringify(back.project) === JSON.stringify(project) &&
-      back.description.includes("name=a");
+      back.description.includes("name=a") &&
+      single.kind === "project" &&
+      !single.saved &&
+      single.project.network === "one.boo" &&
+      single.description.includes("name=one") &&
+      several.kind === "choose" &&
+      several.networks.join() === "one.boo,two.boo" &&
+      chosen.kind === "project" &&
+      chosen.description.includes("name=two");
 
     const client = await TauriClient.connect();
     const ring = examples.find((e) => e.name === "ring")!.text;

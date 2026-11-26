@@ -1,0 +1,50 @@
+// basic ring structure
+(
+neuron_types=[
+    (name=hidden, threshold=5 mV, refractory_period=20 ms, resting_potential=0 mV, decay_time=2.5 s, spike_potential=1 mV, conduction_speed=1 m/s),
+    (name=hidden_2, threshold=5 mV, refractory_period=20 ms, resting_potential=0 mV, decay_time=2400, spike_potential=1 mV, conduction_speed=1 m/s),
+],
+synapse_types=[
+    (name=stdp, decay=(time=100 s), limits=(min=0, max=5), release=(), learning=stdp, stickiness=sig),
+],
+neurons=[
+    (name=hidden-101, type=hidden, position=(r=40 mm, phi=0 rad, z=0 mm)),
+    (name=hidden-102, type=hidden, position=(r=40 mm, phi=0 rad, z=10 mm)),
+    (name=hidden-103, type=hidden, position=(r=40 mm, phi=0 rad, z=20 mm)),
+    (name=hidden-104, type=hidden, position=(r=40 mm, phi=0 rad, z=30 mm)),
+    (name=hidden-105, type=hidden, position=(r=40 mm, phi=0 rad, z=40 mm)),
+    (name=hidden-201, type=hidden, position=(r=40 mm, phi=1.257 rad, z=0 mm)),
+    (name=hidden-202, type=hidden, position=(r=40 mm, phi=1.257 rad, z=10 mm)),
+    (name=hidden-203, type=hidden, position=(r=40 mm, phi=1.257 rad, z=20 mm)),
+    (name=hidden-204, type=hidden, position=(r=40 mm, phi=1.257 rad, z=30 mm)),
+    (name=hidden-205, type=hidden, position=(r=40 mm, phi=1.257 rad, z=40 mm)),
+    (name=hidden-301, type=hidden, position=(r=40 mm, phi=2.513 rad, z=0 mm)),
+    (name=hidden-302, type=hidden, position=(r=40 mm, phi=2.513 rad, z=10 mm)),
+    (name=hidden-303, type=hidden, position=(r=40 mm, phi=2.513 rad, z=20 mm)),
+    (name=hidden-304, type=hidden, position=(r=40 mm, phi=2.513 rad, z=30 mm)),
+    (name=hidden-305, type=hidden, position=(r=40 mm, phi=2.513 rad, z=40 mm)),
+    (name=hidden-401, type=hidden_2, position=(r=40 mm, phi=3.77 rad, z=0 mm)),
+    (name=hidden-402, type=hidden_2, position=(r=40 mm, phi=3.77 rad, z=10 mm)),
+    (name=hidden-403, type=hidden_2, position=(r=40 mm, phi=3.77 rad, z=20 mm)),
+    (name=hidden-404, type=hidden_2, position=(r=40 mm, phi=3.77 rad, z=30 mm)),
+    (name=hidden-405, type=hidden_2, position=(r=40 mm, phi=3.77 rad, z=40 mm)),
+    (name=hidden-501, type=hidden, position=(r=40 mm, phi=5.027 rad, z=0 mm)),
+    (name=hidden-502, type=hidden, position=(r=40 mm, phi=5.027 rad, z=10 mm)),
+    (name=hidden-503, type=hidden, position=(r=40 mm, phi=5.027 rad, z=20 mm)),
+    (name=hidden-504, type=hidden, position=(r=40 mm, phi=5.027 rad, z=30 mm)),
+    (name=hidden-505, type=hidden, position=(r=40 mm, phi=5.027 rad, z=40 mm)),
+],
+connections=[
+    (from=hidden-{101:105:1}, to=hidden-{201:205:1}, type=stdp, weight=1.5),
+    (from=hidden-{201:205:1}, to=hidden-{301:305:1}, type=stdp, weight=1.5),
+    (from=hidden-{301:305:1}, to=hidden-{401:405:1}, type=stdp, weight=1.5),
+    (from=hidden-{401:405:1}, to=hidden-{501:505:1}, type=stdp, weight=1.5),
+    (from=hidden-{501:505:1}, to=hidden-{101:105:1}, type=stdp, weight=1.5),
+],
+learning_rules=[
+    (name=stdp, rule=stdp_hard, depression=0.035, depression_time=3 ms, potentiation=0.035, potentiation_time=3 ms),
+],
+stickiness=[
+    (name=sig, time=10 s),
+],
+)
