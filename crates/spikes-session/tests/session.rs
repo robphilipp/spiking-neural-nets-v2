@@ -298,3 +298,64 @@ fn a_query_racing_the_end_of_a_run_is_still_answered_promptly() {
         session.stop().unwrap();
     }
 }
+
+#[test]
+fn reset_puts_the_network_back_as_built_and_a_run_from_there_repeats_exactly() {
+    let text = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test-data/examples/wta-learning.boo"),
+    )
+    .unwrap();
+    let engine = Engine::new();
+    let session = engine.create("wta", text).unwrap();
+    assert!(session.reset().is_err(), "nothing built yet");
+    let network = session
+        .build(BuildSettings {
+            seed: 7,
+            shards: 2,
+            ..BuildSettings::default()
+        })
+        .unwrap();
+    let n = network.neurons.len() as u32;
+    let inputs: Vec<u32> = (0..n)
+        .filter(|&i| network.neurons.get(i).unwrap().name.starts_with("in-"))
+        .collect();
+    session
+        .add_input(spikes_session::InputSpec::Poisson {
+            targets: inputs.clone(),
+            rate_hz: 100.0,
+            mv: 10.0,
+            duration: None,
+        })
+        .unwrap();
+    let state = |s: &spikes_session::Session| -> Vec<(u64, Vec<f32>)> {
+        (0..n)
+            .map(|i| {
+                let q = s.query_neuron(i).unwrap();
+                (q.spikes, q.synapses.iter().map(|x| x.1).collect())
+            })
+            .collect()
+    };
+    let built = state(&session);
+    let run = |s: &spikes_session::Session| {
+        s.start(RunSettings {
+            speed: Speed::AsFastAsPossible,
+            duration: Some(ms(2000)),
+            record: None,
+        })
+        .unwrap();
+        assert!(s.wait_for_run(Duration::from_secs(60)));
+    };
+    run(&session);
+    let first = state(&session);
+    assert_ne!(first, built, "it ran, and learned");
+    // Things done after the first run don't survive a reset.
+    session.connect(inputs[0], inputs[1], 1.0, None, None).unwrap();
+    session.stimulate(&inputs, 20.0).unwrap();
+
+    session.reset().unwrap();
+    assert_eq!(session.state(), State::Ready);
+    assert_eq!(session.sim_time(), SimTime::ZERO);
+    assert_eq!(state(&session), built, "the built weights and state");
+    run(&session);
+    assert_eq!(state(&session), first, "the same run again, background input included");
+}

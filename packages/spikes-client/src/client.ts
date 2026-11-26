@@ -201,6 +201,12 @@ export abstract class ProtocolClient {
     return (await this.expect({ type: "getDeployment", session }, "deployment")).deployment;
   }
 
+  /** Puts the built network back as it was built: time 0, its initial weights and state, and the inputs added
+   *  before it first ran. Not while running. */
+  async reset(session: number): Promise<void> {
+    await this.request({ type: "reset", session });
+  }
+
   /** How a session built on node agents is doing. */
   async getCluster(session: number): Promise<Cluster> {
     return (await this.expect({ type: "getCluster", session }, "cluster"))

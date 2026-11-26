@@ -1,5 +1,5 @@
 import { Lod, type Neuron, type SensorInfo } from "@spikes/client";
-import { Hammer, Pause, Play, Save, SkipForward, Square, X, Zap } from "lucide-react";
+import { Hammer, Pause, Play, RotateCcw, Save, SkipForward, Square, X, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AxisLocation,
@@ -28,7 +28,7 @@ import { ChartControls } from "../components/ChartControls";
 import { useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectLive, useLive } from "../live";
 import { useBehavior } from "../useBehavior";
-import { backgroundChanged, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
+import { backgroundChanged, built, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
 import { useChartColors } from "../theme";
 
 /** Speed on a log scale: slider value v means 2^v simulated seconds per wall second. */
@@ -278,6 +278,24 @@ export function RunPage() {
           >
             <Square data-icon="inline-start" />
             Stop
+          </Button>
+          <Button
+            variant="outline"
+            disabled={!network || running || building}
+            data-testid="reset"
+            title="Put the network back as it was built: time 0, its initial weights and state, and its background input (connections made since are gone). Start then runs it from the beginning again."
+            onClick={act(async () => {
+              setBuilding(true);
+              try {
+                await client!.reset(id);
+                built(await client!.getNetwork(id));
+              } finally {
+                setBuilding(false);
+              }
+            })}
+          >
+            <RotateCcw data-icon="inline-start" />
+            Reset
           </Button>
           {!replay && (
             <Button

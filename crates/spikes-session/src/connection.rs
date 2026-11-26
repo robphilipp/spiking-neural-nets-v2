@@ -222,6 +222,10 @@ impl Connection {
                 .map_err(api_error)?;
                 Ok(Response::Done)
             }
+            Request::Reset { session } => {
+                self.session(session)?.reset().map_err(api_error)?;
+                Ok(Response::Done)
+            }
             Request::GetDescription { session } => Ok(Response::Description {
                 text: self.session(session)?.description_text(),
             }),

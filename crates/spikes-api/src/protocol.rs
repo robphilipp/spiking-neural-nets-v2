@@ -132,6 +132,12 @@ pub enum Request {
         #[serde(default)]
         settings: BuildSettings,
     },
+    /// Puts the built network back as it was built: time 0, its initial weights and state, and the inputs added
+    /// before it first ran. Not while running.
+    Reset {
+        /// The session.
+        session: u32,
+    },
     /// The session's description text.
     GetDescription {
         /// The session.

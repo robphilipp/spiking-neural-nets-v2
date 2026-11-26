@@ -503,6 +503,32 @@ impl Session {
         Ok(network)
     }
 
+    /// Puts the network back as it was built: time 0, its initial weights and state. It's built again with the
+    /// last build's settings (and nodes), so its random draws are the same, and the inputs added before it first ran
+    /// (such as background input) are added again; connections made or pruned since, and later inputs, are gone. A
+    /// replay goes back to its start. Allowed unless running.
+    pub fn reset(&self) -> Result<Arc<NetworkInfo>, SessionError> {
+        let (settings, inputs) = {
+            let inner = self.inner();
+            expect_not_running(&inner)?;
+            if matches!(inner.phase, Stage::Loaded) && inner.network.neurons.is_empty() {
+                return Err(SessionError::Invalid("build the network first".into()));
+            }
+            let at_start: Vec<InputSpec> = inner
+                .inputs
+                .iter()
+                .filter(|(_, at)| *at == SimTime::ZERO)
+                .map(|(input, _)| input.clone())
+                .collect();
+            (inner.settings, at_start)
+        };
+        let network = self.build(settings)?;
+        for input in inputs {
+            self.add_input_at(input, Some(SimTime::ZERO))?;
+        }
+        Ok(network)
+    }
+
     /// Builds the runtime and network (as one node of a cluster with `node`).
     fn build_network(
         &self,
