@@ -166,6 +166,7 @@ export function setDescription({ name, description }: { name?: string; descripti
  *  it replaces the session's network.) Edits go through `setDescription`, and count as modifying what's applied. */
 export function networkLoaded({ name, description }: { name: string; description: string }) {
   useSession.setState({ description, name, applied: null, errors: [] });
+  usePreview.setState(noPreview); // the 3D preview showed the network before
 }
 
 export function applied({ id, description }: { id: number; description: string }) {

@@ -65,6 +65,30 @@ test("the Network page's 3D view previews the text as written, without applying 
   await expect(panel.getByTestId("network-3d")).toHaveCount(0);
 });
 
+test("choosing another example clears the 3D view", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click();
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "pinned-nodes", exact: true }).click();
+  await page.getByTestId("network-view-update").click();
+  const panel = page.getByTestId("network-view-panel");
+  await expect(panel.getByTestId("network-3d").locator("canvas")).toBeVisible();
+
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "ring", exact: true }).click();
+  await expect(panel.getByTestId("network-3d")).toHaveCount(0);
+  await expect(page.getByTestId("network-view-status")).toHaveText("Update to see the network as written");
+  // Editing the same network keeps it (marked as out of date).
+  await page.getByTestId("network-view-update").click();
+  await expect(panel.getByTestId("network-3d").locator("canvas")).toBeVisible();
+  await page.locator(".monaco-editor").click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.insertText("\n// a comment");
+  await expect(page.getByTestId("network-view-status")).toContainText("the text has changed since");
+  await expect(panel.getByTestId("network-3d").locator("canvas")).toBeVisible();
+});
+
 test("opening another network clears the Network page's preview and the Run page", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
