@@ -3,6 +3,7 @@ import { SpikesError } from "@spikes/client";
 import { Check } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Notice } from "@/components/kit";
+import { NetworkViewPanel } from "@/components/NetworkViewPanel";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -53,7 +54,7 @@ export function NetworkPage() {
         await client.updateDescription(id, description);
         applied({ id, description });
       }
-      setMessage("Applied. Build it on the Run page.");
+      setMessage("Applied. Build it here or on the Run page.");
     } catch (e) {
       if (e instanceof SpikesError && e.error.code === "parse") {
         parseFailed(e.error.spans ?? []);
@@ -108,7 +109,7 @@ export function NetworkPage() {
         </Notice>
       )}
       {running && <Notice>Stop the run to change the network.</Notice>}
-      <div className="min-h-[300px] flex-1 overflow-hidden rounded-lg border">
+      <div className="min-h-[200px] flex-1 overflow-hidden rounded-lg border">
         <Editor
           language={LANGUAGE_ID}
           theme={dark ? "vs-dark" : "vs"}
@@ -120,6 +121,7 @@ export function NetworkPage() {
           options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: "on", scrollBeyondLastLine: false }}
         />
       </div>
+      <NetworkViewPanel />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { Lod, type Neuron, type SensorInfo } from "@spikes/client";
 import { Hammer, Pause, Play, Save, SkipForward, Square, X, Zap } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AxisLocation,
   Chart,
@@ -20,27 +20,16 @@ import { Inspector } from "../components/Inspector";
 import { Modulators } from "../components/Modulators";
 import { Network3D } from "../components/Network3D";
 import { WeightsPanel } from "../components/WeightsPanel";
+import { buildNetwork } from "../buildNetwork";
 import { useConnection } from "../connection";
+import { useWidth } from "../hooks/useWidth";
 import { stopInput, useActiveInput } from "../inputStreams";
 import { ChartControls } from "../components/ChartControls";
 import { useChartSettings, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectLive, useLive } from "../live";
 import { useBehavior } from "../useBehavior";
-import { backgroundChanged, built, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
+import { backgroundChanged, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
 import { useChartColors } from "../theme";
-
-/** The width of an element, following resizes. A callback ref, so it starts measuring whenever the element appears. */
-function useWidth(): [(element: HTMLElement | null) => void, number] {
-  const [width, setWidth] = useState(600);
-  const observer = useRef<ResizeObserver | null>(null);
-  const ref = useCallback((element: HTMLElement | null) => {
-    observer.current?.disconnect();
-    if (!element) return;
-    observer.current = new ResizeObserver(([entry]) => entry && setWidth(Math.max(200, Math.floor(entry.contentRect.width))));
-    observer.current.observe(element);
-  }, []);
-  return [ref, width];
-}
 
 /** Speed on a log scale: slider value v means 2^v simulated seconds per wall second. */
 const speedOf = (v: number) => 2 ** v;
@@ -213,15 +202,8 @@ export function RunPage() {
               setBuilding(true);
               try {
                 const nodes = replay ? [] : nodesSetting.split(",").map((n) => n.trim()).filter(Boolean);
-                await client!.build(id, { shards, seed, nodes });
+                await buildNetwork(client!, id, { shards, seed, nodes, background: replay ? null : background });
                 setBuiltNodes(nodes);
-                const net = await client!.getNetwork(id);
-                if (background && !replay) {
-                  const targets = net.neurons.filter((n) => n.name.startsWith(background.prefix)).map((n) => n.index);
-                  if (!targets.length) throw new Error(`background input: no neuron names start with '${background.prefix}'`);
-                  await client!.addInput(id, { type: "poisson", targets, rateHz: background.rateHz * targets.length, mv: background.mv, durationMs: null });
-                }
-                built(net);
                 setBuiltBackground(JSON.stringify(background));
               } finally {
                 setBuilding(false);

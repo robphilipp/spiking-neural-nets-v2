@@ -197,6 +197,8 @@ interface Props {
   queryState?: (neuron: number) => Promise<NeuronState>;
   /** Show a tooltip (and a halo) for the neuron under the pointer (default on). */
   tooltips?: boolean;
+  /** What clicking and shift-dragging do, for the help line (default: the Run page's inspect and raster). */
+  pickHint?: string;
 }
 
 /** How often the hovered neuron's state is refreshed, ms. */
@@ -204,7 +206,7 @@ const HOVER_REFRESH_MS = 250;
 
 const fmt = (v: number, digits = 1) => (Number.isFinite(v) ? v.toFixed(digits) : "—");
 
-export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState, tooltips = true }: Props) {
+export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState, tooltips = true, pickHint }: Props) {
   const mode = useThemeMode();
   const mount = useRef<HTMLDivElement>(null);
   const scene = useRef<{
@@ -679,8 +681,8 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        {tooltips ? "Hover a neuron for its state, drag" : "Drag"} to orbit, scroll to zoom, click a neuron to inspect it, shift-drag to select a region
-        for the raster.
+        {tooltips ? "Hover a neuron for its state, drag" : "Drag"} to orbit, scroll to zoom,{" "}
+        {pickHint ?? "click a neuron to inspect it, shift-drag to select a region for the raster."}
         {sensors.length > 0 && " Green diamonds are sensors, with lines to the neurons they drive; they light up while their data flows."}
       </p>
     </div>
