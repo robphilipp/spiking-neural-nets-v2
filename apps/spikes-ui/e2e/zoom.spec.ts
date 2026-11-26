@@ -48,7 +48,7 @@ test("every plot pans and zooms, and Reset zoom puts them back", async ({
     .getByRole("option", { name: "line-sensor-layers-wta", exact: true })
     .click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page
     .getByLabel("Neurons starting with", { exact: true })

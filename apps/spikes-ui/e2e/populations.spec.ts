@@ -7,7 +7,7 @@ test("a network of populations and connection rules builds and runs", async ({ p
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "populations", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page.getByLabel("Neurons starting with", { exact: true }).fill("exc-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");

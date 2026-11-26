@@ -23,6 +23,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SessionPicker } from "./components/SessionPicker";
 import { useConnection, useEngineError } from "./connection";
@@ -109,7 +110,7 @@ export function App() {
             {page === "projects" && (
               <ProjectsPage onOpened={() => setPage("network")} />
             )}
-            {page === "network" && <NetworkPage />}
+            {page === "network" && <NetworkPage onRun={() => setPage("run")} />}
             {page === "run" && <RunPage />}
             {page === "deployment" && <DeploymentPage />}
             {page === "inputs" && <InputsPage />}
@@ -120,6 +121,7 @@ export function App() {
           </div>
         </SidebarInset>
       </SidebarProvider>
+      <Toaster />
     </TooltipProvider>
   );
 }

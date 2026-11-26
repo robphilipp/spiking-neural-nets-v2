@@ -19,7 +19,7 @@ test("changing the raster's neurons keeps what it showed; chart settings apply a
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
 
   // A run in which each of the ring's 25 neurons spikes once.
   await page.getByTestId("nav-run").click();
@@ -89,7 +89,7 @@ test("inspecting another neuron keeps the traces already shown", async ({ page }
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page.getByTestId("build").click();
   await expect(page.getByText("25 neurons")).toBeVisible();

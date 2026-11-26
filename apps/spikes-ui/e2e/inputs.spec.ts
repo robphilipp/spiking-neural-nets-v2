@@ -8,7 +8,7 @@ async function openLineSensor(page: Page) {
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "line-sensor-layers-wta", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page.getByTestId("build").click();
   await expect(page.getByText("69 neurons")).toBeVisible();

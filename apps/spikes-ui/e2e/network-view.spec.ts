@@ -37,7 +37,7 @@ test("the Network page's 3D view previews the text as written, without applying 
   await panel.screenshot({ path: "test-results/network-view-tooltip.png" });
 
   // Nothing was applied or built.
-  await expect(page.getByText("(changed)")).toHaveCount(0);
+  await expect(page.getByTestId("network-status")).toHaveText("Not applied");
   await page.getByTestId("nav-run").click();
   await expect(page.getByText("Open or write a network on the Network page and apply it first.")).toBeVisible();
 
@@ -72,7 +72,7 @@ test("opening another network clears the Network page's preview and the Run page
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "pinned-nodes", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("network-view-update").click();
   await expect(page.getByTestId("network-view-status")).toHaveText("220 neurons · 3,000 connections");
   await page.getByTestId("nav-run").click();

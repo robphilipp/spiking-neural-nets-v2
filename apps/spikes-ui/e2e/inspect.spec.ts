@@ -19,7 +19,7 @@ test("reward learning, seen end to end: dopamine turns marked synapses into lear
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "reward", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
 
   await page.getByTestId("nav-run").click();
   await page.getByLabel("Neurons starting with", { exact: true }).fill("in-");
@@ -67,7 +67,7 @@ test("background input changed after building asks for a rebuild; the dopamine b
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "reward", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page.getByTestId("build").click();
   await expect(page.getByText("3 neurons")).toBeVisible();

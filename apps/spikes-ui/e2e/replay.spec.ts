@@ -8,7 +8,7 @@ test("record a run, replay it in the same views, seek, export and download", asy
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "reward", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
 
   // A recorded live run, with dopamine released partway.
   await page.getByTestId("nav-run").click();

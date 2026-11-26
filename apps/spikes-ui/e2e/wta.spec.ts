@@ -10,7 +10,7 @@ test("the winner-takes-all example learns from the Inputs page's signal", async 
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "wta-learning", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page.getByTestId("build").click();
   await expect(page.getByText("4 neurons")).toBeVisible();

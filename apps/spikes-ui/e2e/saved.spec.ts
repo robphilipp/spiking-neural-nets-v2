@@ -8,7 +8,7 @@ test("save a run, then continue it from the Recordings page", async ({ page }) =
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "reward", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
 
   // Run with background input for a while, stop, save.
   await page.getByTestId("nav-run").click();

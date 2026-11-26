@@ -162,6 +162,12 @@ export function setDescription({ name, description }: { name?: string; descripti
   useSession.setState((s) => ({ description, name: name || s.name }));
 }
 
+/** A different network in the editor (an example chosen): it hasn't been applied, whatever the engine has. (Applying
+ *  it replaces the session's network.) Edits go through `setDescription`, and count as modifying what's applied. */
+export function networkLoaded({ name, description }: { name: string; description: string }) {
+  useSession.setState({ description, name, applied: null, errors: [] });
+}
+
 export function applied({ id, description }: { id: number; description: string }) {
   useSession.setState({ id, applied: description, errors: [], state: "loaded", network: null });
 }

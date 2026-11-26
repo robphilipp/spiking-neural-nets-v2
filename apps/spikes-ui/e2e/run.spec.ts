@@ -16,7 +16,7 @@ test("open an example, build, stimulate and run it, and watch it live", async ({
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await expect(page.locator(".monaco-editor")).toContainText("hidden-101");
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
 
   // Run page: build, stimulate group 1, run at real time.
   await page.getByTestId("nav-run").click();
@@ -43,7 +43,7 @@ test("parse errors are shown in the editor", async ({ page }) => {
   await page.locator(".monaco-editor").click();
   await page.keyboard.type("(neurons=[(name=a, threshold=1 parsec, position=[0, 0, 0])])");
   await page.getByTestId("apply").click();
-  await expect(page.getByText(/error\(s\) in the description/)).toBeVisible();
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: /errors? in the description/ })).toBeVisible();
   await expect(page.locator(".monaco-editor .squiggly-error").first()).toBeAttached();
 });
 
@@ -113,7 +113,7 @@ test("a quiet network explains itself; background input on its inputs brings it 
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "line-sensor-layers-wta", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page.getByTestId("build").click();
   await expect(page.getByText("69 neurons")).toBeVisible();
@@ -143,7 +143,7 @@ test("number fields can be emptied and retyped", async ({ page }) => {
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
 
   const rate = page.getByLabel("Hz per neuron", { exact: true });

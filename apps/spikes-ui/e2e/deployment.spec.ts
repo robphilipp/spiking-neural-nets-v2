@@ -12,7 +12,7 @@ async function open(page: Page, example: string, nodes: string) {
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: example, exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
 }
 
 test("the Deployment page shows the hosts, how populations spread over shards, and colours the view", async ({ page }) => {

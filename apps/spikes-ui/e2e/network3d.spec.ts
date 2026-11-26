@@ -7,7 +7,7 @@ test("the 3D view draws the network, flashes spikes, and selects a region for th
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page.getByLabel("Neurons starting with", { exact: true }).fill("hidden-1");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
@@ -49,7 +49,7 @@ test("hovering a neuron highlights it and shows its name, position and state", a
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();
-  await expect(page.getByText("Applied.")).toBeVisible();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page.getByTestId("build").click();
   await expect(page.getByText("25 neurons")).toBeVisible();
