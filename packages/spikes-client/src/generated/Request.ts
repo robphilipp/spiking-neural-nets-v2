@@ -43,7 +43,11 @@ session: number, } | { "type": "getCluster",
 /**
  * The session.
  */
-session: number, } | { "type": "getDeployment", 
+session: number, } | { "type": "previewNetwork", 
+/**
+ * The `.boo` text.
+ */
+text: string, } | { "type": "getDeployment", 
 /**
  * The session.
  */

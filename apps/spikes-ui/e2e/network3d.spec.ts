@@ -87,3 +87,35 @@ test("hovering a neuron highlights it and shows its name, position and state", a
   await page.mouse.move(b.x + at.x, b.y + at.y);
   await expect(tooltip).toBeVisible();
 });
+
+test("coming back to the Run page, the 3D view is drawn at its full width from the first frame", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click();
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "ring", exact: true }).click();
+  await page.getByTestId("apply").click();
+  await page.getByTestId("nav-run").click();
+  await page.getByTestId("build").click();
+  await expect(page.getByText("25 neurons")).toBeVisible();
+  await expect(page.getByTestId("network-3d").locator("canvas")).toBeVisible();
+
+  for (let i = 0; i < 3; i++) {
+    await page.getByTestId("nav-network").click();
+    // The canvas's width in the first frame the Run page paints.
+    const widths = await page.evaluate(
+      () =>
+        new Promise<[number, number]>((resolve) => {
+          (document.querySelector('[data-testid="nav-run"]') as HTMLElement).click();
+          const look = () => {
+            const view = document.querySelector('[data-testid="network-3d"]');
+            const canvas = view?.querySelector("canvas");
+            if (!view || !canvas) return requestAnimationFrame(look);
+            resolve([canvas.getBoundingClientRect().width, document.querySelector('[data-testid="raster"]')!.getBoundingClientRect().width]);
+          };
+          requestAnimationFrame(look);
+        }),
+    );
+    expect(Math.abs(widths[0] - widths[1])).toBeLessThan(2);
+  }
+});

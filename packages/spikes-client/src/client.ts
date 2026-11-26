@@ -10,6 +10,7 @@ import type { Cluster } from "./generated/Cluster";
 import type { Deployment } from "./generated/Deployment";
 import type { Input } from "./generated/Input";
 import type { Network } from "./generated/Network";
+import type { NetworkPreview } from "./generated/NetworkPreview";
 import type { NeuronState } from "./generated/NeuronState";
 import type { Notice } from "./generated/Notice";
 import type { Recording } from "./generated/Recording";
@@ -186,6 +187,12 @@ export abstract class ProtocolClient {
     return (
       await this.expect({ type: "getDescription", session }, "description")
     ).text;
+  }
+
+  /** A description's network, built just to look at: no session needed, nothing runs. Parse errors fail with
+   *  code `parse`, as for `createSession`. */
+  async previewNetwork(text: string): Promise<NetworkPreview> {
+    return (await this.expect({ type: "previewNetwork", text }, "preview")).preview;
   }
 
   /** Where a session's built network runs: its nodes and shards, each neuron's node and shard, and its populations

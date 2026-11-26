@@ -6,7 +6,7 @@
 import { lastSpikeText } from "../neuronText";
 import { cssColor, useThemeMode } from "../theme";
 import type { Frame, Network, NeuronState, SensorInfo } from "@spikes/client";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { Observable } from "rxjs";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -201,6 +201,8 @@ interface Props {
   pickHint?: string;
   /** Each neuron's colour (CSS), instead of excitatory and inhibitory ones (spikes still flash). */
   colors?: string[] | null;
+  /** More about a neuron, for its tooltip. */
+  describe?: (neuron: number) => ReactNode;
 }
 
 /** How often the hovered neuron's state is refreshed, ms. */
@@ -208,7 +210,7 @@ const HOVER_REFRESH_MS = 250;
 
 const fmt = (v: number, digits = 1) => (Number.isFinite(v) ? v.toFixed(digits) : "—");
 
-export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState, tooltips = true, pickHint, colors }: Props) {
+export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState, tooltips = true, pickHint, colors, describe }: Props) {
   const mode = useThemeMode();
   const mount = useRef<HTMLDivElement>(null);
   const scene = useRef<{
@@ -670,6 +672,7 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
             <div className="tabular-nums text-muted-foreground">
               ({hoveredNeuron.position.map((v) => fmt(v)).join(", ")}) µm
             </div>
+            {describe?.(hover.neuron)}
             {queryState && (
               <div className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 tabular-nums" data-testid="neuron-tooltip-state">
                 <span className="text-muted-foreground">Membrane</span>
@@ -704,7 +707,7 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        {tooltips ? "Hover a neuron for its state, drag" : "Drag"} to orbit, scroll to zoom,{" "}
+        {tooltips ? (queryState ? "Hover a neuron for its state, drag" : "Hover a neuron for details, drag") : "Drag"} to orbit, scroll to zoom,{" "}
         {pickHint ?? "click a neuron to inspect it, shift-drag to select a region for the raster."}
         {sensors.length > 0 && " Green diamonds are sensors, with lines to the neurons they drive; they light up while their data flows."}
       </p>

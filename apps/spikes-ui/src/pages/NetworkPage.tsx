@@ -54,7 +54,7 @@ export function NetworkPage() {
         await client.updateDescription(id, description);
         applied({ id, description });
       }
-      setMessage("Applied. Build it here or on the Run page.");
+      setMessage("Applied. Build it on the Run page.");
     } catch (e) {
       if (e instanceof SpikesError && e.error.code === "parse") {
         parseFailed(e.error.spans ?? []);

@@ -13,6 +13,7 @@ pub mod cluster;
 mod connection;
 mod deployment;
 mod network;
+mod preview;
 mod replay;
 mod sensors;
 mod session;
@@ -25,6 +26,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 pub use connection::{Connection, Outgoing, api_error};
 pub use deployment::{DeployedGroup, DeployedNode, Deployment, GroupKind};
 pub use network::{GRID, NetworkInfo, NeuronInfo, SYNAPSE_LIST_LIMIT, SynapseInfo};
+pub use preview::{Preview, preview};
 pub use sensors::{Encoding, OnPause, SampleBatch, Sensor, SensorInfo, SensorSpec, SensorStats, SpikeBatch};
 pub use session::{
     BuildSettings, DEFAULT_MIN_DELAY, InputSpec, NeuronSnapshot, RunSettings, Session, SessionNotice, Speed, State,

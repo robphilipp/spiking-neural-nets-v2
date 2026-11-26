@@ -7,6 +7,9 @@ export function useWidth(): [(element: HTMLElement | null) => void, number] {
   const ref = useCallback((element: HTMLElement | null) => {
     observer.current?.disconnect();
     if (!element) return;
+    // Measured now, before the first paint: otherwise what it holds is first drawn at the default width.
+    const now = Math.floor(element.getBoundingClientRect().width);
+    if (now > 0) setWidth(Math.max(200, now));
     observer.current = new ResizeObserver(([entry]) => entry && setWidth(Math.max(200, Math.floor(entry.contentRect.width))));
     observer.current.observe(element);
   }, []);

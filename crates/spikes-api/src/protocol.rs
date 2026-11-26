@@ -142,6 +142,11 @@ pub enum Request {
         /// The session.
         session: u32,
     },
+    /// A description's network, built just to look at (no session needed, nothing runs).
+    PreviewNetwork {
+        /// The `.boo` text.
+        text: String,
+    },
     /// Where the built network runs: its nodes and shards, each neuron's node and shard, and its populations and
     /// sets with their pins.
     GetDeployment {
@@ -531,6 +536,11 @@ pub enum Response {
         /// The state.
         cluster: Cluster,
     },
+    /// A description's network, to look at.
+    Preview {
+        /// The network.
+        preview: Box<NetworkPreview>,
+    },
     /// Where a network runs.
     Deployment {
         /// The deployment.
@@ -648,6 +658,25 @@ pub struct SensorInfo {
     /// Neuron inputs produced so far.
     #[ts(type = "number")]
     pub inputs: u64,
+}
+
+/// A description's network, built just to look at.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NetworkPreview {
+    /// Its neurons, and its synapses (for networks of listable size).
+    pub network: Network,
+    /// Each neuron's incoming connections.
+    pub incoming: Vec<u32>,
+    /// How many of them are inhibitory.
+    pub incoming_inhibitory: Vec<u32>,
+    /// Each neuron's outgoing connections.
+    pub outgoing: Vec<u32>,
+    /// How many of them are inhibitory.
+    pub outgoing_inhibitory: Vec<u32>,
+    /// The node each neuron is pinned to (`node=`), if any.
+    pub pinned: Vec<Option<String>>,
 }
 
 /// Where a built network runs.

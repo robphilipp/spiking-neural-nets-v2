@@ -2,6 +2,7 @@
 import type { Cluster } from "./Cluster";
 import type { Deployment } from "./Deployment";
 import type { Network } from "./Network";
+import type { NetworkPreview } from "./NetworkPreview";
 import type { NeuronState } from "./NeuronState";
 import type { Recording } from "./Recording";
 import type { SavedRun } from "./SavedRun";
@@ -31,7 +32,11 @@ text: string, } | { "type": "cluster",
 /**
  * The state.
  */
-cluster: Cluster, } | { "type": "deployment", 
+cluster: Cluster, } | { "type": "preview", 
+/**
+ * The network.
+ */
+preview: NetworkPreview, } | { "type": "deployment", 
 /**
  * The deployment.
  */

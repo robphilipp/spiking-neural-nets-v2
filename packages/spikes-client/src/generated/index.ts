@@ -11,6 +11,7 @@ export type * from "./Encoding";
 export type * from "./ErrorCode";
 export type * from "./Input";
 export type * from "./Network";
+export type * from "./NetworkPreview";
 export type * from "./Neuron";
 export type * from "./NeuronState";
 export type * from "./Notice";

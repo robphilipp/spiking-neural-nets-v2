@@ -305,38 +305,23 @@ impl Connection {
                     },
                 })
             }
-            Request::GetNetwork { session } => {
-                let network = self.session(session)?.network();
-                Ok(Response::Network {
-                    network: api::Network {
-                        neurons: network
-                            .neurons
-                            .iter()
-                            .map(|n| api::Neuron {
-                                index: n.index,
-                                name: n.name.clone(),
-                                population: n.population.clone(),
-                                kind: n.kind.to_string(),
-                                position: n.position,
-                                inhibitory: n.inhibitory,
-                                cell: network.cells[n.index as usize],
-                            })
-                            .collect(),
-                        synapses: network
-                            .synapses
-                            .iter()
-                            .map(|s| api::Synapse {
-                                post: s.post,
-                                synapse: s.synapse,
-                                pre: s.pre,
-                                weight: s.weight,
-                                inhibitory: s.inhibitory,
-                            })
-                            .collect(),
-                        synapse_count: network.synapse_count,
-                        modulators: network.modulators.clone(),
-                        learning_rules: network.learning_rules.clone(),
-                    },
+            Request::GetNetwork { session } => Ok(Response::Network {
+                network: api_network(&self.session(session)?.network()),
+            }),
+            Request::PreviewNetwork { text } => {
+                let p = crate::preview(&text).map_err(api_error)?;
+                let split = |v: &[(u32, u32)]| -> (Vec<u32>, Vec<u32>) { v.iter().copied().unzip() };
+                let (incoming, incoming_inhibitory) = split(&p.incoming);
+                let (outgoing, outgoing_inhibitory) = split(&p.outgoing);
+                Ok(Response::Preview {
+                    preview: Box::new(api::NetworkPreview {
+                        network: api_network(&p.network),
+                        incoming,
+                        incoming_inhibitory,
+                        outgoing,
+                        outgoing_inhibitory,
+                        pinned: p.pinned,
+                    }),
                 })
             }
             Request::Start {
@@ -866,4 +851,37 @@ fn list_recordings(root: &Path) -> Vec<api::Recording> {
         .collect();
     recordings.sort_by(|a, b| a.id.cmp(&b.id));
     recordings
+}
+
+/// A network as the API shows it.
+fn api_network(network: &crate::NetworkInfo) -> api::Network {
+    api::Network {
+        neurons: network
+            .neurons
+            .iter()
+            .map(|n| api::Neuron {
+                index: n.index,
+                name: n.name.clone(),
+                population: n.population.clone(),
+                kind: n.kind.to_string(),
+                position: n.position,
+                inhibitory: n.inhibitory,
+                cell: network.cells[n.index as usize],
+            })
+            .collect(),
+        synapses: network
+            .synapses
+            .iter()
+            .map(|s| api::Synapse {
+                post: s.post,
+                synapse: s.synapse,
+                pre: s.pre,
+                weight: s.weight,
+                inhibitory: s.inhibitory,
+            })
+            .collect(),
+        synapse_count: network.synapse_count,
+        modulators: network.modulators.clone(),
+        learning_rules: network.learning_rules.clone(),
+    }
 }

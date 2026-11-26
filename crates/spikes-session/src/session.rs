@@ -244,6 +244,9 @@ struct Inner {
     /// The node agents the network was last built on, and the synapses each node made (this one first), for
     /// [`Session::deployment`].
     built_on: (Vec<String>, Vec<u64>),
+    /// Each neuron's node and shard, once asked for or a run starts (a run takes the runtime, but not the neurons'
+    /// homes with it).
+    homes: Option<Arc<Vec<(u32, u16)>>>,
 }
 
 struct Shared {
@@ -309,6 +312,7 @@ impl Session {
                     lockstep: true,
                     inputs: Vec::new(),
                     built_on: (Vec::new(), Vec::new()),
+                    homes: None,
                 }),
                 changed: Condvar::new(),
                 listeners: Mutex::new(Vec::new()),
@@ -542,6 +546,7 @@ impl Session {
         inner.settings = settings;
         inner.inputs.clear();
         inner.built_on = (Vec::new(), Vec::new());
+        inner.homes = None;
         Ok((rt, net, network))
     }
 
@@ -561,12 +566,9 @@ impl Session {
     /// Where the built network runs: its nodes and their shards, each neuron's node and shard, and how its
     /// populations and sets are spread over the nodes (with their pins), once built.
     pub fn deployment(&self) -> Option<crate::deployment::Deployment> {
-        let inner = self.inner();
-        let Stage::Ready(built) = &inner.phase else { return None };
+        let mut inner = self.inner();
+        let homes = homes(&mut inner)?;
         let network = &inner.network;
-        let homes: Vec<(u32, u16)> = (0..network.neurons.len() as u32)
-            .map(|i| network.id(i).and_then(|id| built.rt.home_of(id)).unwrap_or((0, 0)))
-            .collect();
         let (nodes, synapses) = &inner.built_on;
         let synapses = if synapses.is_empty() {
             vec![network.synapse_count]
@@ -701,6 +703,7 @@ impl Session {
     pub fn start(&self, run: RunSettings) -> Result<(), SessionError> {
         let speed = run.speed.check()?;
         let mut inner = self.inner();
+        homes(&mut inner);
         let built = match std::mem::replace(&mut inner.phase, Stage::Loaded) {
             Stage::Ready(built) => built,
             other => {
@@ -1270,6 +1273,7 @@ impl Session {
         inner.network = Arc::clone(&network);
         inner.settings = settings;
         inner.built_on = (Vec::new(), Vec::new());
+        inner.homes = None;
         inner.wiring = None;
         inner.release_site = None;
         inner.phase = Stage::Ready(Box::new(Built { rt, net: None }));
@@ -1921,6 +1925,20 @@ impl Session {
             }
         }
     }
+}
+
+/// Each neuron's node and shard: remembered, or read from the built runtime (`None` if neither).
+fn homes(inner: &mut Inner) -> Option<Arc<Vec<(u32, u16)>>> {
+    if inner.homes.is_none()
+        && let Stage::Ready(built) = &inner.phase
+    {
+        let network = &inner.network;
+        let homes = (0..network.neurons.len() as u32)
+            .map(|i| network.id(i).and_then(|id| built.rt.home_of(id)).unwrap_or((0, 0)))
+            .collect();
+        inner.homes = Some(Arc::new(homes));
+    }
+    inner.homes.clone()
 }
 
 fn sign_of(inhibitory: Option<bool>, default: spikes_model::Sign) -> spikes_model::Sign {
