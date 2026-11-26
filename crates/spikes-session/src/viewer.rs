@@ -87,7 +87,9 @@ impl Default for ViewSettings {
 struct Pending {
     spikes: Vec<(u32, u64)>,
     membrane: Vec<(u32, u64, f32)>,
-    weights: BTreeMap<(u32, u32), f32>,
+    /// Weight changes `(neuron, synapse, weight)` in arrival order; a frame sends the latest per synapse. (Appending
+    /// is cheap: a learning network makes far more weight changes than spikes, a million a second or more.)
+    weights: Vec<(u32, u32, f32)>,
     transitions: Vec<(u32, u64, bool)>,
     t_min: Option<u64>,
     t_max: Option<u64>,
@@ -371,7 +373,7 @@ fn route(e: &Emitted<Event>, network: &NetworkInfo, slots: &mut [Slot]) {
             }
             Event::Weight { synapse, after, .. } => {
                 if slot.weight_mask.as_ref().is_some_and(|m| m[i]) {
-                    p.weights.insert((neuron, synapse), after);
+                    p.weights.push((neuron, synapse, after));
                     p.time(at);
                 }
             }
@@ -383,6 +385,20 @@ fn route(e: &Emitted<Event>, network: &NetworkInfo, slots: &mut [Slot]) {
     }
 }
 
+/// The latest weight of each synapse among `changes` (in arrival order), ordered by neuron and synapse.
+fn latest(mut changes: Vec<(u32, u32, f32)>) -> Vec<((u32, u32), f32)> {
+    // A stable sort keeps each synapse's changes in arrival order: the last of each run is the latest.
+    changes.sort_by_key(|&(n, s, _)| (n, s));
+    let mut out: Vec<((u32, u32), f32)> = Vec::with_capacity(changes.len());
+    for (n, s, w) in changes {
+        match out.last_mut() {
+            Some((key, last)) if *key == (n, s) => *last = w,
+            _ => out.push(((n, s), w)),
+        }
+    }
+    out
+}
+
 /// Encodes and sends a slot's frame; returns whether there was one.
 fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, known_ns: u64) -> bool {
     let clock = &source.clock;
@@ -390,7 +406,8 @@ fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, kno
     if slot.pending.is_empty() && sim == slot.last_t1 {
         return false; // nothing new to show
     }
-    let p = std::mem::take(&mut slot.pending);
+    let mut p = std::mem::take(&mut slot.pending);
+    let weights = latest(std::mem::take(&mut p.weights));
     // Simulation time can go back to zero (a rebuilt network): then the previous frame's end doesn't count.
     let previous = if sim < slot.last_t1 { sim } else { slot.last_t1 };
     let t0 = p.t_min.unwrap_or(previous).min(previous);
@@ -402,7 +419,7 @@ fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, kno
     // Spikes: exact if they fit the budget, else counts per neuron, else per cell. The budget is for section
     // payloads; the 64-byte header and 16-byte section headers are on top.
     let budget = (slot.settings.budget_bytes_per_s as f64 * slot.settings.frame.as_secs_f64()) as usize;
-    let fixed = p.membrane.len() * 12 + p.weights.len() * 12 + p.transitions.len() * 9;
+    let fixed = p.membrane.len() * 12 + weights.len() * 12 + p.transitions.len() * 9;
     let room = budget.saturating_sub(fixed);
     let mut lod = Lod::Exact;
     let mut counts: BTreeMap<u32, u32> = BTreeMap::new();
@@ -471,8 +488,8 @@ fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, kno
         let v: Vec<f32> = p.membrane.iter().map(|m| m.2).collect();
         b.membrane(&n, &t, &v);
     }
-    if !p.weights.is_empty() {
-        let (keys, w): (Vec<(u32, u32)>, Vec<f32>) = p.weights.into_iter().unzip();
+    if !weights.is_empty() {
+        let (keys, w): (Vec<(u32, u32)>, Vec<f32>) = weights.into_iter().unzip();
         let (post, syn): (Vec<u32>, Vec<u32>) = keys.into_iter().unzip();
         b.weights(&post, &syn, &w);
     }
@@ -517,4 +534,16 @@ pub struct FrameStats {
 /// A column's size in a frame: `count × width`, padded to 8 bytes.
 fn column_bytes(count: usize, width: usize) -> usize {
     (count * width).div_ceil(8) * 8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::latest;
+
+    #[test]
+    fn a_frame_sends_each_synapses_latest_weight_in_order() {
+        let changes = vec![(2, 0, 0.1), (1, 5, 0.2), (2, 0, 0.3), (1, 1, 0.4), (1, 5, 0.5), (2, 0, 0.6)];
+        assert_eq!(latest(changes), vec![((1, 1), 0.4), ((1, 5), 0.5), ((2, 0), 0.6)]);
+        assert!(latest(Vec::new()).is_empty());
+    }
 }

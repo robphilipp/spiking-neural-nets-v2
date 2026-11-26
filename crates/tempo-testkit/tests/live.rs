@@ -299,7 +299,8 @@ fn subscribers_never_slow_the_simulation_down() {
 
 #[test]
 fn falling_behind_the_clock_raises_a_warning_but_keeps_the_speed() {
-    // 2,000 neurons at 100× real time: far more than this machine can do, so it falls behind.
+    // 2,000 neurons at 1,000× real time (300 ms due in 0.3 ms), warning 1 ms behind: computing them takes longer
+    // than that in any build, so it falls behind. (At 100× with the default 20 ms, an optimized build keeps up.)
     let network = lif::LifConfig {
         neurons: 2_000,
         synapses_per_neuron: 50,
@@ -308,7 +309,8 @@ fn falling_behind_the_clock_raises_a_warning_but_keeps_the_speed() {
     };
     let mut rt = Runtime::new(RuntimeConfig {
         shards: 2,
-        pacing: Pacing::RealTime { time_factor: 0.01 },
+        pacing: Pacing::RealTime { time_factor: 1e-3 },
+        keep_up_warning: Duration::from_millis(1),
         min_remote_delay: Some(network.input_delay),
         ..RuntimeConfig::default()
     });
@@ -321,8 +323,8 @@ fn falling_behind_the_clock_raises_a_warning_but_keeps_the_speed() {
         .filter(|n| matches!(n.event, SystemEvent::CannotKeepUp { .. }))
         .collect();
     assert_eq!(warnings.len(), 1, "warn once, not every window");
-    assert!(matches!(warnings[0].event, SystemEvent::CannotKeepUp { time_factor, .. } if time_factor == 0.01));
-    assert_eq!(rt.clock().time_factor(), Some(0.01), "the clock is not slowed down");
+    assert!(matches!(warnings[0].event, SystemEvent::CannotKeepUp { time_factor, .. } if time_factor == 1e-3));
+    assert_eq!(rt.clock().time_factor(), Some(1e-3), "the clock is not slowed down");
 }
 
 #[test]
