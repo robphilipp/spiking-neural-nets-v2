@@ -337,6 +337,11 @@ impl<M: Clone + Send + 'static, E: Clone + Send + 'static> Runtime<M, E> {
         self.world.dir.home(id).map(|(node, _)| node)
     }
 
+    /// The node and shard (on that node) an actor lives on, if it exists.
+    pub fn home_of(&self, id: ActorId) -> Option<(u32, u16)> {
+        self.world.dir.home(id)
+    }
+
     // ----- control -----
 
     /// A handle for controlling the simulation from other threads while it runs.

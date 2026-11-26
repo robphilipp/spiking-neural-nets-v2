@@ -199,6 +199,8 @@ interface Props {
   tooltips?: boolean;
   /** What clicking and shift-dragging do, for the help line (default: the Run page's inspect and raster). */
   pickHint?: string;
+  /** Each neuron's colour (CSS), instead of excitatory and inhibitory ones (spikes still flash). */
+  colors?: string[] | null;
 }
 
 /** How often the hovered neuron's state is refreshed, ms. */
@@ -206,7 +208,7 @@ const HOVER_REFRESH_MS = 250;
 
 const fmt = (v: number, digits = 1) => (Number.isFinite(v) ? v.toFixed(digits) : "—");
 
-export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState, tooltips = true, pickHint }: Props) {
+export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState, tooltips = true, pickHint, colors }: Props) {
   const mode = useThemeMode();
   const mount = useRef<HTMLDivElement>(null);
   const scene = useRef<{
@@ -371,6 +373,27 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
     };
     // The scene is rebuilt for a new network or theme; size changes are handled below.
   }, [network, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Neuron colours: given ones, or excitatory and inhibitory.
+  useEffect(() => {
+    const s = scene.current;
+    if (!s) return;
+    const excitatory = new THREE.Color(EXCITATORY);
+    const inhibitory = new THREE.Color(INHIBITORY);
+    const given = new Map<string, THREE.Color>();
+    network.neurons.forEach((neuron, i) => {
+      const css = colors?.[i];
+      let c = neuron.inhibitory ? inhibitory : excitatory;
+      if (css) {
+        c = given.get(css) ?? new THREE.Color(css);
+        given.set(css, c);
+      }
+      s.base[i] = c;
+      if (!s.lit.has(i)) s.neurons.setColor(i, c, 0);
+    });
+    s.neurons.commit();
+    s.invalidate();
+  }, [colors, built]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const s = scene.current;

@@ -413,6 +413,25 @@ fn a_population_pinned_to_a_named_node_runs_there() {
         let count = cortex.iter().filter(|&&n| n == node).count();
         assert!(count > 20, "the rest is spread over every node: {count} on node {node}");
     }
+
+    // The deployment: the hosts, each neuron's node, and each population's spread and pin.
+    let d = session.deployment().unwrap();
+    let names: Vec<&str> = d.nodes.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(names, ["main", "", "edge"]);
+    assert_eq!(d.nodes[2].address, two[1]);
+    assert_eq!(d.neuron_nodes, nodes);
+    let neurons: u64 = d.nodes.iter().flat_map(|n| &n.shard_neurons).sum();
+    assert_eq!(neurons, 220);
+    let synapses: u64 = d.nodes.iter().map(|n| n.synapses).sum();
+    assert_eq!(synapses, network.synapse_count);
+    let sensors = d.groups.iter().find(|g| g.name == "sensors").unwrap();
+    assert_eq!(sensors.pinned.as_deref(), Some("edge"));
+    assert_eq!(sensors.per_node, [0, 0, 20]);
+    let cortex = d.groups.iter().find(|g| g.name == "cortex").unwrap();
+    assert_eq!(cortex.pinned, None);
+    assert_eq!(cortex.per_node.iter().sum::<u64>(), 200);
+    assert!(d.warnings.is_empty(), "{:?}", d.warnings);
+
     session.stimulate(&(0..20).collect::<Vec<_>>(), 10.0).unwrap();
     run(&session, 50, None);
     let spikes: u64 = (0..220).map(|i| session.query_neuron(i).unwrap().spikes).sum();
@@ -427,6 +446,25 @@ fn a_population_pinned_to_a_named_node_runs_there() {
 
     // In one process, pins don't matter: everything runs here.
     let alone = engine.create("alone", PINNED).unwrap();
-    alone.build(BuildSettings::default()).unwrap();
+    alone
+        .build(BuildSettings {
+            shards: 4,
+            ..BuildSettings::default()
+        })
+        .unwrap();
     assert!(alone.neuron_nodes().unwrap().iter().all(|&n| n == 0));
+    let d = alone.deployment().unwrap();
+    assert_eq!(d.nodes.len(), 1);
+    assert_eq!(d.nodes[0].shard_neurons.len(), 4);
+    assert_eq!(d.nodes[0].shard_neurons.iter().sum::<u64>(), 220);
+    assert!(
+        d.nodes[0].shard_neurons.iter().all(|&n| n > 0),
+        "{:?}",
+        d.nodes[0].shard_neurons
+    );
+    assert!(
+        d.warnings[0].contains("pins to other nodes are ignored"),
+        "{:?}",
+        d.warnings
+    );
 }

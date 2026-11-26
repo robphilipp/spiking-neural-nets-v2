@@ -7,6 +7,7 @@ import type { ApiError } from "./generated/ApiError";
 import type { BuildSettings } from "./generated/BuildSettings";
 import type { ClientMessage } from "./generated/ClientMessage";
 import type { Cluster } from "./generated/Cluster";
+import type { Deployment } from "./generated/Deployment";
 import type { Input } from "./generated/Input";
 import type { Network } from "./generated/Network";
 import type { NeuronState } from "./generated/NeuronState";
@@ -185,6 +186,12 @@ export abstract class ProtocolClient {
     return (
       await this.expect({ type: "getDescription", session }, "description")
     ).text;
+  }
+
+  /** Where a session's built network runs: its nodes and shards, each neuron's node and shard, and its populations
+   *  and sets with their pins. */
+  async getDeployment(session: number): Promise<Deployment> {
+    return (await this.expect({ type: "getDeployment", session }, "deployment")).deployment;
   }
 
   /** How a session built on node agents is doing. */

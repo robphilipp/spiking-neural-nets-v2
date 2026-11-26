@@ -11,6 +11,7 @@
 
 pub mod cluster;
 mod connection;
+mod deployment;
 mod network;
 mod replay;
 mod sensors;
@@ -22,6 +23,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 pub use connection::{Connection, Outgoing, api_error};
+pub use deployment::{DeployedGroup, DeployedNode, Deployment, GroupKind};
 pub use network::{GRID, NetworkInfo, NeuronInfo, SYNAPSE_LIST_LIMIT, SynapseInfo};
 pub use sensors::{Encoding, OnPause, SampleBatch, Sensor, SensorInfo, SensorSpec, SensorStats, SpikeBatch};
 pub use session::{

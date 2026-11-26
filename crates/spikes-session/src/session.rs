@@ -241,6 +241,9 @@ struct Inner {
     lockstep: bool,
     /// Inputs added since the build, and when: a saved run adds them again before restoring.
     inputs: Vec<(InputSpec, SimTime)>,
+    /// The node agents the network was last built on, and the synapses each node made (this one first), for
+    /// [`Session::deployment`].
+    built_on: (Vec<String>, Vec<u64>),
 }
 
 struct Shared {
@@ -305,6 +308,7 @@ impl Session {
                     member: None,
                     lockstep: true,
                     inputs: Vec::new(),
+                    built_on: (Vec::new(), Vec::new()),
                 }),
                 changed: Condvar::new(),
                 listeners: Mutex::new(Vec::new()),
@@ -450,7 +454,12 @@ impl Session {
             // Each node made the connections onto its own neurons: the senders' nodes learn where their routes
             // reach, and the counts add up.
             match coordinator.exchange_reach(&mut rt) {
-                Ok(others) => net.synapse_count += others,
+                Ok(others) => {
+                    let mut per_node = vec![net.synapse_count];
+                    per_node.extend(&others);
+                    net.synapse_count += others.iter().sum::<u64>();
+                    inner.built_on = (inner.nodes.clone(), per_node);
+                }
                 Err(e) => {
                     coordinator.close();
                     inner.phase = Stage::Loaded;
@@ -532,6 +541,7 @@ impl Session {
         inner.network = Arc::clone(&network);
         inner.settings = settings;
         inner.inputs.clear();
+        inner.built_on = (Vec::new(), Vec::new());
         Ok((rt, net, network))
     }
 
@@ -546,6 +556,31 @@ impl Session {
                 .map(|i| network.id(i).and_then(|id| built.rt.node_of(id)).unwrap_or(0))
                 .collect(),
         )
+    }
+
+    /// Where the built network runs: its nodes and their shards, each neuron's node and shard, and how its
+    /// populations and sets are spread over the nodes (with their pins), once built.
+    pub fn deployment(&self) -> Option<crate::deployment::Deployment> {
+        let inner = self.inner();
+        let Stage::Ready(built) = &inner.phase else { return None };
+        let network = &inner.network;
+        let homes: Vec<(u32, u16)> = (0..network.neurons.len() as u32)
+            .map(|i| network.id(i).and_then(|id| built.rt.home_of(id)).unwrap_or((0, 0)))
+            .collect();
+        let (nodes, synapses) = &inner.built_on;
+        let synapses = if synapses.is_empty() {
+            vec![network.synapse_count]
+        } else {
+            synapses.clone()
+        };
+        Some(crate::deployment::Deployment::new(
+            &inner.description,
+            nodes,
+            inner.settings.shards,
+            &homes,
+            &synapses,
+            inner.replay.is_some(),
+        ))
     }
 
     /// Builds node agents on these addresses from the next build on, as one cluster that this session coordinates;
@@ -1234,6 +1269,7 @@ impl Session {
         }
         inner.network = Arc::clone(&network);
         inner.settings = settings;
+        inner.built_on = (Vec::new(), Vec::new());
         inner.wiring = None;
         inner.release_site = None;
         inner.phase = Stage::Ready(Box::new(Built { rt, net: None }));

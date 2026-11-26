@@ -266,6 +266,45 @@ impl Connection {
                     },
                 })
             }
+            Request::GetDeployment { session } => {
+                let d = self
+                    .session(session)?
+                    .deployment()
+                    .ok_or_else(|| error(ErrorCode::Invalid, "the network isn't built"))?;
+                Ok(Response::Deployment {
+                    deployment: api::Deployment {
+                        nodes: d
+                            .nodes
+                            .into_iter()
+                            .map(|n| api::DeployedNode {
+                                name: n.name,
+                                address: n.address,
+                                shard_neurons: n.shard_neurons,
+                                synapses: n.synapses,
+                            })
+                            .collect(),
+                        neuron_nodes: d.neuron_nodes,
+                        neuron_shards: d.neuron_shards,
+                        groups: d
+                            .groups
+                            .into_iter()
+                            .map(|g| api::DeployedGroup {
+                                name: g.name,
+                                kind: match g.kind {
+                                    crate::GroupKind::Population => "population",
+                                    crate::GroupKind::Set => "set",
+                                    crate::GroupKind::Neuron => "neuron",
+                                }
+                                .into(),
+                                pinned: g.pinned,
+                                per_node: g.per_node,
+                            })
+                            .collect(),
+                        declared_nodes: d.declared_nodes,
+                        warnings: d.warnings,
+                    },
+                })
+            }
             Request::GetNetwork { session } => {
                 let network = self.session(session)?.network();
                 Ok(Response::Network {

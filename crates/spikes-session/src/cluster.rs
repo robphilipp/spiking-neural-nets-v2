@@ -656,16 +656,16 @@ impl Coordinator {
     }
 
     /// After building (each node made only the connections onto its own neurons): every route's owner learns which
-    /// nodes its route reaches, so a spike goes to each of them once. Returns how many synapses the other nodes
-    /// made.
-    pub(crate) fn exchange_reach(&self, rt: &mut spikes_network::Runtime) -> Result<u64, SessionError> {
-        let mut others = 0;
+    /// nodes its route reaches, so a spike goes to each of them once. Returns how many synapses each other node
+    /// made, in node order.
+    pub(crate) fn exchange_reach(&self, rt: &mut spikes_network::Runtime) -> Result<Vec<u64>, SessionError> {
+        let mut others = Vec::with_capacity(self.clients.len());
         // (from node, owner node, routes)
         let mut deliveries: Vec<(u32, u32, crate::session::RouteReach)> = Vec::new();
         for (i, client) in self.clients.iter().enumerate() {
             match client.call(&Request::Reach)? {
                 Response::Reach { synapses, reached } => {
-                    others += synapses;
+                    others.push(synapses);
                     deliveries.extend(reached.into_iter().map(|(owner, routes)| (i as u32 + 1, owner, routes)));
                 }
                 other => return Err(SessionError::Invalid(format!("unexpected reply {other:?}"))),

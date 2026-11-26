@@ -142,6 +142,12 @@ pub enum Request {
         /// The session.
         session: u32,
     },
+    /// Where the built network runs: its nodes and shards, each neuron's node and shard, and its populations and
+    /// sets with their pins.
+    GetDeployment {
+        /// The session.
+        session: u32,
+    },
     /// The built network: neurons, synapses, modulators.
     GetNetwork {
         /// The session.
@@ -525,6 +531,11 @@ pub enum Response {
         /// The state.
         cluster: Cluster,
     },
+    /// Where a network runs.
+    Deployment {
+        /// The deployment.
+        deployment: Deployment,
+    },
     /// A neuron's state.
     Neuron {
         /// The state.
@@ -637,6 +648,58 @@ pub struct SensorInfo {
     /// Neuron inputs produced so far.
     #[ts(type = "number")]
     pub inputs: u64,
+}
+
+/// Where a built network runs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Deployment {
+    /// Every node: this engine (`main`) first, then the node agents in the order given.
+    pub nodes: Vec<DeployedNode>,
+    /// Each neuron's node (an index into `nodes`).
+    pub neuron_nodes: Vec<u32>,
+    /// Each neuron's shard on its node.
+    pub neuron_shards: Vec<u16>,
+    /// Populations, sets, and pinned neurons listed alone, in description order.
+    pub groups: Vec<DeployedGroup>,
+    /// The nodes the description names (`nodes=[(name=…)]`).
+    pub declared_nodes: Vec<String>,
+    /// What doesn't fit (pins that weren't honoured, named nodes no agent is).
+    pub warnings: Vec<String>,
+}
+
+/// One node of a deployment.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DeployedNode {
+    /// `main` for this engine, a node agent's name (`name=host:port`), or empty.
+    pub name: String,
+    /// A node agent's `host:port`; empty for this engine.
+    pub address: String,
+    /// Neurons on each of its shards.
+    #[ts(type = "number[]")]
+    pub shard_neurons: Vec<u64>,
+    /// Synapses it made (onto its own neurons), when built.
+    #[ts(type = "number")]
+    pub synapses: u64,
+}
+
+/// A population, set or pinned neuron, and where its neurons run.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DeployedGroup {
+    /// Its name.
+    pub name: String,
+    /// `population`, `set` or `neuron`.
+    pub kind: String,
+    /// The node it's pinned to (`node=`), if any.
+    pub pinned: Option<String>,
+    /// Its neurons on each node.
+    #[ts(type = "number[]")]
+    pub per_node: Vec<u64>,
 }
 
 /// A session's cluster: this server (the coordinator, node 0) and its node agents.

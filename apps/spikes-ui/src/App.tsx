@@ -5,6 +5,7 @@ import {
   History,
   PlayCircle,
   Radio,
+  Server,
   Settings,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -25,6 +26,7 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SessionPicker } from "./components/SessionPicker";
 import { useConnection, useEngineError } from "./connection";
+import { DeploymentPage } from "./pages/DeploymentPage";
 import { InputsPage } from "./pages/InputsPage";
 import { NetworkPage } from "./pages/NetworkPage";
 import { ProjectsPage } from "./pages/ProjectsPage";
@@ -33,11 +35,12 @@ import { RunPage } from "./pages/RunPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 type Page =
-  "projects" | "network" | "run" | "inputs" | "recordings" | "settings";
+  "projects" | "network" | "run" | "deployment" | "inputs" | "recordings" | "settings";
 const PAGES: Array<{ id: Page; label: string; icon: ReactNode }> = [
   { id: "projects", label: "Project", icon: <FolderOpen /> },
   { id: "network", label: "Network", icon: <Code2 /> },
   { id: "run", label: "Run", icon: <PlayCircle /> },
+  { id: "deployment", label: "Deployment", icon: <Server /> },
   { id: "inputs", label: "Inputs", icon: <Radio /> },
   { id: "recordings", label: "Recordings", icon: <History /> },
   { id: "settings", label: "Settings", icon: <Settings /> },
@@ -108,6 +111,7 @@ export function App() {
             )}
             {page === "network" && <NetworkPage />}
             {page === "run" && <RunPage />}
+            {page === "deployment" && <DeploymentPage />}
             {page === "inputs" && <InputsPage />}
             {page === "recordings" && (
               <RecordingsPage onOpen={() => setPage("run")} />
