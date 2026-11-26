@@ -118,7 +118,15 @@ export function NetworkPage() {
           onMount={(editor) => {
             editorRef.current = editor;
           }}
-          options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: "on", scrollBeyondLastLine: false }}
+          options={{
+            minimap: { enabled: false },
+            fontSize: 13,
+            wordWrap: "on",
+            scrollBeyondLastLine: false,
+            // Hover help and suggestions float above the page instead of inside the editor's (clipping) box, so
+            // long help near the editor's top or bottom edge isn't cut off.
+            fixedOverflowWidgets: true,
+          }}
         />
       </div>
       <NetworkViewPanel />
