@@ -485,6 +485,7 @@ export function RunPage() {
               onRegion={setRegion}
               queryState={queryState}
               tooltips={tooltips}
+              viewKey="run"
             />
           )}
           {sensors.length > 0 && (

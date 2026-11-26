@@ -203,14 +203,32 @@ interface Props {
   colors?: string[] | null;
   /** More about a neuron, for its tooltip. */
   describe?: (neuron: number) => ReactNode;
+  /** Names this view, so its camera (rotation, position, zoom) is kept while the app runs: a view of the same name
+   *  showing a network of the same extent picks up where it was left (after leaving the page and coming back, a
+   *  theme change, a rebuild). */
+  viewKey?: string;
 }
+
+/** A view's camera, and the extent of the network it was looking at. */
+interface SavedView {
+  fit: string;
+  position: THREE.Vector3;
+  target: THREE.Vector3;
+  up: THREE.Vector3;
+  zoom: number;
+}
+
+/** The named views' cameras, kept for as long as the app runs. */
+const savedViews = new Map<string, SavedView>();
+
+const fitOf = (centre: THREE.Vector3, size: number) => [centre.x, centre.y, centre.z, size].map((v) => v.toPrecision(6)).join(",");
 
 /** How often the hovered neuron's state is refreshed, ms. */
 const HOVER_REFRESH_MS = 250;
 
 const fmt = (v: number, digits = 1) => (Number.isFinite(v) ? v.toFixed(digits) : "—");
 
-export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState, tooltips = true, pickHint, colors, describe }: Props) {
+export function Network3D({ network, frames, width, height, selected, sensors = [], onPick, onRegion, queryState, tooltips = true, pickHint, colors, describe, viewKey }: Props) {
   const mode = useThemeMode();
   const mount = useRef<HTMLDivElement>(null);
   const scene = useRef<{
@@ -264,7 +282,27 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
     camera.position.copy(centre).add(new THREE.Vector3(0, -size * 0.2, size * 1.4));
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(centre);
+    // Where this view was left, if it was looking at a network of the same extent.
+    const fit = fitOf(centre, size);
+    const saved = viewKey ? savedViews.get(viewKey) : undefined;
+    if (saved && saved.fit === fit) {
+      camera.position.copy(saved.position);
+      camera.up.copy(saved.up);
+      camera.zoom = saved.zoom;
+      camera.updateProjectionMatrix();
+      controls.target.copy(saved.target);
+    }
     controls.update();
+    const save = () => {
+      if (!viewKey) return;
+      savedViews.set(viewKey, {
+        fit,
+        position: camera.position.clone(),
+        target: controls.target.clone(),
+        up: camera.up.clone(),
+        zoom: camera.zoom,
+      });
+    };
 
     const world = new THREE.Scene();
     world.add(new THREE.AmbientLight(0xffffff, 1.2));
@@ -314,6 +352,7 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
       dirty = true;
     };
     controls.addEventListener("change", invalidate);
+    controls.addEventListener("end", save);
     const draw = () => {
       frame = requestAnimationFrame(draw);
       controls.update();
@@ -362,6 +401,7 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
     setBuilt((b) => b + 1); // the selection's lines go into the new scene
     return () => {
       cancelAnimationFrame(frame);
+      save();
       controls.dispose();
       neurons.dispose();
       lines.geometry.dispose();

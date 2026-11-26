@@ -119,3 +119,49 @@ test("coming back to the Run page, the 3D view is drawn at its full width from t
     expect(Math.abs(widths[0] - widths[1])).toBeLessThan(2);
   }
 });
+
+test("the 3D view keeps its rotation, position and zoom when leaving the page and coming back", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click();
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "ring", exact: true }).click();
+  await page.getByTestId("apply").click();
+  await page.getByTestId("nav-run").click();
+  await page.getByTestId("build").click();
+  await expect(page.getByText("25 neurons")).toBeVisible();
+  const view = page.getByTestId("network-3d");
+  await expect(view.locator("canvas")).toBeVisible();
+
+  const where = () =>
+    page.evaluate(() => {
+      const s = (window as unknown as { __spikes3d: { project: (i: number) => { x: number; y: number } } }).__spikes3d;
+      return [s.project(0), s.project(12), s.project(24)];
+    });
+  const fresh = await where();
+
+  // Orbit (drag), pan (right-drag) and zoom (scroll).
+  const b = (await view.boundingBox())!;
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(b.x + b.width / 2 + 120, b.y + b.height / 2 + 40, { steps: 8 });
+  await page.mouse.up();
+  await page.mouse.down({ button: "right" });
+  await page.mouse.move(b.x + b.width / 2 + 60, b.y + b.height / 2 + 80, { steps: 8 });
+  await page.mouse.up({ button: "right" });
+  await page.mouse.wheel(0, -300);
+  await page.waitForTimeout(300);
+  const moved = await where();
+  expect(moved).not.toEqual(fresh);
+
+  // Away and back: just as it was left.
+  await page.getByTestId("nav-network").click();
+  await expect(view).toHaveCount(0);
+  await page.getByTestId("nav-run").click();
+  await expect(view.locator("canvas")).toBeVisible();
+  const back = await where();
+  for (let i = 0; i < back.length; i++) {
+    expect(back[i]!.x).toBeCloseTo(moved[i]!.x, 0);
+    expect(back[i]!.y).toBeCloseTo(moved[i]!.y, 0);
+  }
+});

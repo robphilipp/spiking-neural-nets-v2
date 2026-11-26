@@ -325,6 +325,7 @@ export function DeploymentPage() {
             tooltips={tooltips}
             colors={colors}
             describe={describe}
+            viewKey="deployment"
             pickHint="click a neuron or shift-drag a region to show its connections; click a population above to pick it out."
           />
         </div>

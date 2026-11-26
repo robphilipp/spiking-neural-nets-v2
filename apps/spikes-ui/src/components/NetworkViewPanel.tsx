@@ -183,6 +183,7 @@ export function NetworkViewPanel() {
               onRegion={setSelected}
               tooltips={tooltips}
               describe={describe}
+              viewKey="network"
               pickHint="click a neuron or shift-drag a region to show its connections."
             />
           ) : (
