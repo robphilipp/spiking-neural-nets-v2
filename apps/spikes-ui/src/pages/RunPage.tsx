@@ -228,7 +228,7 @@ export function RunPage() {
       <Panel>
         <Row>
           {state === "paused" ? (
-            <Button onClick={act(() => client!.resume(id))}>
+            <Button onClick={act(() => client!.resume(id))} title="Continue the paused run where it left off (same run: its duration and recording carry on)">
               <Play data-icon="inline-start" />
               Resume
             </Button>
@@ -236,6 +236,7 @@ export function RunPage() {
             <Button
               disabled={!network || running || building}
               data-testid="start"
+              title="Start a run from the current state and time (with the speed, duration and recording set now)"
               onClick={act(() =>
                 client!.start(id, {
                   speed,
@@ -249,15 +250,32 @@ export function RunPage() {
               Start
             </Button>
           )}
-          <Button variant="outline" disabled={state !== "running"} onClick={act(() => client!.pause(id))} data-testid="pause">
+          <Button
+            variant="outline"
+            disabled={state !== "running"}
+            onClick={act(() => client!.pause(id))}
+            data-testid="pause"
+            title="Hold the run at this moment, to look, step or stimulate; Resume continues the same run"
+          >
             <Pause data-icon="inline-start" />
             Pause
           </Button>
-          <Button variant="outline" disabled={!network || state === "running" || building} onClick={act(() => client!.step(id, 10))}>
+          <Button
+            variant="outline"
+            disabled={!network || state === "running" || building}
+            onClick={act(() => client!.step(id, 10))}
+            title="Advance the simulation by 10 ms (while paused or stopped)"
+          >
             <SkipForward data-icon="inline-start" />
             Step 10 ms
           </Button>
-          <Button variant="outline" disabled={!running} onClick={act(() => client!.stop(id))} data-testid="stop">
+          <Button
+            variant="outline"
+            disabled={!running}
+            onClick={act(() => client!.stop(id))}
+            data-testid="stop"
+            title="End the run: its recording is finished, and the network can be changed or rebuilt. Start continues from here, as a new run."
+          >
             <Square data-icon="inline-start" />
             Stop
           </Button>

@@ -130,6 +130,8 @@ export class LiveView {
   readonly raster: BehaviorSubject<TimeSeriesDataSource>;
   readonly stats = new BehaviorSubject<LiveStats>(EMPTY_STATS);
   private readonly whole = new Subject<Frame>();
+  /** The whole-network frames, through the gate (for the rate). */
+  private readonly rateFrames = new Subject<Frame>();
   private readonly selected = new Subject<Frame>();
   /** The whole-network frames (for the 3D view). */
   readonly frames: Observable<Frame> = this.whole.asObservable();
@@ -150,7 +152,7 @@ export class LiveView {
     private readonly session: number,
     private readonly neurons: number,
   ) {
-    this.rate = source([emptySeries<Datum>("rate")], this.whole, (f) => this.rateData(f), this.gate);
+    this.rate = source([emptySeries<Datum>("rate")], this.rateFrames, (f) => this.rateData(f), this.gate);
     this.raster = new BehaviorSubject(this.rasterSource([], []));
     // Settings apply as they change: retention to the data sources, the update period to the raster's frames.
     this.unfollow = useChartSettings.subscribe((s, before) => {
@@ -196,10 +198,9 @@ export class LiveView {
     // The engine sends the new neurons' spikes from now on...
     if (this.rasterViewer) await this.rasterViewer.update(this.rasterView());
     else
-      this.rasterViewer = await this.client.attach(this.session, this.rasterView(), (f) => {
-        this.gate.arrived();
-        this.selected.next(f);
-      });
+      this.rasterViewer = await this.client.attach(this.session, this.rasterView(), (f) =>
+        this.gate.deliver(f.header.t1Ms, () => this.selected.next(f)),
+      );
     if (this.disposed || turn !== this.selecting) return;
     // ...and their past is what the raster had, or (for neurons new to it) the whole-network stream's.
     const old = this.raster.value;
@@ -226,7 +227,7 @@ export class LiveView {
   }
 
   private onWhole(frame: Frame) {
-    this.gate.arrived();
+    this.gate.deliver(frame.header.t1Ms, () => this.rateFrames.next(frame));
     this.history.record(frame);
     this.whole.next(frame);
     const now = performance.now();
@@ -355,10 +356,7 @@ export class InspectView {
     this.synapses = synapses;
     if (this.viewer) await this.viewer.update(this.view());
     else
-      this.viewer = await this.client.attach(this.session, this.view(), (f) => {
-        this.gate.arrived();
-        this.frames.next(f);
-      });
+      this.viewer = await this.client.attach(this.session, this.view(), (f) => this.gate.deliver(f.header.t1Ms, () => this.frames.next(f)));
     if (this.disposed || turn !== this.following) return;
     this.latest = new Map(synapses.map((s) => [s.name, this.latest.get(s.name) ?? s.weight]));
     const [oldMembrane, oldWeights] = [this.membrane.value, this.weights.value];

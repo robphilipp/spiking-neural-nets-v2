@@ -1,7 +1,7 @@
 // The network's synapse weights, live: every weight change from the engine, summarized as a distribution over time
 // (mean and percentiles) and as a histogram of the current weights.
 
-import type { Network, ProtocolClient, Viewer } from "@spikes/client";
+import type { Frame, Network, ProtocolClient, Viewer } from "@spikes/client";
 import { BehaviorSubject, map, Subject } from "rxjs";
 import { type Datum, emptySeries, TimeSeriesDataSource } from "stream-charts";
 import { chartSettings, useChartSettings } from "./chartSettings";
@@ -44,6 +44,7 @@ export class WeightsView {
   private lastT = 0;
   private dirty = true;
   private disposed = false;
+  private trailing: ReturnType<typeof setTimeout> | undefined;
   private readonly gate = new RunGate();
   private readonly unfollow: () => void;
 
@@ -89,33 +90,39 @@ export class WeightsView {
 
   static async attach(client: ProtocolClient, session: number, network: Network): Promise<WeightsView> {
     const view = new WeightsView(network);
-    view.gate.arrived();
-    view.publish(0, true);
-    view.viewer = await client.attach(
-      session,
-      WeightsView.view(),
-      (f) => {
-        view.gate.arrived();
-        const w = f.weights;
-        if (w) {
-          for (let i = 0; i < w.post.length; i++) {
-            const k = key(w.post[i]!, w.synapse[i]!);
-            view.weights.set(k, w.weight[i]!);
-            view.changed.add(k);
-          }
-          view.dirty ||= w.post.length > 0;
-        }
-        view.publish(f.header.t1Ms, false);
-      },
-    );
+    view.gate.deliver(0, () => view.publish(0, true));
+    view.viewer = await client.attach(session, WeightsView.view(), (f) => view.gate.deliver(f.header.t1Ms, () => view.take(f)));
     return view;
   }
 
-  /** Summarizes the current weights, at most once per update period of wall time (or now, if forced): simulated
-   *  time can run much faster than wall time. */
+  private take(f: Frame) {
+    const w = f.weights;
+    if (w) {
+      for (let i = 0; i < w.post.length; i++) {
+        const k = key(w.post[i]!, w.synapse[i]!);
+        this.weights.set(k, w.weight[i]!);
+        this.changed.add(k);
+      }
+      this.dirty ||= w.post.length > 0;
+    }
+    this.publish(f.header.t1Ms, false);
+  }
+
+  /**
+   * Summarizes the current weights, at most once per update period of wall time (simulated time can run much faster
+   * than wall time), or per step of simulated time (frozen charts catching up take in many frames at once), or now
+   * if forced. One skipped is summarized an update period later, if nothing came since: the latest weights show.
+   */
   private publish(t: number, force: boolean) {
     const now = performance.now();
-    if (!force && now - this.lastWall < chartSettings().updateMs) return;
+    const { updateMs, keepMs } = chartSettings();
+    clearTimeout(this.trailing);
+    if (!force && t >= this.lastT && now - this.lastWall < updateMs && t - this.lastT < keepMs / 500) {
+      this.trailing = setTimeout(() => {
+        if (!this.disposed) this.gate.deliver(t, () => this.publish(t, true));
+      }, updateMs);
+      return;
+    }
     this.lastWall = now;
     // Time can go back (a rebuilt network): restart the trend.
     if (t < this.lastT) this.dirty = true;
@@ -193,6 +200,7 @@ export class WeightsView {
     if (this.disposed) return;
     this.disposed = true;
     this.unfollow();
+    clearTimeout(this.trailing);
     this.gate.dispose();
     await this.viewer?.detach().catch(() => {});
     this.trend.dispose();

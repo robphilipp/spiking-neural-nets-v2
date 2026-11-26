@@ -7,7 +7,8 @@ import { KEEP_CHOICES, useChartSettings, ZOOM_HELP } from "../chartSettings";
  * How the live charts take in and keep data (as in stream-charts' examples): buffering (how long a chart gathers
  * data before drawing it), the update rate (how often the engine sends it), cadence (smooth scrolling between
  * updates) and how much simulated time is kept. They apply to every live chart, at once. Reset zoom puts every
- * chart's pan and zoom back.
+ * chart's pan and zoom back. Freeze holds the charts still while the run goes on (the 3D view keeps flashing);
+ * unfrozen, they take in what came meanwhile and carry on.
  */
 export function ChartControls() {
   const {
@@ -21,6 +22,8 @@ export function ChartControls() {
     setKeepMs,
     reset,
     resetZoom,
+    frozen,
+    setFrozen,
   } = useChartSettings();
   return (
     <Row data-testid="chart-controls">
@@ -62,6 +65,13 @@ export function ChartControls() {
         testId="cadence"
         title="Move the time axes on every animation frame, so the charts scroll smoothly between updates (the membrane potential chart always does)"
       />
+      <Toggle
+        label="Freeze charts"
+        checked={frozen}
+        onChange={setFrozen}
+        testId="freeze"
+        title="Hold the charts still to look at them, while the run goes on. Unfreeze to catch up: they take in what came meanwhile (as far back as Keep)."
+      />
       <Button
         variant="ghost"
         size="icon-sm"
@@ -81,6 +91,11 @@ export function ChartControls() {
         <ZoomOut /> Reset zoom
       </Button>
       <span className="pb-1.5 text-xs text-muted-foreground">{ZOOM_HELP}</span>
+      {frozen && (
+        <span className="pb-1.5 text-xs font-medium text-warning" data-testid="frozen-note">
+          Charts frozen: the run goes on, and they catch up when unfrozen.
+        </span>
+      )}
     </Row>
   );
 }

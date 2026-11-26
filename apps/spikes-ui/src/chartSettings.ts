@@ -38,6 +38,9 @@ type ChartSettingsStore = ChartSettings & {
   /** Bumped to put every chart's zoom and pan back (charts are keyed on it). Not remembered. */
   zoomResets: number;
   resetZoom: () => void;
+  /** The charts hold still while the run goes on; on unfreezing, they take in what came meanwhile. Not remembered. */
+  frozen: boolean;
+  setFrozen: (frozen: boolean) => void;
 };
 
 export const useChartSettings = create<ChartSettingsStore>()((set) => ({
@@ -50,6 +53,8 @@ export const useChartSettings = create<ChartSettingsStore>()((set) => ({
   reset: () => set(DEFAULT_CHART_SETTINGS),
   zoomResets: 0,
   resetZoom: () => set((s) => ({ zoomResets: s.zoomResets + 1 })),
+  frozen: false,
+  setFrozen: (frozen) => set({ frozen }),
 }));
 
 useChartSettings.subscribe(({ bufferMs, updateMs, cadence, keepMs }) =>
