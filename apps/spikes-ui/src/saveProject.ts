@@ -1,20 +1,20 @@
 // Saving the open project, shared by the Projects and Inputs pages.
 
 import { pickFolder, writeProject } from "./files";
-import { projectSaved, useProject, useSession } from "./store";
+import { projectSaved, projectUnsaved, useProject, useSession, writableProject } from "./store";
 
-/** Whether anything differs from what was last saved (or opened): the network, the project's settings or an input file. */
+/** Whether the project (its settings, network, or a listed input file) differs from what was saved or opened. */
 export function useUnsaved(): boolean {
-  const { project, inputFiles, savedDescription, savedProject, savedInputs } = useProject();
+  const state = useProject();
   const description = useSession((s) => s.description);
-  return description !== (savedDescription ?? "") || JSON.stringify(project) !== savedProject || JSON.stringify(inputFiles) !== savedInputs;
+  return description !== (state.savedDescription ?? "") || projectUnsaved(state);
 }
 
-/** Writes the project into `dir`; returns where. */
+/** Writes the project into `dir`; returns where. Input files outside the project aren't written. */
 export async function saveProjectTo(dir: string): Promise<string> {
-  const { project, inputFiles } = useProject.getState();
+  const state = useProject.getState();
   const description = useSession.getState().description;
-  await writeProject(dir, project, description, inputFiles);
+  await writeProject(dir, writableProject(state), description, state.inputFiles);
   projectSaved({ folder: dir, description });
   return dir;
 }

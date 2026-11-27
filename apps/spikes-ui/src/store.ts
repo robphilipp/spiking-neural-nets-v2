@@ -70,8 +70,16 @@ export interface ProjectState {
   /** The description as last saved (to show unsaved changes). */
   savedDescription: string | null;
   savedProject: string | null;
-  /** The input files as last saved (JSON). */
+  /** The project's (listed) input files as last saved (see `inputsKey`). */
   savedInputs: string | null;
+  /** Input files that are in this window but not in the project (not listed in project.toml): new, opened or found
+   *  unlisted in the folder while a project is open. "Add to project" lists them. */
+  loose: string[];
+  /** Where input files outside the project folder live on disk (desktop), by file name; those in the project are
+   *  at the project folder + name. */
+  inputPaths: Record<string, string>;
+  /** Each input file as last saved or opened (JSON), by name: to show which have unsaved changes. */
+  savedFile: Record<string, string>;
   /** Recently opened folders, newest first. */
   recent: string[];
 }
@@ -88,11 +96,33 @@ export const useProject = create<ProjectState>()(() => ({
   savedDescription: null,
   savedProject: null,
   savedInputs: null,
+  loose: [],
+  inputPaths: {},
+  savedFile: {},
   recent: recall<string[]>(RECENT_KEY, []),
 }));
 rememberIn(useProject, RECENT_KEY, (s) => s.recent);
 
 const withRecent = (recent: string[], folder: string) => [folder, ...recent.filter((f) => f !== folder)].slice(0, 10);
+
+/** The project as project.toml has it: without the files that aren't in it (and without a selection of one). */
+export const writableProject = (s: Pick<ProjectState, "project" | "loose">): Project => ({
+  ...s.project,
+  inputs: s.project.inputs.filter((n) => !s.loose.includes(n)),
+  selectedInputs: s.project.selectedInputs !== null && s.loose.includes(s.project.selectedInputs) ? null : s.project.selectedInputs,
+});
+
+/** The listed input files, as one comparable string (by name, in name order). */
+export const inputsKey = (files: Record<string, InputFile | string>): string =>
+  JSON.stringify(Object.keys(files).sort().map((n) => [n, files[n]]));
+
+const listedKey = (s: Pick<ProjectState, "project" | "loose" | "inputFiles">): string =>
+  inputsKey(Object.fromEntries(s.project.inputs.filter((n) => !s.loose.includes(n)).map((n) => [n, JSON.stringify(s.inputFiles[n] ?? emptyInputFile())])));
+
+/** Whether the project (as project.toml and its listed input files) differs from what was saved. */
+export const projectUnsaved = (s: ProjectState): boolean => JSON.stringify(writableProject(s)) !== s.savedProject || listedKey(s) !== s.savedInputs;
+
+const filesJson = (files: Record<string, InputFile>): Record<string, string> => Object.fromEntries(Object.entries(files).map(([n, f]) => [n, JSON.stringify(f)]));
 
 /** `saved`: whether the folder has project.toml and the input files as read (without, the project shows as
  *  unsaved until it's saved). */
@@ -102,6 +132,7 @@ export function projectOpened({
   description,
   inputFiles,
   dataFiles = {},
+  looseFiles = {},
   saved,
 }: {
   folder: string;
@@ -109,36 +140,53 @@ export function projectOpened({
   description: string;
   inputFiles: Record<string, InputFile>;
   dataFiles?: Record<string, Uint8Array>;
+  /** Input files found in the folder that the project doesn't list. */
+  looseFiles?: Record<string, InputFile>;
   saved: boolean;
 }) {
+  const loose = Object.keys(looseFiles);
+  const all = { ...inputFiles, ...looseFiles };
   useProject.setState((s) => ({
     folder,
-    project,
-    inputFiles,
+    project: { ...project, inputs: [...project.inputs, ...loose] },
+    inputFiles: all,
+    loose,
+    inputPaths: {},
+    savedFile: filesJson(all),
     dataFiles,
     savedDescription: description,
     savedProject: saved ? JSON.stringify(project) : null,
-    savedInputs: saved ? JSON.stringify(inputFiles) : null,
+    savedInputs: saved ? inputsKey(filesJson(inputFiles)) : null,
     recent: withRecent(s.recent, folder),
   }));
 }
 
 export function projectSaved({ folder, description }: { folder: string; description: string }) {
-  useProject.setState((s) => ({
-    folder,
-    savedDescription: description,
-    savedProject: JSON.stringify(s.project),
-    savedInputs: JSON.stringify(s.inputFiles),
-    recent: withRecent(s.recent, folder),
-  }));
+  useProject.setState((s) => {
+    const listed = s.project.inputs.filter((n) => !s.loose.includes(n));
+    const saved = filesJson(Object.fromEntries(listed.map((n) => [n, s.inputFiles[n] ?? emptyInputFile()])));
+    return {
+      folder,
+      savedDescription: description,
+      savedProject: JSON.stringify(writableProject(s)),
+      savedInputs: inputsKey(saved),
+      savedFile: { ...s.savedFile, ...saved },
+      recent: withRecent(s.recent, folder),
+    };
+  });
 }
 
-/** An input file changed (or was added: it joins the project's list). */
+/** An input file changed, or was added (opened): with a project folder open it is not in the project until it's added
+ *  to it; without, it is part of the project being made. */
 export function inputFileChanged(name: string, file: InputFile) {
-  useProject.setState((s) => ({
-    project: s.project.inputs.includes(name) ? s.project : { ...s.project, inputs: [...s.project.inputs, name] },
-    inputFiles: { ...s.inputFiles, [name]: file },
-  }));
+  useProject.setState((s) => {
+    const known = s.project.inputs.includes(name);
+    return {
+      project: known ? s.project : { ...s.project, inputs: [...s.project.inputs, name] },
+      loose: !known && s.folder !== null ? [...s.loose, name] : s.loose,
+      inputFiles: { ...s.inputFiles, [name]: file },
+    };
+  });
 }
 
 /** A data file's bytes (at `path` in the project folder). */
@@ -160,8 +208,26 @@ export function selectedInputs(s: ProjectState): { name: string; file: InputFile
 const fileSetOf = (s: ProjectState): FileSet => ({ names: s.project.inputs, files: s.inputFiles, selected: s.project.selectedInputs });
 
 /** Applies a change to the project's input files (and which is selected) as one update. */
-function filesChanged(set: FileSet) {
-  useProject.setState((s) => ({ project: { ...s.project, inputs: set.names, selectedInputs: set.selected }, inputFiles: set.files }));
+function filesChanged(set: FileSet, renamed?: [string, string]) {
+  useProject.setState((s) => {
+    const known = new Set(s.project.inputs);
+    const [from, to] = renamed ?? [null, null];
+    const carry = <T,>(rec: Record<string, T>): Record<string, T> => {
+      const out: Record<string, T> = {};
+      for (const [n, v] of Object.entries(rec)) out[n === from ? to! : n] = v;
+      return Object.fromEntries(Object.entries(out).filter(([n]) => set.names.includes(n)));
+    };
+    // A file that wasn't there is new: outside the project while a project folder is open.
+    const fresh = set.names.filter((n) => !known.has(n) && n !== to);
+    const loose = [...s.loose.map((n) => (n === from ? to! : n)).filter((n) => set.names.includes(n)), ...(s.folder !== null ? fresh : [])];
+    return {
+      project: { ...s.project, inputs: set.names, selectedInputs: set.selected },
+      inputFiles: set.files,
+      loose,
+      inputPaths: carry(s.inputPaths),
+      savedFile: carry(s.savedFile),
+    };
+  });
 }
 
 /** A new empty input file, selected; its name. */
@@ -181,12 +247,53 @@ export function inputFileDuplicated(name: string): string {
 /** An input file renamed (throws an InputFileError for an empty or taken name); its new file name. */
 export function inputFileRenamed(name: string, label: string): string {
   const { set, name: next } = renameFile(fileSetOf(useProject.getState()), name, label);
-  filesChanged(set);
+  filesChanged(set, next === name ? undefined : [name, next]);
   return next;
 }
 
 export function inputFileDeleted(name: string) {
   filesChanged(deleteFile(fileSetOf(useProject.getState()), name));
+}
+
+/** An input file was written to `path` (null: downloaded, no path): its changes are saved. */
+export function inputFileSaved(name: string, path: string | null) {
+  useProject.setState((s) => ({
+    savedFile: { ...s.savedFile, [name]: JSON.stringify(s.inputFiles[name] ?? emptyInputFile()) },
+    inputPaths: path === null ? s.inputPaths : { ...s.inputPaths, [name]: path },
+  }));
+}
+
+/** A file outside the project joins it (and is written, in the project folder): it goes last in the list. The caller has
+ *  written it, and project.toml if there is one (`savedProject`). */
+export function inputFileListed(name: string) {
+  useProject.setState((s) => {
+    const inputs = [...s.project.inputs.filter((n) => n !== name), name];
+    const inputPaths = { ...s.inputPaths };
+    delete inputPaths[name];
+    const file = JSON.stringify(s.inputFiles[name] ?? emptyInputFile());
+    const saved = s.savedProject === null ? null : (JSON.parse(s.savedProject) as Project);
+    return {
+      project: { ...s.project, inputs },
+      loose: s.loose.filter((n) => n !== name),
+      inputPaths,
+      savedFile: { ...s.savedFile, [name]: file },
+      savedProject: saved === null ? null : JSON.stringify({ ...saved, inputs: [...saved.inputs, name] }),
+      savedInputs: s.savedInputs === null ? null : inputsKey({ ...Object.fromEntries((JSON.parse(s.savedInputs) as [string, string][]).map(([n, f]) => [n, f])), [name]: file }),
+    };
+  });
+}
+
+/** The project's saved settings (as project.toml has them) with a renamed input file: after the file was renamed on
+ *  disk and in project.toml (`from` → `to`). */
+export function savedProjectRenamed(from: string, to: string) {
+  useProject.setState((s) => {
+    if (s.savedProject === null) return {};
+    const saved = JSON.parse(s.savedProject) as Project;
+    const rename = (n: string) => (n === from ? to : n);
+    const next = { ...saved, inputs: saved.inputs.map(rename), selectedInputs: saved.selectedInputs === null ? null : rename(saved.selectedInputs) };
+    const files = Object.fromEntries((JSON.parse(s.savedInputs ?? "[]") as [string, string][]).map(([n, f]) => [rename(n), f]));
+    return { savedProject: JSON.stringify(next), savedInputs: s.savedInputs === null ? null : inputsKey(files) };
+  });
 }
 
 export function projectRenamed(name: string) {
@@ -203,7 +310,7 @@ export function forgetRecent(folder: string) {
 
 export function newProjectStarted() {
   const project = newProject("untitled");
-  useProject.setState({ folder: null, project, inputFiles: freshInputs(project), dataFiles: {}, savedDescription: null, savedProject: null, savedInputs: null });
+  useProject.setState({ folder: null, project, inputFiles: freshInputs(project), dataFiles: {}, savedDescription: null, savedProject: null, savedInputs: null, loose: [], inputPaths: {}, savedFile: {} });
 }
 
 export { DEFAULT_RUN };

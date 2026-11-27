@@ -3,9 +3,7 @@
 // open the file is read-only: sources show their status, and pulse sources can be fired.
 
 import { useEffect, useMemo, useState } from "react";
-import { Save } from "lucide-react";
 import { Heading, Notice, Panel, Stat } from "@/components/kit";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChannelPreview } from "../components/inputs/ChannelPreview";
 import { FilesPanel } from "../components/inputs/FilesPanel";
@@ -40,8 +38,7 @@ import {
   useSession,
 } from "../store";
 import { useRealtime } from "../realtime";
-import { saveProject, useUnsaved } from "../saveProject";
-import { inTauri as inDesktop } from "../tauriClient";
+import { addInputFileToProject, canAddToProject, renameInputFile, saveInputFile } from "../inputFileActions";
 import { useBehavior } from "../useBehavior";
 
 export function InputsPage() {
@@ -57,8 +54,20 @@ export function InputsPage() {
   const [index, setIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const canFire = useCanFire(selected, file);
-  const unsaved = useUnsaved();
-  const [saved, setSaved] = useState<string | null>(null);
+  const loose = useProject((s) => s.loose);
+  const folder0 = useProject((s) => s.folder);
+  const savedFile = useProject((s) => s.savedFile);
+  const inputPaths = useProject((s) => s.inputPaths);
+  const [note, setNote] = useState<string | null>(null);
+  const status =
+    selected === null || file === null
+      ? null
+      : {
+          inProject: !loose.includes(selected),
+          unsaved: savedFile[selected] !== JSON.stringify(file),
+          path: !loose.includes(selected) && folder0 !== null ? `${folder0}/${selected}` : (inputPaths[selected] ?? null),
+        };
+  const fail = (e: unknown) => setError(e instanceof Error ? e.message : String(e));
   const statuses = useRealtime((s) => s.statuses);
   const realtime = useMemo(() => Object.fromEntries(statuses.map((x) => [x.name, x])), [statuses]);
 
@@ -126,36 +135,6 @@ export function InputsPage() {
 
   return (
     <div className="flex flex-col gap-3" data-testid="inputs-page">
-      <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="inputs-save">
-        {unsaved ? (
-          <Badge className="border-0 bg-warning text-black" data-testid="inputs-unsaved">
-            unsaved changes
-          </Badge>
-        ) : (
-          <span className="text-xs text-muted-foreground" data-testid="inputs-saved">
-            {saved ? `Saved to ${saved}` : "All changes saved"}
-          </span>
-        )}
-        {inDesktop() ? (
-          <Button
-            size="sm"
-            disabled={!unsaved && folder !== null}
-            data-testid="inputs-save-button"
-            title={folder ? `Writes the project's files (network, settings and input files) to ${folder}` : "Choose a folder for the project, and write its files there"}
-            onClick={() => {
-              setError(null);
-              saveProject()
-                .then((dir) => dir && setSaved(dir))
-                .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-            }}
-          >
-            <Save data-icon="inline-start" />
-            Save project
-          </Button>
-        ) : (
-          unsaved && <span className="text-xs text-muted-foreground">This browser can't write to folders: download the files from the Projects page.</span>
-        )}
-      </div>
       <FilesPanel
         names={names}
         selected={selected}
@@ -167,7 +146,33 @@ export function InputsPage() {
           setIndex(0);
         }}
         onDuplicate={() => selected !== null && (inputFileDuplicated(selected), setIndex(0))}
-        onRename={(label) => selected !== null && inputFileRenamed(selected, label)}
+        onRename={async (label) => {
+          if (selected === null) return;
+          setNote(null);
+          await renameInputFile(selected, label);
+        }}
+        status={status}
+        onSave={() => {
+          // The file selected now (a name typed just before was applied first).
+          const name = useProject.getState().project.selectedInputs;
+          if (name === null) return;
+          setError(null);
+          saveInputFile(name)
+            .then((where) => where && setNote(`Saved ${where}`))
+            .catch(fail);
+        }}
+        onAddToProject={
+          selected !== null && canAddToProject(selected)
+            ? () => {
+                const name = useProject.getState().project.selectedInputs;
+                if (name === null) return;
+                setError(null);
+                addInputFileToProject(name)
+                  .then((where) => setNote(`Added to the project: ${where}`))
+                  .catch(fail);
+              }
+            : null
+        }
         onDelete={() => selected !== null && (inputFileDeleted(selected), setIndex(0))}
         onDescription={(description) => file && edit({ ...file, description })}
       />
@@ -186,6 +191,11 @@ export function InputsPage() {
         <Notice data-testid="locked-note">
           A run is open, and a run is fully described by its input file and seed, so the file can't be edited now. Stop the run to edit; Fire sends a
           pulse source's pulse now.
+        </Notice>
+      )}
+      {note && (
+        <Notice onClose={() => setNote(null)} data-testid="inputs-note">
+          {note}
         </Notice>
       )}
       {error && (

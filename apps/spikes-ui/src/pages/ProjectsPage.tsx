@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { Field, Heading, Notice, Panel } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { pickFolder, readProject } from "../files";
+import { inFolderPath, pickFolder, pickInputFile, readProject } from "../files";
 import { saveProjectTo, useUnsaved } from "../saveProject";
 import { emptyInputFile, parseInputFile, serializeInputFile } from "../inputFile";
 import { serializeProject } from "../project";
@@ -11,6 +11,7 @@ import {
   forget,
   forgetRecent,
   inputFileChanged,
+  inputFileSaved,
   inputsSelected,
   newProjectStarted,
   projectOpened,
@@ -18,6 +19,7 @@ import {
   setDescription,
   useProject,
   useSession,
+  writableProject,
 } from "../store";
 import { inTauri } from "../tauriClient";
 
@@ -54,10 +56,20 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
     setChoose(null);
     const read = await readProject(dir, network);
     if (read.kind === "choose") return setChoose({ folder: dir, networks: read.networks });
-    const { project: p, description: text, inputFiles: files, dataFiles: data, saved } = read;
+    const { project: p, description: text, inputFiles: files, dataFiles: data, looseFiles, skipped, saved } = read;
     forget(); // a new engine session is created when the network is applied
-    projectOpened({ folder: dir, project: p, description: text, inputFiles: files, dataFiles: data, saved });
+    projectOpened({ folder: dir, project: p, description: text, inputFiles: files, dataFiles: data, looseFiles, saved });
+    for (const name of Object.keys(looseFiles)) inputFileSaved(name, await inFolderPath(dir, name));
     setDescription({ name: p.name, description: text });
+    const unlisted = Object.keys(looseFiles);
+    if (unlisted.length > 0 || skipped.length > 0) {
+      setMessage({
+        ok: skipped.length === 0,
+        text:
+          (unlisted.length > 0 ? `${unlisted.join(", ")} ${unlisted.length === 1 ? "is" : "are"} in the folder but not in the project: ${unlisted.length === 1 ? "it's" : "they're"} on the Inputs page, where Add to project lists ${unlisted.length === 1 ? "it" : "them"}. ` : "") +
+          (skipped.length > 0 ? `Couldn't read: ${skipped.join("; ")}` : ""),
+      });
+    }
     if (!text) {
       // Nothing to show on the Network page: say so here.
       setMessage({ ok: true, text: `${dir} has no project.toml or .boo file: a new project there, with an empty network (Save writes them).` });
@@ -162,7 +174,23 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
                 e.target.value = "";
               }}
             />
-            <Button variant="outline" onClick={() => inputUpload.current?.click()} data-testid="open-inputs">
+            <Button
+              variant="outline"
+              onClick={
+                desktop
+                  ? attempt(async () => {
+                      const picked = await pickInputFile();
+                      if (!picked) return;
+                      const name = picked.path.split(/[\\/]/).pop()!;
+                      inputFileChanged(name, parseInputFile(picked.text, name));
+                      inputFileSaved(name, picked.path);
+                      inputsSelected(name);
+                      setMessage({ ok: true, text: `Opened ${picked.path}: runs use it (Run page › Input file).` });
+                    })
+                  : () => inputUpload.current?.click()
+              }
+              data-testid="open-inputs"
+            >
               <Upload data-icon="inline-start" />
               Open an input file…
             </Button>
@@ -191,7 +219,7 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
               <Download data-icon="inline-start" />
               Download {project.network}
             </Button>
-            <Button variant="outline" onClick={() => download("project.toml", serializeProject(project))}>
+            <Button variant="outline" onClick={() => download("project.toml", serializeProject(writableProject(useProject.getState())))}>
               <Download data-icon="inline-start" />
               Download project.toml
             </Button>

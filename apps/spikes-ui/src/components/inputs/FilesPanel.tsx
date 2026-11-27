@@ -1,15 +1,27 @@
-import { Copy, FilePlus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Copy, FilePlus, FolderInput, Pencil, Save, Trash2 } from "lucide-react";
+import { useRef, useState } from "react";
 import { Choice, Field, Heading, Panel, Row } from "@/components/kit";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { inputLabel } from "../../inputEdit";
-import { type InputFile, InputFileError } from "../../inputFile";
+import type { InputFile } from "../../inputFile";
 
 const NO_FILE = "(none)";
 
 /** The file's name, renamed when you leave the field or press Enter (so a half-typed name never becomes a file); a name
  *  that can't be used says why and stays as typed. */
-function NameField({ label, onRename, disabled }: { label: string; onRename: (label: string) => void; disabled: boolean }) {
+function NameField({
+  label,
+  onRename,
+  disabled,
+  pending,
+}: {
+  label: string;
+  onRename: (label: string) => void | Promise<void>;
+  disabled: boolean;
+  /** Set to a function that applies a name that was typed but not yet renamed (false: it can't be used). */
+  pending: { current: (() => Promise<boolean>) | null };
+}) {
   const [text, setText] = useState(label);
   const [last, setLast] = useState(label);
   const [error, setError] = useState<string | null>(null);
@@ -18,16 +30,22 @@ function NameField({ label, onRename, disabled }: { label: string; onRename: (la
     setText(label);
     setError(null);
   }
-  const commit = () => {
-    if (text === label) return setError(null);
+  const commit = async (): Promise<boolean> => {
+    if (text === label) {
+      setError(null);
+      return true;
+    }
     try {
-      onRename(text);
+      await onRename(text);
+      return true;
     } catch (e) {
-      if (!(e instanceof InputFileError)) throw e;
-      setError(e.message);
+      setError(e instanceof Error ? e.message : String(e));
+      return false;
     }
   };
+  pending.current = commit;
   return (
+    <>
     <Field
       label="File name"
       width={200}
@@ -37,10 +55,14 @@ function NameField({ label, onRename, disabled }: { label: string; onRename: (la
       disabled={disabled}
       spellCheck={false}
       onChange={(e) => setText(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => e.key === "Enter" && commit()}
+      onKeyDown={(e) => e.key === "Enter" && void commit()}
       data-testid="file-name"
     />
+    <Button variant="outline" onClick={() => void commit()} disabled={disabled || text === label} data-testid="file-rename" title="Rename the file (on disk too, and in the project)">
+      <Pencil data-icon="inline-start" />
+      Rename
+    </Button>
+    </>
   );
 }
 
@@ -53,6 +75,9 @@ export function FilesPanel({
   selected,
   file,
   onSelect,
+  status,
+  onSave,
+  onAddToProject,
   onNew,
   onDuplicate,
   onRename,
@@ -67,12 +92,26 @@ export function FilesPanel({
   onNew: () => void;
   onDuplicate: () => void;
   /** Throws an InputFileError for a name that can't be used. */
-  onRename: (label: string) => void;
+  onRename: (label: string) => void | Promise<void>;
   onDelete: () => void;
+  /** Where the file stands: in the project or not, and whether its changes are saved. */
+  status: { inProject: boolean; unsaved: boolean; path: string | null } | null;
+  onSave: () => void;
+  /** Null: not available (no project is open, or the file is in it). */
+  onAddToProject: (() => void) | null;
+  /** What Save does, for the button's title. */
   onDescription: (description: string) => void;
   locked: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const pending = useRef<(() => Promise<boolean>) | null>(null);
+  /** Applies a typed name first (a Save or Add right after typing a name acts on the new name), then `then`. */
+  const afterRename = (then: () => void) => () => {
+    void (async () => {
+      if ((await pending.current?.()) === false) return;
+      then();
+    })();
+  };
   return (
     <Panel data-testid="files-panel">
       <Heading>Input files</Heading>
@@ -93,7 +132,7 @@ export function FilesPanel({
         />
         {selected !== null && (
           <>
-            <NameField label={inputLabel(selected)} onRename={onRename} disabled={locked} />
+            <NameField label={inputLabel(selected)} onRename={onRename} disabled={locked} pending={pending} />
           </>
         )}
         <Button variant="outline" onClick={onNew} disabled={locked} data-testid="file-new">
@@ -102,6 +141,20 @@ export function FilesPanel({
         </Button>
         {selected !== null && (
           <>
+            <Button variant="outline" onClick={afterRename(onSave)} data-testid="file-save" title={status?.path ? `Writes the file to ${status.path}` : "Asks where to save the file"}>
+              <Save data-icon="inline-start" />
+              Save
+            </Button>
+            <Button
+              variant="outline"
+              onClick={onAddToProject ? afterRename(onAddToProject) : undefined}
+              disabled={onAddToProject === null || locked}
+              data-testid="file-add-to-project"
+              title={onAddToProject ? "Saves the file in the project folder and lists it in the project" : "Needs an open project, and a file that isn't in it yet"}
+            >
+              <FolderInput data-icon="inline-start" />
+              Add to project
+            </Button>
             <Button variant="outline" onClick={onDuplicate} disabled={locked} data-testid="file-duplicate">
               <Copy data-icon="inline-start" />
               Duplicate
@@ -124,6 +177,21 @@ export function FilesPanel({
           </>
         )}
       </Row>
+      {status && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="file-status">
+          <Badge variant="outline" className="font-normal" data-testid="file-membership">
+            {status.inProject ? "in the project" : "not in the project"}
+          </Badge>
+          {status.unsaved ? (
+            <Badge className="border-0 bg-warning font-normal text-black" data-testid="file-unsaved">
+              unsaved changes
+            </Badge>
+          ) : (
+            <span data-testid="file-saved">saved</span>
+          )}
+          {status.path && <span className="break-all">{status.path}</span>}
+        </div>
+      )}
       {file && (
         <Field
           label="Description"

@@ -1,8 +1,8 @@
 // Project folders on disk (desktop app only: a web page can't open folders).
 
 import { join } from "@tauri-apps/api/path";
-import { open } from "@tauri-apps/plugin-dialog";
-import { exists, mkdir, readDir, readFile, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { exists, mkdir, readDir, readFile, readTextFile, rename, writeTextFile } from "@tauri-apps/plugin-fs";
 import { emptyInputFile, type InputFile, parseInputFile, serializeInputFile } from "./inputFile";
 import { MIGRATED_INPUTS, newProject, parseProject, type Project, ProjectError, serializeProject } from "./project";
 
@@ -25,6 +25,10 @@ export type ReadProject =
       /** Whether the folder has project.toml (without it, the project is made from the folder and its network). */
       /** The data files its input files refer to, by path in the folder (those that are there). */
       dataFiles: Record<string, Uint8Array>;
+      /** Input files in the folder that the project doesn't list (read, so they can be added to it). */
+      looseFiles: Record<string, InputFile>;
+      /** Unlisted input files that couldn't be read, with why. */
+      skipped: string[];
       saved: boolean;
     }
   /** No project.toml, and several network descriptions: which is the project's? */
@@ -66,8 +70,13 @@ export async function readProject(folder: string, network?: string): Promise<Rea
       const dataPath = await join(folder, ref.file);
       if (!(ref.file in dataFiles) && (await exists(dataPath))) dataFiles[ref.file] = await readFile(dataPath);
     }
+    const { looseFiles, skipped } = await unlistedInputs(folder, project.inputs);
+    for (const ref of Object.values(looseFiles).flatMap((f) => f.data ?? [])) {
+      const dataPath = await join(folder, ref.file);
+      if (!(ref.file in dataFiles) && (await exists(dataPath))) dataFiles[ref.file] = await readFile(dataPath);
+    }
     // A project from before input files is unsaved until its background input is written out as one.
-    return { kind: "project", project, description: await readTextFile(path), inputFiles, dataFiles, saved: migrated === null };
+    return { kind: "project", project, description: await readTextFile(path), inputFiles, dataFiles, looseFiles, skipped, saved: migrated === null };
   }
   const project = newProject(folder.split(/[\\/]/).pop() || "untitled");
   const networks = await networksIn(folder);
@@ -76,10 +85,55 @@ export async function readProject(folder: string, network?: string): Promise<Rea
     network = networks[0];
   }
   const inputFiles = Object.fromEntries(project.inputs.map((f) => [f, emptyInputFile()]));
-  if (network === undefined) return { kind: "project", project, description: "", inputFiles, dataFiles: {}, saved: false };
+  const { looseFiles, skipped } = await unlistedInputs(folder, project.inputs);
+  if (network === undefined) return { kind: "project", project, description: "", inputFiles, dataFiles: {}, looseFiles, skipped, saved: false };
   if (!networks.includes(network)) throw new ProjectError(`${network} isn't in ${folder}`);
   project.network = network;
-  return { kind: "project", project, description: await readTextFile(await join(folder, network)), inputFiles, dataFiles: {}, saved: false };
+  return { kind: "project", project, description: await readTextFile(await join(folder, network)), inputFiles, dataFiles: {}, looseFiles, skipped, saved: false };
+}
+
+/** The input files (`*.inputs.toml`) in a folder that `listed` doesn't have: read, or (those that can't be) skipped. */
+async function unlistedInputs(folder: string, listed: string[]): Promise<{ looseFiles: Record<string, InputFile>; skipped: string[] }> {
+  const looseFiles: Record<string, InputFile> = {};
+  const skipped: string[] = [];
+  for (const e of await readDir(folder)) {
+    if (!e.isFile || !e.name.endsWith(".inputs.toml") || listed.includes(e.name)) continue;
+    try {
+      looseFiles[e.name] = parseInputFile(await readTextFile(await join(folder, e.name)), e.name);
+    } catch (err) {
+      skipped.push(`${e.name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return { looseFiles, skipped };
+}
+
+/** Asks where to save an input file (starting at `defaultPath`); null if cancelled. */
+export async function pickSavePath(defaultPath: string): Promise<string | null> {
+  return (await save({ title: "Save the input file", defaultPath, filters: [{ name: "Input file", extensions: ["toml"] }] })) ?? null;
+}
+
+/** Asks for an input file to open: its path and text. */
+export async function pickInputFile(): Promise<{ path: string; text: string } | null> {
+  const picked = await open({ directory: false, multiple: false, title: "Open an input file", filters: [{ name: "Input file", extensions: ["toml"] }] });
+  return typeof picked === "string" ? { path: picked, text: await readTextFile(picked) } : null;
+}
+
+export async function writeTextAt(path: string, text: string): Promise<void> {
+  await writeTextFile(path, text);
+}
+
+export const pathExists = (path: string): Promise<boolean> => exists(path);
+
+export async function renameFileOnDisk(from: string, to: string): Promise<void> {
+  await rename(from, to);
+}
+
+/** `name` inside `folder`. */
+export const inFolderPath = (folder: string, name: string): Promise<string> => join(folder, name);
+
+/** Writes project.toml alone (the network and input files are left as they are). */
+export async function writeProjectFile(folder: string, project: Project): Promise<void> {
+  await writeTextFile(await join(folder, PROJECT_FILE), serializeProject(project));
 }
 
 /** Writes a project's settings, network description and input files into its folder (creating the folder if

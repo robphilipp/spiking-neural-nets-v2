@@ -19,5 +19,36 @@ test("the Run page describes the selected input file; the Inputs page shows unsa
 
   // Edited on the Inputs page: unsaved there too (the browser can't write, so no Save button).
   await page.getByTestId("nav-inputs").click();
-  await expect(page.getByTestId("inputs-unsaved")).toBeVisible();
+  await expect(page.getByTestId("file-unsaved")).toBeVisible();
+});
+
+test("the Inputs page's file buttons: Save downloads in a browser, Add to project needs an open project, Rename renames", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-inputs").click();
+  await expect(page.getByTestId("file-membership")).toHaveText("in the project");
+  await expect(page.getByTestId("file-add-to-project")).toBeDisabled();
+
+  await page.getByTestId("file-description").fill("changed");
+  await expect(page.getByTestId("file-unsaved")).toBeVisible();
+  const download = page.waitForEvent("download");
+  await page.getByTestId("file-save").click();
+  expect((await download).suggestedFilename()).toBe("inputs.inputs.toml");
+  await expect(page.getByTestId("file-saved")).toBeVisible();
+
+  await page.getByTestId("file-name").fill("protocol");
+  await page.getByTestId("file-rename").click();
+  await expect(page.getByLabel("Input file (used by runs)")).toHaveText("protocol");
+});
+
+test("Save acts on a name that was typed but not yet renamed", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-inputs").click();
+  await page.getByTestId("file-duplicate").click();
+  await page.getByTestId("file-name").fill("typed-name"); // no Enter, no Rename
+  const download = page.waitForEvent("download");
+  await page.getByTestId("file-save").click();
+  expect((await download).suggestedFilename()).toBe("typed-name.inputs.toml");
+  await expect(page.getByLabel("Input file (used by runs)")).toHaveText("typed-name");
 });
