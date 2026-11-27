@@ -1044,6 +1044,8 @@ pub struct Neuron {
     pub position: [f64; 3],
     /// Outgoing connections default to inhibitory.
     pub inhibitory: bool,
+    /// Each spike's amplitude in mV (its `spike_potential`).
+    pub spike_mv: f32,
     /// Spatial cell (for binned frames).
     pub cell: u32,
 }

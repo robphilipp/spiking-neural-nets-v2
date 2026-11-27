@@ -47,6 +47,8 @@ const EMPTY_STATS: LiveStats = {
 export interface Neuron {
   index: number;
   name: string;
+  /** Each spike's amplitude, mV (the neuron's spike potential): the raster's value for its spikes. */
+  spikeMv: number;
 }
 
 export function chartData(names: string[], time: number, points: Map<string, Datum[]>): TimeSeriesChartData {
@@ -186,7 +188,7 @@ export class LiveView {
   }
 
   private rasterSource(series: TimeSeries[], neurons: Neuron[]): TimeSeriesDataSource {
-    const names = new Map(neurons.map((n) => [n.index, n.name]));
+    const names = new Map(neurons.map((n) => [n.index, n]));
     return source(series, this.selected, (f) => rasterData(f, names), this.gate);
   }
 
@@ -208,7 +210,7 @@ export class LiveView {
     const series = carried(
       old,
       neurons.map((n) => n.name),
-      (_, i) => this.history.since(neurons[i]!.index, from).map((t) => ({ x: t, y: neurons[i]!.index })),
+      (_, i) => this.history.since(neurons[i]!.index, from).map((t) => ({ x: t, y: neurons[i]!.spikeMv })),
     );
     this.raster.next(this.rasterSource(series, neurons));
     this.gate.remove(old);
@@ -263,14 +265,15 @@ export class LiveView {
   }
 }
 
-function rasterData(frame: Frame, names: Map<number, string>): TimeSeriesChartData {
+/** The raster's points: each spike at its time, with its amplitude (the neuron's spike potential, mV) as the value. */
+function rasterData(frame: Frame, neurons: Map<number, { name: string; spikeMv: number }>): TimeSeriesChartData {
   const points = new Map<string, Datum[]>();
   const add = (neuron: number, t: number) => {
-    const name = names.get(neuron);
-    if (name === undefined) return;
-    let list = points.get(name);
-    if (!list) points.set(name, (list = []));
-    list.push({ x: t, y: neuron });
+    const n = neurons.get(neuron);
+    if (n === undefined) return;
+    let list = points.get(n.name);
+    if (!list) points.set(n.name, (list = []));
+    list.push({ x: t, y: n.spikeMv });
   };
   if (frame.spikes) {
     frame.spikes.neuron.forEach((n, i) => add(n, timeMs(frame.header, frame.spikes!.offset[i]!)));
@@ -279,7 +282,7 @@ function rasterData(frame: Frame, names: Map<number, string>): TimeSeriesChartDa
     const mid = (frame.header.t0Ms + frame.header.t1Ms) / 2;
     frame.spikeCounts.neuron.forEach((n) => add(n, mid));
   }
-  return chartData([...names.values()], frame.header.t1Ms, points);
+  return chartData([...neurons.values()].map((n) => n.name), frame.header.t1Ms, points);
 }
 
 /** A synapse shown in the weights chart. */

@@ -8,8 +8,11 @@ import {
   defaultLineStyle,
   OrdinalAxis,
   RasterPlot,
+  RasterPlotTooltipContent,
   ScatterPlot,
+  ScatterPlotTooltipContent,
   type SeriesLineStyle,
+  Tooltip,
 } from "stream-charts";
 import { Choice, Field, Heading, Notice, NumberField, Panel, Row, Stat, StateBadge, Toggle } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +40,8 @@ import { useChartColors } from "../theme";
 
 /** Speed on a log scale: slider value v means 2^v simulated seconds per wall second. */
 const speedOf = (v: number) => 2 ** v;
+/** Simulated time in a chart tooltip: spikes are sub-millisecond, so two decimals. */
+const ms = (v: number) => `${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ms`;
 const speedLabel = (v: number) => (v >= 0 ? `×${speedOf(v)}` : `×1/${2 ** -v}`);
 
 /** How many raster rows at most. */
@@ -603,6 +608,11 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
                 font={showNames ? (rowHeight < 14 ? { size: 9 } : undefined) : { color: "transparent" }}
               />
               <RasterPlot spikeMargin={rowHeight >= 10 ? 1 : 0} withCadence={cadence} {...ZOOM} />
+              {/* Hovering a spike: its neuron and time, and that neuron's spike count and mean interval (the library's content). */}
+              <Tooltip visible style={{ ...colors.tooltip, backgroundOpacity: 0.9 }}>
+                {/* A spike's value is its amplitude: the neuron's spike potential. */}
+                <RasterPlotTooltipContent xFormatter={ms} yFormatter={(v) => `${v.toLocaleString(undefined, { maximumFractionDigits: 3 })} mV`} intervalFormatter={ms} />
+              </Tooltip>
             </Chart>
           )}
         </div>
@@ -625,6 +635,16 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
               <ContinuousAxis axisId="x-axis-1" location={AxisLocation.Bottom} domain={timeDomain} label="t (ms)" />
               <ContinuousAxis axisId="y-axis-1" location={AxisLocation.Left} domain={[-1, 10]} label="Hz" autoScale autoScaleMin={-1} />
               <ScatterPlot withCadence={cadence} {...ZOOM} />
+              <Tooltip visible style={{ ...colors.tooltip, backgroundOpacity: 0.9 }}>
+                <ScatterPlotTooltipContent
+                  xLabel="t (ms)"
+                  yLabel="Hz per neuron"
+                  xValueFormatter={ms}
+                  xChangeFormatter={(a, b) => ms(b - a)}
+                  yValueFormatter={(v) => v.toFixed(2)}
+                  yChangeFormatter={(a, b) => `${b - a >= 0 ? "+" : ""}${(b - a).toFixed(2)}`}
+                />
+              </Tooltip>
             </Chart>
           )}
         </div>

@@ -1044,6 +1044,7 @@ fn api_network(network: &crate::NetworkInfo) -> api::Network {
                 kind: n.kind.to_string(),
                 position: n.position,
                 inhibitory: n.inhibitory,
+                spike_mv: n.spike_mv,
                 cell: network.cells[n.index as usize],
             })
             .collect(),

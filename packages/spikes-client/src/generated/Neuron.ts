@@ -29,6 +29,10 @@ position: [number, number, number],
  */
 inhibitory: boolean, 
 /**
+ * Each spike's amplitude in mV (its `spike_potential`).
+ */
+spikeMv: number, 
+/**
  * Spatial cell (for binned frames).
  */
 cell: number, };

@@ -24,6 +24,9 @@ pub struct NeuronInfo {
     pub position: [f64; 3],
     /// Whether its outgoing connections default to inhibitory.
     pub inhibitory: bool,
+    /// Each spike's amplitude in mV (its `spike_potential`): what a spike delivers before a synapse's sign and
+    /// weight.
+    pub spike_mv: f32,
 }
 
 /// One synapse, as built.
@@ -50,8 +53,9 @@ pub struct NeuronList(List);
 enum List {
     Described {
         names: Arc<NeuronNames>,
-        /// (population, dynamics class, inhibitory) of each kind of neuron (a population, or a neuron listed alone).
-        kinds: Vec<(String, &'static str, bool)>,
+        /// (population, dynamics class, inhibitory, spike mV) of each kind of neuron (a population, or a neuron
+        /// listed alone).
+        kinds: Vec<(String, &'static str, bool, f32)>,
         /// Each neuron's kind and position.
         neurons: Vec<(u32, [f64; 3])>,
     },
@@ -68,19 +72,22 @@ impl Default for NeuronList {
 impl NeuronList {
     fn described(description: &NetworkDescription, names: Arc<NeuronNames>) -> Self {
         // Kinds by what they show (neurons listed one by one share them too).
-        let mut kinds: Vec<(String, &'static str, bool)> = Vec::new();
-        let mut index: std::collections::HashMap<(&str, &'static str, bool), u32> = std::collections::HashMap::new();
+        let mut kinds: Vec<(String, &'static str, bool, f32)> = Vec::new();
+        let mut index: std::collections::HashMap<(&str, &'static str, bool, u32), u32> =
+            std::collections::HashMap::new();
         let neurons = description
             .neurons
             .iter()
             .map(|d| {
+                let spike_mv = d.params().spike_mv as f32;
                 let key = (
                     d.population().unwrap_or_default(),
                     d.params().kind.name(),
                     d.inhibitory(),
+                    spike_mv.to_bits(),
                 );
                 let kind = *index.entry(key).or_insert_with(|| {
-                    kinds.push((key.0.to_string(), key.1, key.2));
+                    kinds.push((key.0.to_string(), key.1, key.2, spike_mv));
                     kinds.len() as u32 - 1
                 });
                 (kind, d.location_um())
@@ -107,7 +114,7 @@ impl NeuronList {
         match &self.0 {
             List::Described { names, kinds, neurons } => {
                 let &(kind, position) = neurons.get(index as usize)?;
-                let (population, kind, inhibitory) = &kinds[kind as usize];
+                let (population, kind, inhibitory, spike_mv) = &kinds[kind as usize];
                 Some(NeuronInfo {
                     index,
                     name: names.name(index)?.into_owned(),
@@ -115,6 +122,7 @@ impl NeuronList {
                     kind,
                     position,
                     inhibitory: *inhibitory,
+                    spike_mv: *spike_mv,
                 })
             }
             List::Listed(neurons) => neurons.get(index as usize).cloned(),

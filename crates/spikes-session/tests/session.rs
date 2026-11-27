@@ -359,3 +359,20 @@ fn reset_puts_the_network_back_as_built_and_a_run_from_there_repeats_exactly() {
     run(&session);
     assert_eq!(state(&session), first, "the same run again, background input included");
 }
+
+#[test]
+fn neurons_report_their_spike_potential() {
+    let engine = Engine::new();
+    let session = engine
+        .create(
+            "amplitudes",
+            "(neuron_types=[(name=strong, spike_potential=2.5 mV)],
+              neurons=[(name=a, type=strong, position=[0, 0, 0]), (name=b, position=[10, 0, 0])])"
+                .to_string(),
+        )
+        .unwrap();
+    session.build(BuildSettings::default()).unwrap();
+    let network = session.network();
+    let mv: Vec<f32> = network.neurons.iter().map(|n| n.spike_mv).collect();
+    assert_eq!(mv, vec![2.5, 1.0], "a's type sets 2.5 mV; b has the default 1 mV");
+}

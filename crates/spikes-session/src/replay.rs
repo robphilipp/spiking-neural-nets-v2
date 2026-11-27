@@ -100,6 +100,19 @@ impl ReplayData {
         };
         let (x, y, z) = (axis("x")?, axis("y")?, axis("z")?);
         let index: HashMap<u64, u32> = ids.iter().enumerate().map(|(i, &id)| (id, i as u32)).collect();
+        let description = read(dir, "run.arrow")?
+            .and_then(|t| {
+                t.column_by_name("description")
+                    .map(|c| c.as_string::<i32>().value(0).to_string())
+            })
+            .unwrap_or_default();
+        // Each neuron's spike potential, from the recorded description (neurons are recorded in its order); 1 mV
+        // (the default) if it can't be read.
+        let spike_mv: Vec<f32> = spikes_dna::parse(&description)
+            .ok()
+            .filter(|d| d.neurons.len() == ids.len())
+            .map(|d| d.neurons.iter().map(|n| n.params().spike_mv as f32).collect())
+            .unwrap_or_else(|| vec![1.0; ids.len()]);
         let neurons: Vec<NeuronInfo> = (0..ids.len())
             .map(|i| NeuronInfo {
                 index: i as u32,
@@ -108,6 +121,7 @@ impl ReplayData {
                 kind: kind(kinds.value(i)),
                 position: [x[i], y[i], z[i]],
                 inhibitory: inhibitory.value(i),
+                spike_mv: spike_mv[i],
             })
             .collect();
         let at = |ns: u64| SimTime::from_start(SimDuration::from_nanos(ns));
@@ -181,12 +195,6 @@ impl ReplayData {
         events.sort_by_key(|e| e.0); // stable: same-time events keep their recorded order
         let end = events.last().map_or(SimTime::ZERO, |e| e.0);
 
-        let description = read(dir, "run.arrow")?
-            .and_then(|t| {
-                t.column_by_name("description")
-                    .map(|c| c.as_string::<i32>().value(0).to_string())
-            })
-            .unwrap_or_default();
         // The engine names recordings `<unix ms>-<session name>-s<session id>`; show the session name.
         let folder = dir
             .file_name()
