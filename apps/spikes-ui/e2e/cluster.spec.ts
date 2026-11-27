@@ -15,9 +15,9 @@ async function runLineSensor(page: Page, baseURL: string, nodes: string): Promis
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page.getByLabel("Shards").fill("2");
+  await page.getByTestId("background").check();
   await page.getByLabel("Background neurons", { exact: true }).fill("input-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("100");
-  await page.getByTestId("background").check();
   await page.getByTestId("build").click();
   await expect(page.getByText("69 neurons")).toBeVisible({ timeout: 20_000 });
   await page.getByLabel("As fast as possible").check();

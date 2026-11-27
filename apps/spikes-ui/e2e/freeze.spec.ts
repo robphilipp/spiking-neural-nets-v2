@@ -14,9 +14,9 @@ test("frozen charts hold still while the run goes on, and catch up when unfrozen
   await page.getByRole("option", { name: "wta-learning", exact: true }).click();
   await page.getByTestId("apply").click();
   await page.getByTestId("nav-run").click();
+  await page.getByTestId("background").check();
   await page.getByLabel("Background neurons", { exact: true }).fill("in-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("50");
-  await page.getByTestId("background").check();
   await page.getByTestId("build").click();
   await expect(page.getByTestId("state")).toHaveText("ready");
   await page.getByLabel("Time window").click();

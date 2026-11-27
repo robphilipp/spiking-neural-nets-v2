@@ -9,9 +9,9 @@ test("a network of populations and connection rules builds and runs", async ({ p
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
+  await page.getByTestId("background").check();
   await page.getByLabel("Background neurons", { exact: true }).fill("exc-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
-  await page.getByTestId("background").check();
   await page.getByTestId("build").click();
   // Every neuron and connection was generated from 2 populations and 3 rules.
   const header = page.getByText(/4,000 neurons · [\d,]+ synapses/);

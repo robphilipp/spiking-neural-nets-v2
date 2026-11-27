@@ -54,9 +54,9 @@ test("on a cluster, the Deployment page lists every node, where each population 
   test.setTimeout(120_000);
   await open(page, "pinned-nodes", "127.0.0.1:17091, edge=127.0.0.1:17092");
   await page.getByTestId("nav-run").click();
+  await page.getByTestId("background").check();
   await page.getByLabel("Background neurons", { exact: true }).fill("sensors-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("50");
-  await page.getByTestId("background").check();
   await page.getByTestId("build").click();
   await expect(page.getByText("220 neurons")).toBeVisible({ timeout: 20_000 });
   await page.getByLabel("As fast as possible").check();

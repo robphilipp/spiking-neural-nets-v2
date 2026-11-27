@@ -124,10 +124,10 @@ test("a quiet network explains itself; background input on its inputs brings it 
   await page.getByTestId("stop").click();
 
   // Background input on the input layer, then build and run again.
+  await page.getByTestId("background").check();
   await page.getByLabel("Background neurons", { exact: true }).fill("input-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
   await page.getByLabel("mV", { exact: true }).nth(1).fill("6");
-  await page.getByTestId("background").check();
   await page.getByTestId("build").click();
   await page.getByTestId("start").click();
   await expect(page.getByTestId("timing")).toContainText(/Spikes\s*[1-9][\d,]*\/s/, { timeout: 5000 });
@@ -146,6 +146,7 @@ test("number fields can be emptied and retyped", async ({ page }) => {
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
 
+  await page.getByTestId("background").check();
   const rate = page.getByLabel("Hz per neuron", { exact: true });
   await rate.click();
   await rate.press("ControlOrMeta+a");

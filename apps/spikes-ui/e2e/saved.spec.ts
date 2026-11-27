@@ -12,10 +12,10 @@ test("save a run, then continue it from the Recordings page", async ({ page }) =
 
   // Run with background input for a while, stop, save.
   await page.getByTestId("nav-run").click();
+  await page.getByTestId("background").check();
   await page.getByLabel("Background neurons", { exact: true }).fill("in-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
   await page.getByLabel("mV", { exact: true }).nth(1).fill("6");
-  await page.getByTestId("background").check();
   await page.getByTestId("build").click();
   await expect(page.getByText("3 neurons")).toBeVisible();
   await expect(page.getByTestId("save-run")).toBeEnabled();

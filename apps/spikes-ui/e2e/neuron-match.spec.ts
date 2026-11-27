@@ -14,6 +14,7 @@ test("inputs pick neurons by prefix or by regular expression", async ({ page, ba
   await expect(page.getByText("25 neurons")).toBeVisible();
 
   // Background input: a regular expression, with the count of neurons it matches.
+  await page.getByTestId("background").check();
   const background = page.getByTestId("background-neurons");
   await background.getByRole("radio", { name: "Regex" }).click();
   await expect(background.getByRole("radio", { name: "Regex" })).toHaveAttribute("aria-checked", "true");
@@ -24,7 +25,6 @@ test("inputs pick neurons by prefix or by regular expression", async ({ page, ba
   await expect(background).toContainText("not a regular expression");
   await page.getByLabel("Background neurons", { exact: true }).fill("^hidden-[12]0[13]$");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
-  await page.getByTestId("background").check();
   await expect(page.getByTestId("background")).toBeChecked();
   await page.getByTestId("build").click();
   await expect(page.getByTestId("state")).toHaveText("ready");

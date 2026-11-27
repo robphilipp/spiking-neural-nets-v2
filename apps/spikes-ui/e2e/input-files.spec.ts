@@ -15,10 +15,13 @@ test("the Run page's background input is a source of the project's input file", 
   // A new project has one input file, selected, empty.
   await expect(page.getByLabel("Input file")).toHaveText("inputs");
   await expect(page.getByTestId("input-summary")).toHaveText("0 of 0 sources on");
-  await page.getByLabel("Background neurons", { exact: true }).fill("hidden-1");
-  await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
+  // Background input off: its settings are hidden. On: they show, and it's a source of the file.
+  await expect(page.getByLabel("Background neurons", { exact: true })).toHaveCount(0);
   await page.getByTestId("background").check();
   await expect(page.getByTestId("input-summary")).toHaveText("1 of 1 source on");
+  await page.getByLabel("Background neurons", { exact: true }).fill("hidden-1");
+  await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
+  await page.screenshot({ path: "test-results/run-inputs.png", clip: { x: 180, y: 140, width: 1220, height: 330 } });
   await page.getByTestId("build").click();
   await expect(page.getByTestId("state")).toHaveText("ready");
   await expect(page.getByTestId("rebuild-hint")).toHaveCount(0);

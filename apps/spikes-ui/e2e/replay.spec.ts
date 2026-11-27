@@ -12,10 +12,10 @@ test("record a run, replay it in the same views, seek, export and download", asy
 
   // A recorded live run, with dopamine released partway.
   await page.getByTestId("nav-run").click();
+  await page.getByTestId("background").check();
   await page.getByLabel("Background neurons", { exact: true }).fill("in-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
   await page.getByLabel("mV", { exact: true }).nth(1).fill("6");
-  await page.getByTestId("background").check();
   await page.getByTestId("build").click();
   await expect(page.getByText("3 neurons")).toBeVisible();
   await page.getByLabel(/Neurons \(up to/).fill("out");

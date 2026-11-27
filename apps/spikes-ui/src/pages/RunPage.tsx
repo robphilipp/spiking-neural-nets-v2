@@ -435,7 +435,11 @@ export function RunPage() {
               <Zap data-icon="inline-start" />
               Stimulate
             </Button>
-            <div className="flex-1" />
+          </Row>
+        )}
+        {!replay && (
+          // The input file: every source a run gets at Build (the background input below is one of them).
+          <Row>
             <Choice
               label="Input file"
               width={210}
@@ -444,6 +448,17 @@ export function RunPage() {
               options={[{ value: NO_INPUTS, label: "none" }, ...inputNames.map((n) => ({ value: n, label: n.replace(/\.inputs\.toml$/, "") }))]}
               testId="input-file"
             />
+            {inputs && (
+              <span className="pb-2 text-xs text-muted-foreground" data-testid="input-summary">
+                {inputs.sources.filter((x) => x.enabled).length} of {inputs.sources.length} source{inputs.sources.length === 1 ? "" : "s"} on
+                {idle.length > 0 && ` (${idle.map((x) => x.name).join(", ")}: realtime, not run yet)`}
+              </span>
+            )}
+          </Row>
+        )}
+        {!replay && (
+          // Background input: the input file's "background" source; its settings show while it's on.
+          <Row className="min-h-[58px] items-end">
             <Toggle
               label="Background input"
               checked={background?.enabled ?? false}
@@ -451,24 +466,22 @@ export function RunPage() {
               testId="background"
               title="Poisson input: the input file's 'background' source, given to the run when the network is built"
             />
-            <NeuronMatchField
-              label="Background neurons"
-              width={270}
-              value={"set" in shownBackground.targets ? { mode: "prefix", pattern: "" } : toMatch(shownBackground.targets)}
-              onChange={(neurons) => setBackground({ targets: fromMatch(neurons) })}
-              neurons={network?.neurons}
-              placeholder="all"
-              testId="background-neurons"
-            />
-            <NumberField label="Hz per neuron" width={120} min={0.001} value={shownBackground.hz} onChange={(hz) => setBackground({ hz })} />
-            <NumberField label="mV" width={80} value={shownBackground.mv} onChange={(mv) => setBackground({ mv })} />
+            {background?.enabled && (
+              <>
+                <NeuronMatchField
+                  label="Background neurons"
+                  width={270}
+                  value={"set" in shownBackground.targets ? { mode: "prefix", pattern: "" } : toMatch(shownBackground.targets)}
+                  onChange={(neurons) => setBackground({ targets: fromMatch(neurons) })}
+                  neurons={network?.neurons}
+                  placeholder="all"
+                  testId="background-neurons"
+                />
+                <NumberField label="Hz per neuron" width={120} min={0.001} value={shownBackground.hz} onChange={(hz) => setBackground({ hz })} />
+                <NumberField label="mV" width={80} value={shownBackground.mv} onChange={(mv) => setBackground({ mv })} />
+              </>
+            )}
           </Row>
-        )}
-        {inputs && !replay && (
-          <p className="text-xs text-muted-foreground" data-testid="input-summary">
-            {inputs.sources.filter((x) => x.enabled).length} of {inputs.sources.length} source{inputs.sources.length === 1 ? "" : "s"} on
-            {idle.length > 0 && ` (${idle.map((x) => x.name).join(", ")}: realtime, not run yet)`}
-          </p>
         )}
         {needsRebuild && !replay && (
           <p className="text-xs text-warning" data-testid="rebuild-hint">
