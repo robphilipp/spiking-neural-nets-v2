@@ -223,10 +223,59 @@ Some real C. elegans sensory neurons do signal tonically; the oxygen-sensing URX
 while oxygen stays high. But most of the worm's neurons use graded potentials rather than spikes, so tonic firing
 here would be a modelling choice, not something the connectome provides.
 
+## Spikes and graded potentials
+
+Most C. elegans neurons don't signal with all-or-nothing electrical pulses the way the neurons in this model do.
+
+- **Spiking neurons** (most vertebrate neurons, and every neuron here) add up their inputs until the membrane
+  potential crosses a threshold, then fire a brief spike of fixed size (an action potential) and reset. Below
+  threshold they send nothing; a stronger input means more spikes, not bigger ones. In biology, voltage-gated
+  sodium channels make the spikes.
+- **Graded-potential neurons** have no threshold or pulse: their membrane potential rises and falls smoothly with
+  their input, and they release transmitter continuously, more the more depolarized they are. The signal is the
+  voltage level itself, an analogue signal rather than a train of pulses. C. elegans has no classic voltage-gated
+  sodium channels, and recordings from most of its neurons show this graded behaviour.
+- **Exceptions**: some C. elegans neurons have been recorded firing all-or-none spikes. The best known is the
+  odour-sensing AWA, which fires calcium-based action potentials (Liu et al., *Cell*, 2018); the body-wall muscles
+  fire action potentials too. Hence "most", not "all".
+
+**And vertebrates?** They use graded potentials too, in two ways:
+
+- **Every neuron is graded on its input side.** Transmitter arriving at a synapse makes a small, graded change in
+  the receiving neuron's potential (a synaptic potential), whose size depends on how much arrived and which fades
+  with time and distance. A spiking neuron adds these up across its dendrites and cell body, and only where the sum
+  crosses threshold (usually at the start of the axon) does it fire. A typical vertebrate neuron is graded inside
+  and spikes at its output, and so are this model's neurons: the potential rises and decays smoothly, and only the
+  output is a spike.
+- **Some vertebrate neurons never spike.** In the retina, rods and cones, bipolar cells, horizontal cells and many
+  amacrine cells signal only with graded potentials, releasing transmitter continuously through "ribbon" synapses
+  built for steady release; the first spikes in the visual pathway are the retinal ganglion cells' (the optic
+  nerve). In the inner ear, the hair cells (sound and balance) are graded too; the auditory nerve fibres they drive
+  spike.
+
+Graded signalling is common in invertebrates generally (insects, crustaceans), not just worms; vertebrates use it
+mostly where signals are local and short-range. Spikes take over where a signal must travel far along an axon,
+because a spike doesn't fade with distance.
+
+**What it means for this network**: the wiring is the worm's, the signalling isn't, which explains some of what the
+tests showed:
+
+- **Weak inputs don't spread.** In the worm, a small depolarization of PLM passes on to PVC through gap junctions
+  and graded release. Here nothing passes unless PLM spikes, and then each spike adds only 1.2–2.4 mV to PVC's
+  10 mV threshold: a single tap on the tail doesn't get through, and touch needs 50–100 Hz of input.
+- **Gap junctions** in the worm pass current continuously, both ways; here they only carry spikes.
+- **Strength is coded differently.** A stronger stimulus means a higher sustained voltage in the worm, a higher
+  spike rate here. Rates are the closest analogue, so the useful readout is how fast the command interneurons and
+  motor neurons fire, not exact spike timing.
+
+The language has no graded (non-spiking) neurons. For more graded-like behaviour in a spiking model, signalling can
+be made more rate-like (lower thresholds, more membrane noise, weaker but more numerous inputs); a non-spiking
+neuron type would be a change to the language and engine.
+
 ## Limits
 
-- **Spikes, not graded potentials.** Most C. elegans neurons signal with graded potentials; few spike. This is a
-  spiking abstraction of the real wiring, not a model of the worm's physiology.
+- **Spikes, not graded potentials.** Most C. elegans neurons signal with graded potentials; few spike (see Spikes
+  and graded potentials). This is a spiking abstraction of the real wiring, not a model of the worm's physiology.
 - **Signs.** Only the GABAergic neurons inhibit. In the worm, many glutamatergic (and some cholinergic) synapses
   inhibit through chloride channels, depending on the receiving neuron's receptors, which the connectome doesn't
   give. So direction choices that depend on inhibition aren't reproduced: touching the tail doesn't favour forward
