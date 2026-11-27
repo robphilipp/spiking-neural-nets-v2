@@ -1,0 +1,8 @@
+description = "Touching the tail: strong steady input to the posterior touch neurons (PLML, PLMR, PVM). Touch needs 50–100 Hz to get past the touch neurons."
+
+[[source]]
+name = "tail touch"
+kind = "poisson"
+neurons = { set = "touch_posterior" }
+hz = 100
+mv = 12

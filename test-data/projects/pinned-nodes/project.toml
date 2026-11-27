@@ -1,0 +1,9 @@
+name = "pinned-nodes"
+network = "network.boo"
+inputs = ["background.inputs.toml", "sweep.inputs.toml"]
+selected_inputs = "background.inputs.toml"
+
+[run]
+seed = 1
+shards = 2
+speed = 1

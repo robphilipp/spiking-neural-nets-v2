@@ -1,5 +1,7 @@
 name = "wta learning"
 network = "wta-learning.boo"
+inputs = ["training.inputs.toml"]
+selected_inputs = "training.inputs.toml"
 
 [run]
 seed = 7

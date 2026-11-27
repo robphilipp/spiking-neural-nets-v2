@@ -1,0 +1,8 @@
+description = "Steady input to the row of sensors (pinned to the 'edge' node on a cluster); the cortex answers at about 15 Hz."
+
+[[source]]
+name = "background"
+kind = "poisson"
+neurons = { prefix = "sensors-" }
+hz = 10
+mv = 6

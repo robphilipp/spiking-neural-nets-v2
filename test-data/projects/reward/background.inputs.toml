@@ -1,0 +1,8 @@
+description = "Background input to both inputs. Run, inspect 'out', and press Release dopamine: the weights of the synapses marked by recent spike pairings step up."
+
+[[source]]
+name = "background"
+kind = "poisson"
+neurons = { prefix = "in-" }
+hz = 20
+mv = 6

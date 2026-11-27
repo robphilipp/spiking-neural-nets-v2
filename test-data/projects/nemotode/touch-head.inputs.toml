@@ -1,0 +1,8 @@
+description = "Touching the head: strong steady input to the anterior touch neurons (ALML, ALMR, AVM)."
+
+[[source]]
+name = "head touch"
+kind = "poisson"
+neurons = { set = "touch_anterior" }
+hz = 100
+mv = 12

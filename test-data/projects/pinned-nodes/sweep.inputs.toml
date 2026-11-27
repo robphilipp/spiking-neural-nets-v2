@@ -1,0 +1,9 @@
+description = "A bump of activity sweeping along the row of sensors once a second (sensor c of n is most active when the sweep passes it)."
+
+[[source]]
+name = "sweep"
+kind = "signal"
+neurons = { prefix = "sensors-" }
+formula = "exp(-pow(c - n * (t % 1000) / 1000, 2) / 2)"
+sample = "1 ms"
+encoding = { kind = "rate", max_hz = 100, mv = 6 }

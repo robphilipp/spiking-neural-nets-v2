@@ -1,0 +1,9 @@
+name = "nemotode"
+network = "network.boo"
+inputs = ["nociceptive.inputs.toml", "touch-tail.inputs.toml", "touch-head.inputs.toml"]
+selected_inputs = "nociceptive.inputs.toml"
+
+[run]
+seed = 1
+shards = 2
+speed = 1

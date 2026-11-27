@@ -1,0 +1,8 @@
+description = "Noxious stimulus: steady input to the nociceptive neurons (ASH, ADL, FLP, PVD). Expect the backward (escape) circuit to answer most (docs/nemotode/nemotode.md)."
+
+[[source]]
+name = "noxious"
+kind = "poisson"
+neurons = { set = "nociceptive" }
+hz = 20
+mv = 12

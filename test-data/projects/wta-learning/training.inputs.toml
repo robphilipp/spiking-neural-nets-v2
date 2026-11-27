@@ -1,0 +1,10 @@
+description = "Training: one input at a time, chosen pseudo-randomly every 300 ms, as Poisson spikes at 100 Hz, for 60 s. Inspect out-1 and out-2 and watch them lock to in-1 and in-2 (after about 15–25 s)."
+
+[[source]]
+name = "training"
+kind = "signal"
+neurons = { prefix = "in-" }
+formula = "floor(abs(sin(floor(t/300) * 12.9898) * 43758.5453)) % n == c"
+sample = "1 ms"
+encoding = { kind = "rate", max_hz = 100, mv = 10 }
+duration = "60 s"

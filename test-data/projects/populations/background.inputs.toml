@@ -1,0 +1,8 @@
+description = "Background input to the excitatory population: 5 Hz per neuron, 12 mV per event (above the 10 mV threshold, so each event fires its neuron)."
+
+[[source]]
+name = "background"
+kind = "poisson"
+neurons = { prefix = "exc-" }
+hz = 5
+mv = 12

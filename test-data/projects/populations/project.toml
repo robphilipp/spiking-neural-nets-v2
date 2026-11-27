@@ -1,0 +1,9 @@
+name = "populations"
+network = "network.boo"
+inputs = ["background.inputs.toml"]
+selected_inputs = "background.inputs.toml"
+
+[run]
+seed = 1
+shards = 2
+speed = 1
