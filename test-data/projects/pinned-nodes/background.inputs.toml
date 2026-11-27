@@ -1,4 +1,4 @@
-description = "Steady input to the row of sensors (pinned to the 'edge' node on a cluster); the cortex answers at about 15 Hz."
+description = "Gentle steady input to the row of sensors (pinned to the 'edge' node on a cluster): 3 mV is below their 5 mV threshold, so a sensor fires only when two events come close together (about 1.5 Hz); the cortex answers at about 4 Hz."
 
 [[source]]
 name = "background"
