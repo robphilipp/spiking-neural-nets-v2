@@ -10,6 +10,8 @@ import type { Cluster } from "./generated/Cluster";
 import type { Deployment } from "./generated/Deployment";
 import type { Input } from "./generated/Input";
 import type { InputSource } from "./generated/InputSource";
+import type { TestGroup } from "./generated/TestGroup";
+import type { TestRunResult } from "./generated/TestRunResult";
 import type { Trial } from "./generated/Trial";
 import type { Network } from "./generated/Network";
 import type { NetworkPreview } from "./generated/NetworkPreview";
@@ -292,6 +294,17 @@ export abstract class ProtocolClient {
   /** The run's trials: as given with its inputs, or as recorded for a replay. */
   async getTrials(session: number): Promise<Trial[]> {
     return (await this.expect({ type: "getTrials", session }, "trials")).trials;
+  }
+
+  /** Runs the session's network with these inputs for `durationMs` of simulated time in a throwaway network of its
+   *  own (as fast as possible, up to `budgetMs` of wall-clock time, default 30 s), and counts the spikes of the whole
+   *  network and of each group per `binMs`. The session itself is not touched; its description needn't be built.
+   *  `seed` overrides the session's last build's. Refused for a replay. */
+  async testRun(
+    session: number,
+    run: { sources: InputSource[]; trials?: Trial[]; durationMs: number; binMs: number; groups: TestGroup[]; budgetMs?: number; seed?: number },
+  ): Promise<TestRunResult> {
+    return (await this.expect({ type: "testRun", session, trials: [], budgetMs: null, seed: null, ...run }, "testRun")).result;
   }
 
   /** Fires a pulse source of the run's inputs now. */

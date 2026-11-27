@@ -17,6 +17,7 @@ mod preview;
 mod replay;
 mod sensors;
 mod session;
+mod test_run;
 mod viewer;
 
 use std::collections::BTreeMap;
@@ -32,6 +33,7 @@ pub use session::{
     BuildSettings, DEFAULT_MIN_DELAY, InputSource, InputSpec, NeuronSnapshot, RunSettings, Session, SessionNotice,
     Speed, State, Trial,
 };
+pub use test_run::{TestGroupOutcome, TestOutcome, TestPlan, test_run};
 pub use viewer::{FrameStats, Selection, ViewSettings, Viewer};
 
 /// Identifies a session within its engine.

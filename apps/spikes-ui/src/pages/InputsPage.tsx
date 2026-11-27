@@ -11,6 +11,7 @@ import { SourceEditor } from "../components/inputs/SourceEditor";
 import { SourceList } from "../components/inputs/SourceList";
 import { Timeline } from "../components/inputs/Timeline";
 import { TargetsView } from "../components/inputs/TargetsView";
+import { TestPanel } from "../components/inputs/TestPanel";
 import { TrialsEditor } from "../components/inputs/TrialsEditor";
 import { useCanFire } from "../components/FireButton";
 import { addSource, newSource, sourceState, timeline, trialAt } from "../inputEdit";
@@ -180,6 +181,7 @@ export function InputsPage() {
               )}
             </Panel>
           </div>
+          <TestPanel file={file} selected={selected} seed={seed} />
         </>
       )}
     </div>

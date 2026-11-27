@@ -396,3 +396,57 @@ Each phase: unit tests (engine and TS), e2e tests through the view, docs.
 4. Formulas: **noise and data lookups** (decision 7, §3).
 5. Sets as targets: **yes** (decision 8).
 6. Realtime sources: **several at once** (decision 9).
+
+### I5a status: test runs (2026-11-27)
+
+- **Engine** (`spikes-session/src/test_run.rs`, `test_run(&Session, TestPlan)`; protocol `testRun`, TS `client.testRun`):
+  a request `testRun { session, sources, trials, durationMs, binMs, groups: [{name, neurons}], budgetMs?, seed? }`
+  replies `testRun { result: { simMs, elapsedMs, complete, binMs, spikes, counts, groups: [{name, neurons, spikes,
+  counts}] } }`. It builds the session's description text in a **throwaway `Engine`** created inside the call (so the
+  real session, its state, time, inputs, sensors and the engine's session list are never touched, and nothing of it is
+  listed), with the session's last build settings (the defaults if it was never built; weights not recorded; `seed`
+  overrides the seed), applies `sources` and `trials` as `set_inputs` does, runs as fast as possible and counts the
+  network's spikes from a lossless event subscription into bins of `binMs`, for the whole network and per group (a
+  neuron may be in several groups; indices out of range and repeats don't count). Nothing but counts is kept, however
+  big the network. It runs on this engine alone, also for a session on a cluster. Refused for a replay. A spike counts
+  in the bin of its time (rise time included); one decided just before the end that rises after it isn't counted.
+- **Budget**: the run goes in slices of simulated time sized to take about 0.1 s of wall-clock time each, and the budget
+  (default 30 s) is checked between them (and a stop is sent if a slice overruns it). Slices, not one long run,
+  because a run can only be stopped between synchronization windows, and with one shard a window can be the whole
+  run; a test checks that slicing doesn't change what is counted. A run cut by the budget replies `complete: false`
+  with `simMs` where it got, and counts only up to there.
+- **UI**: a **Test** panel at the bottom of the Inputs page (`components/inputs/TestPanel.tsx`, `RateChart.tsx`; pure
+  parts in `testRun.ts`, settings and last result in `testStore.ts`, so they survive moving between pages).
+  - Controls: duration (default: the end of the trial schedule, else 5 s; at most 60 s), bin (50 ms), **Run test**,
+    and the groups as chips: *each source's targets* (one group per enabled simulated source, named after it; on by
+    default), *all neurons*, one chip per set of the network, and groups added by name (`NeuronMatchField`).
+  - The test gets the selected file as it is now (unsaved edits included), expanded with the run's seed exactly as Build
+    does it (`expandTrials`, `engineSources`) and the seed itself, so the same file and seed give the same result.
+    Realtime sources are left out, with a note.
+  - Results: a table (group, neurons, spikes, mean rate in Hz per neuron; the whole network last), a rate-per-neuron
+    chart over time with the trials shaded and numbered in their conditions' colours (an overlay on a chart with fixed
+    margins and no zoom, so it stays aligned), and, when the file has trials, the **trial-averaged response** per
+    condition (or all trials): the group rates from each trial's start over the trial's length, averaged, one chart per
+    condition. A trial the run didn't finish (budget) is left out, and the budget stop is stated. Results are marked
+    **stale** when the file, seed, session or applied description changes.
+  - Disabled, with a note, while a run is open (the machine is busy), for a replay, with no applied session, or with no
+    input file.
+- **Decisions where the plan was silent**: the throwaway is built with the session's own settings plus the run's seed
+  (the UI always sends it, so an unbuilt session tests with the seed the next Build would use); a partial last bin has
+  its real width in the rates; a trial's start is taken in the bin it falls in (the response is aligned to bins, not
+  to the exact start); at most 200,000 bins.
+- **Deviation**: the plan's brief said the groups that need a built network (sets, custom groups) are offered only
+  when it is built. Target resolution needs a network anyway, so when the session isn't built the panel resolves
+  everything in the description's network as written (`previewNetwork`, the same neuron numbering the throwaway
+  gets): sets and custom groups are offered then too, and a test needs only an applied description.
+- **Tests**: Rust `tests/test_run.rs` (a seed repeats and another differs, on a built and an unbuilt session; the real
+  session is untouched, still runs, and runs exactly as an untested one; groups and bins add up, with overlaps and
+  bad indices, pulses land in their bins; the budget stops a long run; a replay and bad plans are refused; trials are
+  passed through and checked; a test run counts what a plain run does); vitest `testRun.test.ts` (default duration,
+  resolving groups, the inputs, rates, summaries, trial responses per condition, the stale key); e2e `test-run.spec.ts`
+  (the ring with a Poisson and a pulse source, no network built: counts per source group and the whole network,
+  repeatable, session list unchanged, stale after an edit, a custom group, disabled while running, session time
+  untouched when built; a trials file: bands and a chart per condition).
+- **Not done**: the test can't be cancelled from the UI while it runs (the connection answers when it's done, up to
+  the budget); the budget is a fixed 30 s (the request has `budgetMs`, the panel has no field); a test on a
+  cluster session runs on this engine alone; no raster of the groups' spikes; the exact (sub-bin) trial alignment.

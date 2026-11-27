@@ -447,6 +447,19 @@ impl Session {
         self.inner().text.clone()
     }
 
+    /// The settings of the last build (the defaults before any).
+    pub(crate) fn build_settings(&self) -> BuildSettings {
+        self.inner().settings
+    }
+
+    /// Every event the built network emits from now on, losing none (for [`crate::test_run`]); `None` unless ready.
+    pub(crate) fn subscribe_events(&self) -> Option<tempo_runtime::EventStream<Event>> {
+        match &self.inner().phase {
+            Stage::Ready(built) => Some(built.rt.subscribe_lossless()),
+            _ => None,
+        }
+    }
+
     /// The parsed description.
     pub fn description(&self) -> NetworkDescription {
         self.inner().description.clone()

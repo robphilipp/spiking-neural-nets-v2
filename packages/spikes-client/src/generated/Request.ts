@@ -3,6 +3,7 @@ import type { BuildSettings } from "./BuildSettings";
 import type { Input } from "./Input";
 import type { InputSource } from "./InputSource";
 import type { SensorSpec } from "./SensorSpec";
+import type { TestGroup } from "./TestGroup";
 import type { Trial } from "./Trial";
 import type { View } from "./View";
 
@@ -158,7 +159,39 @@ trials: Array<Trial>, } | { "type": "getTrials",
 /**
  * The session.
  */
-session: number, } | { "type": "fire", 
+session: number, } | { "type": "testRun", 
+/**
+ * The session whose description is run.
+ */
+session: number, 
+/**
+ * The sources (unique names), as for `setInputs`.
+ */
+sources: Array<InputSource>, 
+/**
+ * The trials, as for `setInputs`.
+ */
+trials: Array<Trial>, 
+/**
+ * How long to run, in simulated ms (> 0).
+ */
+durationMs: number, 
+/**
+ * The width of the bins spikes are counted in, ms (> 0).
+ */
+binMs: number, 
+/**
+ * The groups to count: a name and neuron indices (of the session's network).
+ */
+groups: Array<TestGroup>, 
+/**
+ * Stop after this much wall-clock time (ms), whatever was reached; default 30000.
+ */
+budgetMs: number | null, 
+/**
+ * The seed of the throwaway network, instead of the session's last build's.
+ */
+seed: number | null, } | { "type": "fire", 
 /**
  * The session.
  */

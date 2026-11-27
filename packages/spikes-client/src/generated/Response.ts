@@ -8,6 +8,7 @@ import type { Recording } from "./Recording";
 import type { SavedRun } from "./SavedRun";
 import type { SensorInfo } from "./SensorInfo";
 import type { SessionSummary } from "./SessionSummary";
+import type { TestRunResult } from "./TestRunResult";
 import type { Trial } from "./Trial";
 
 /**
@@ -41,7 +42,11 @@ preview: NetworkPreview, } | { "type": "deployment",
 /**
  * The deployment.
  */
-deployment: Deployment, } | { "type": "trials", 
+deployment: Deployment, } | { "type": "testRun", 
+/**
+ * The result.
+ */
+result: TestRunResult, } | { "type": "trials", 
 /**
  * In order.
  */

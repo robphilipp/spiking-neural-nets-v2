@@ -252,6 +252,32 @@ pub enum Request {
         /// The session.
         session: u32,
     },
+    /// Runs the session's network with these inputs for a few simulated seconds in a throwaway network of its own,
+    /// as fast as possible, and counts the spikes of the whole network and of groups of neurons per time bin. The
+    /// session itself (its state, time, inputs) is not touched; it needs only its description (built or not). The
+    /// throwaway is built with the session's last build settings (`seed` overrides the seed) and runs on this
+    /// engine alone, also for a session on a cluster. Refused for a replay. Replies `testRun`.
+    TestRun {
+        /// The session whose description is run.
+        session: u32,
+        /// The sources (unique names), as for `setInputs`.
+        sources: Vec<InputSource>,
+        /// The trials, as for `setInputs`.
+        #[serde(default)]
+        trials: Vec<Trial>,
+        /// How long to run, in simulated ms (> 0).
+        duration_ms: f64,
+        /// The width of the bins spikes are counted in, ms (> 0).
+        bin_ms: f64,
+        /// The groups to count: a name and neuron indices (of the session's network).
+        groups: Vec<TestGroup>,
+        /// Stop after this much wall-clock time (ms), whatever was reached; default 30000.
+        #[serde(default)]
+        budget_ms: Option<u32>,
+        /// The seed of the throwaway network, instead of the session's last build's.
+        #[serde(default)]
+        seed: Option<u32>,
+    },
     /// Fires a pulse source of the run's inputs now (a manual trigger). Replies `done`.
     Fire {
         /// The session.
@@ -485,6 +511,53 @@ pub struct Trial {
     pub end_ms: f64,
 }
 
+/// A group of neurons whose spikes a test run counts.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TestGroup {
+    /// Its name.
+    pub name: String,
+    /// Its neurons (indices; a neuron may be in several groups).
+    pub neurons: Vec<u32>,
+}
+
+/// What a test run counted for one group.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TestGroupResult {
+    /// Its name, as asked.
+    pub name: String,
+    /// How many neurons it has (indices out of range don't count).
+    pub neurons: u32,
+    /// Its spikes in all, within the simulated time reached.
+    pub spikes: f64,
+    /// Its spikes per bin from time 0.
+    pub counts: Vec<u32>,
+}
+
+/// The outcome of a test run.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TestRunResult {
+    /// The simulated time reached, ms (the duration asked, unless the budget stopped it).
+    pub sim_ms: f64,
+    /// The wall-clock time it took, ms.
+    pub elapsed_ms: f64,
+    /// False if the wall-clock budget stopped it before the duration.
+    pub complete: bool,
+    /// The bin width, ms.
+    pub bin_ms: f64,
+    /// The spikes of the whole network.
+    pub spikes: f64,
+    /// The whole network's spikes per bin.
+    pub counts: Vec<u32>,
+    /// The groups, in the order asked.
+    pub groups: Vec<TestGroupResult>,
+}
+
 /// A named source of a run's inputs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -635,6 +708,11 @@ pub enum Response {
     Deployment {
         /// The deployment.
         deployment: Deployment,
+    },
+    /// What a test run counted.
+    TestRun {
+        /// The result.
+        result: Box<TestRunResult>,
     },
     /// A run's trials.
     Trials {

@@ -381,32 +381,53 @@ impl Connection {
                 sources,
                 trials,
             } => {
-                let trials = trials
-                    .into_iter()
-                    .map(|t| {
-                        Ok(crate::Trial {
-                            number: t.number,
-                            condition: t.condition,
-                            start: duration(t.start_ms)?,
-                            end: duration(t.end_ms)?,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, ApiError>>()?;
-                let sources = sources
-                    .into_iter()
-                    .map(|s| {
-                        Ok(InputSource {
-                            start: duration(s.start_ms)?,
-                            input: input_spec(s.input)
-                                .map_err(|e| error(ErrorCode::Invalid, format!("input '{}': {}", s.name, e.message)))?,
-                            name: s.name,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, ApiError>>()?;
+                let (sources, trials) = input_set(sources, trials)?;
                 self.session(session)?
                     .set_inputs(sources, trials)
                     .map(done)
                     .map_err(api_error)
+            }
+            Request::TestRun {
+                session,
+                sources,
+                trials,
+                duration_ms,
+                bin_ms,
+                groups,
+                budget_ms,
+                seed,
+            } => {
+                let (sources, trials) = input_set(sources, trials)?;
+                let plan = crate::TestPlan {
+                    sources,
+                    trials,
+                    duration: duration(duration_ms)?,
+                    bin: duration(bin_ms)?,
+                    groups: groups.into_iter().map(|g| (g.name, g.neurons)).collect(),
+                    budget: budget_ms.map(|ms| std::time::Duration::from_millis(u64::from(ms))),
+                    seed: seed.map(u64::from),
+                };
+                let r = crate::test_run(&self.session(session)?, plan).map_err(api_error)?;
+                Ok(Response::TestRun {
+                    result: Box::new(api::TestRunResult {
+                        sim_ms: r.sim.as_millis_f64(),
+                        elapsed_ms: r.elapsed.as_secs_f64() * 1000.0,
+                        complete: r.complete,
+                        bin_ms,
+                        spikes: r.spikes as f64,
+                        counts: r.counts,
+                        groups: r
+                            .groups
+                            .into_iter()
+                            .map(|g| api::TestGroupResult {
+                                name: g.name,
+                                neurons: g.neurons,
+                                spikes: g.spikes as f64,
+                                counts: g.counts,
+                            })
+                            .collect(),
+                    }),
+                })
             }
             Request::GetTrials { session } => Ok(Response::Trials {
                 trials: self
@@ -814,6 +835,36 @@ fn input_spec(input: api::Input) -> Result<InputSpec, ApiError> {
             duration: duration_ms.map(duration).transpose()?,
         },
     })
+}
+
+/// The engine's form of an input file's sources and trials.
+fn input_set(
+    sources: Vec<api::InputSource>,
+    trials: Vec<api::Trial>,
+) -> Result<(Vec<InputSource>, Vec<crate::Trial>), ApiError> {
+    let trials = trials
+        .into_iter()
+        .map(|t| {
+            Ok(crate::Trial {
+                number: t.number,
+                condition: t.condition,
+                start: duration(t.start_ms)?,
+                end: duration(t.end_ms)?,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    let sources = sources
+        .into_iter()
+        .map(|s| {
+            Ok(InputSource {
+                start: duration(s.start_ms)?,
+                input: input_spec(s.input)
+                    .map_err(|e| error(ErrorCode::Invalid, format!("input '{}': {}", s.name, e.message)))?,
+                name: s.name,
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+    Ok((sources, trials))
 }
 
 fn duration(ms: f64) -> Result<SimDuration, ApiError> {
