@@ -20,7 +20,7 @@ use spikes_api::protocol::{
 use tempo_runtime::{SimDuration, SimTime};
 
 use crate::sensors::{Encoding, OnPause, SampleBatch, Sensor, SensorSpec, SpikeBatch};
-use crate::session::{BuildSettings, InputSpec, RunSettings, Session, SessionNotice, Speed, State};
+use crate::session::{BuildSettings, InputSource, InputSpec, RunSettings, Session, SessionNotice, Speed, State};
 use crate::viewer::{Selection, ViewSettings, Viewer};
 use crate::{Engine, SessionError, SessionId};
 
@@ -373,31 +373,26 @@ impl Connection {
                 .map(done)
                 .map_err(api_error),
             Request::AddInput { session, input } => {
-                let input = match input {
-                    api::Input::Poisson {
-                        targets,
-                        rate_hz,
-                        mv,
-                        duration_ms,
-                    } => InputSpec::Poisson {
-                        targets,
-                        rate_hz,
-                        mv,
-                        duration: duration_ms.map(duration).transpose()?,
-                    },
-                    api::Input::Periodic {
-                        targets,
-                        period_ms,
-                        mv,
-                        duration_ms,
-                    } => InputSpec::Periodic {
-                        targets,
-                        period: duration(period_ms)?,
-                        mv,
-                        duration: duration_ms.map(duration).transpose()?,
-                    },
-                };
+                let input = input_spec(input)?;
                 self.session(session)?.add_input(input).map(done).map_err(api_error)
+            }
+            Request::SetInputs { session, sources } => {
+                let sources = sources
+                    .into_iter()
+                    .map(|s| {
+                        Ok(InputSource {
+                            start: duration(s.start_ms)?,
+                            input: input_spec(s.input).map_err(|e| {
+                                error(ErrorCode::Invalid, format!("input '{}': {}", s.name, e.message))
+                            })?,
+                            name: s.name,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ApiError>>()?;
+                self.session(session)?.set_inputs(sources).map(done).map_err(api_error)
+            }
+            Request::Fire { session, source } => {
+                self.session(session)?.fire(&source).map(done).map_err(api_error)
             }
             Request::Connect {
                 session,
@@ -726,6 +721,63 @@ fn ms_of(t: SimTime) -> f64 {
     t.since_start().as_millis_f64()
 }
 
+/// An API input as the engine runs it.
+fn input_spec(input: api::Input) -> Result<InputSpec, ApiError> {
+    Ok(match input {
+        api::Input::Poisson {
+            targets,
+            rate_hz,
+            mv,
+            duration_ms,
+        } => InputSpec::Poisson {
+            targets,
+            rate_hz,
+            mv,
+            duration: duration_ms.map(duration).transpose()?,
+        },
+        api::Input::Periodic {
+            targets,
+            period_ms,
+            mv,
+            duration_ms,
+        } => InputSpec::Periodic {
+            targets,
+            period: duration(period_ms)?,
+            mv,
+            duration: duration_ms.map(duration).transpose()?,
+        },
+        api::Input::Pulses { targets, at_ms, mv } => InputSpec::Pulses {
+            targets,
+            times: at_ms.into_iter().map(duration).collect::<Result<_, _>>()?,
+            mv,
+        },
+        api::Input::Signal {
+            channels,
+            formula,
+            sample_ms,
+            encoding,
+            duration_ms,
+        } => InputSpec::Signal {
+            channels,
+            formula,
+            sample: duration(sample_ms)?,
+            encoding: match encoding {
+                api::Encoding::Current { gain_mv } => spikes_signal::SampleEncoding::Current { gain_mv },
+                api::Encoding::Rate { max_hz, mv } => spikes_signal::SampleEncoding::Rate { max_hz, mv },
+                api::Encoding::Threshold { level, mv } => spikes_signal::SampleEncoding::Threshold { level, mv },
+                api::Encoding::Spikes { .. } => {
+                    return Err(error(
+                        ErrorCode::Invalid,
+                        "a signal's encoding is current, rate or threshold, not spikes",
+                    ));
+                }
+            },
+            key: 0,
+            duration: duration_ms.map(duration).transpose()?,
+        },
+    })
+}
+
 fn duration(ms: f64) -> Result<SimDuration, ApiError> {
     if ms.is_finite() && ms >= 0.0 {
         Ok(SimDuration::from_millis_f64(ms))
@@ -888,5 +940,13 @@ fn api_network(network: &crate::NetworkInfo) -> api::Network {
         synapse_count: network.synapse_count,
         modulators: network.modulators.clone(),
         learning_rules: network.learning_rules.clone(),
+        sets: network
+            .sets
+            .iter()
+            .map(|(name, members)| api::NeuronSet {
+                name: name.clone(),
+                members: members.clone(),
+            })
+            .collect(),
     }
 }

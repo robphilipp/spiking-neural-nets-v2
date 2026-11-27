@@ -1,0 +1,17 @@
+[package]
+name = "spikes-signal"
+description = "Input signals: the formula language (shared with the UI), seeded noise, and the sample encoders."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json = "1.0.154"
+
+[lints]
+workspace = true

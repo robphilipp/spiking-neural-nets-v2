@@ -1,12 +1,9 @@
 name = "ring"
 network = "network.boo"
+inputs = ["background.inputs.toml", "wave.inputs.toml"]
+selected_inputs = "background.inputs.toml"
 
 [run]
 seed = 1
 shards = 2
 speed = 1
-
-[background]
-rate_hz = 20
-mv = 10
-neurons = "hidden-1"

@@ -471,3 +471,56 @@ fn a_population_pinned_to_a_named_node_runs_there() {
         d.warnings
     );
 }
+
+/// Runs nemotode (on `nodes`, if any) with an input set: a noisy signal into its nociceptive neurons and pulses into
+/// its touch neurons; returns every neuron's final state.
+fn nemotode_with_inputs(engine: &Engine, nodes: Vec<String>) -> Vec<String> {
+    let session = engine.create("nemotode", data("examples", "nemotode.boo")).unwrap();
+    session.set_nodes(nodes).unwrap();
+    let network = session
+        .build(BuildSettings {
+            seed: 4,
+            ..BuildSettings::default()
+        })
+        .unwrap();
+    let set = |name: &str| network.sets.iter().find(|(n, _)| n == name).unwrap().1.clone();
+    session
+        .set_inputs(vec![
+            spikes_session::InputSource {
+                name: "noxious".into(),
+                start: SimDuration::from_millis(20),
+                input: InputSpec::Signal {
+                    channels: set("nociceptive").into_iter().map(|i| vec![i]).collect(),
+                    formula: "clamp(0.4 + 0.3 * gauss(), 0, 1)".into(),
+                    sample: SimDuration::from_millis(1),
+                    encoding: spikes_signal::SampleEncoding::Rate { max_hz: 60.0, mv: 12.0 },
+                    key: 0,
+                    duration: None,
+                },
+            },
+            spikes_session::InputSource {
+                name: "touch".into(),
+                start: SimDuration::ZERO,
+                input: InputSpec::Pulses {
+                    targets: set("touch_posterior"),
+                    times: (0..20).map(|k| SimDuration::from_millis(10 + 20 * k)).collect(),
+                    mv: 12.0,
+                },
+            },
+        ])
+        .unwrap();
+    run(&session, 500, None);
+    let states = (0..network.neurons.len() as u32)
+        .map(|i| format!("{:?}", session.query_neuron(i).unwrap()))
+        .collect();
+    engine.close(session.id()).unwrap();
+    states
+}
+
+#[test]
+fn an_input_set_runs_the_same_on_a_cluster() {
+    let engine = Engine::new();
+    let alone = nemotode_with_inputs(&engine, Vec::new());
+    let cluster = nemotode_with_inputs(&engine, agents(2));
+    assert_eq!(cluster, alone);
+}

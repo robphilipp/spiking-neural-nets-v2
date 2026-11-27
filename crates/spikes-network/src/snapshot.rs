@@ -8,7 +8,7 @@ use tempo_runtime::{ActorId, Persist, PersistField, RouteId, SnapshotCodec, Time
 use crate::messages::{Event, SimMsg};
 use crate::modulators::{ModulatorField, ModulatorRelease, ReleaseEvent};
 use crate::neuron::NeuronActor;
-use crate::{PeriodicInput, PoissonInput};
+use crate::{PeriodicInput, PoissonInput, PulseInput, SignalInput};
 
 /// A neuron, as saved.
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,6 +42,30 @@ impl Persist<SimMsg, Event> for NeuronActor {
     }
 }
 
+/// A signal source, as saved: its encoders and its next sample (its formula and targets are rebuilt from the
+/// input file).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SignalSnapshot {
+    encoders: Vec<spikes_signal::Channel>,
+    next: u64,
+}
+
+impl Persist<SimMsg, Event> for SignalInput {
+    type State = SignalSnapshot;
+
+    fn save(&self) -> SignalSnapshot {
+        SignalSnapshot {
+            encoders: self.encoders.clone(),
+            next: self.next,
+        }
+    }
+
+    fn restore(&mut self, s: SignalSnapshot) {
+        self.encoders = s.encoders;
+        self.next = s.next;
+    }
+}
+
 impl PersistField for ModulatorField {
     type State = Vec<ReleaseEvent>;
 
@@ -61,6 +85,8 @@ pub fn snapshot_codec() -> SnapshotCodec<SimMsg, Event> {
         .actor::<NeuronActor>("neuron")
         .stateless::<PoissonInput>("poisson input")
         .stateless::<PeriodicInput>("periodic input")
+        .stateless::<PulseInput>("pulse input")
+        .actor::<SignalInput>("signal input")
         .stateless::<ModulatorRelease>("modulator release")
         .field::<ModulatorField>()
 }

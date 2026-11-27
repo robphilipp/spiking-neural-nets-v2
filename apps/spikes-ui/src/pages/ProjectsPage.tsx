@@ -4,6 +4,7 @@ import { Field, Heading, Notice, Panel } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { pickFolder, readProject, writeProject } from "../files";
+import { emptyInputFile, serializeInputFile } from "../inputFile";
 import { serializeProject } from "../project";
 import { forget, forgetRecent, newProjectStarted, projectOpened, projectRenamed, projectSaved, setDescription, useProject, useSession } from "../store";
 import { inTauri } from "../tauriClient";
@@ -17,12 +18,13 @@ function download(name: string, text: string) {
 
 /** Projects: a folder with project.toml and the network (desktop), or files in and out (browser). */
 export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
-  const { folder, project, savedDescription, savedProject, recent } = useProject();
+  const { folder, project, inputFiles, savedDescription, savedProject, savedInputs, recent } = useProject();
   const description = useSession((s) => s.description);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const desktop = inTauri();
-  const unsaved = description !== (savedDescription ?? "") || JSON.stringify(project) !== savedProject;
+  const unsaved =
+    description !== (savedDescription ?? "") || JSON.stringify(project) !== savedProject || JSON.stringify(inputFiles) !== savedInputs;
 
   const attempt = (f: () => Promise<void>) => async () => {
     setMessage(null);
@@ -40,9 +42,9 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
     setChoose(null);
     const read = await readProject(dir, network);
     if (read.kind === "choose") return setChoose({ folder: dir, networks: read.networks });
-    const { project: p, description: text, saved } = read;
+    const { project: p, description: text, inputFiles: files, saved } = read;
     forget(); // a new engine session is created when the network is applied
-    projectOpened({ folder: dir, project: p, description: text, saved });
+    projectOpened({ folder: dir, project: p, description: text, inputFiles: files, saved });
     setDescription({ name: p.name, description: text });
     if (!text) {
       // Nothing to show on the Network page: say so here.
@@ -53,7 +55,7 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
   };
 
   const save = async (dir: string) => {
-    await writeProject(dir, project, description);
+    await writeProject(dir, project, description, inputFiles);
     projectSaved({ folder: dir, description });
     setMessage({ ok: true, text: `Saved to ${dir}` });
   };
@@ -157,6 +159,12 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
               <Download data-icon="inline-start" />
               Download project.toml
             </Button>
+            {project.inputs.map((name) => (
+              <Button key={name} variant="outline" onClick={() => download(name, serializeInputFile(inputFiles[name] ?? emptyInputFile()))}>
+                <Download data-icon="inline-start" />
+                Download {name}
+              </Button>
+            ))}
           </div>
         )}
         {choose && (

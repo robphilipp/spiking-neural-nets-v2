@@ -14,6 +14,8 @@ use rand::{RngExt, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use tempo_runtime::{SimDuration, SimTime};
 
+use spikes_signal::{Channel, SampleEncoding};
+
 use crate::{Session, SessionError};
 
 /// How a sensor's samples become neuron input.
@@ -137,10 +139,8 @@ pub(crate) struct State {
     anchor: Option<Anchor>,
     /// The last sample's (sensor time, mapped time), to re-anchor continuously on a speed change.
     last: Option<(u64, SimTime)>,
-    /// Rate encoding: remaining exponential "mass" until each channel's next event.
-    need: Vec<f64>,
-    /// Threshold encoding: each channel's reference level.
-    reference: Vec<Option<f32>>,
+    /// Each channel's encoder.
+    channels: Vec<Channel>,
     rng: Xoshiro256PlusPlus,
     stats: SensorStats,
 }
@@ -224,21 +224,18 @@ pub(crate) struct Moment {
     pub speed: f64,
 }
 
-fn exp1(rng: &mut Xoshiro256PlusPlus) -> f64 {
-    -(1.0 - rng.random::<f64>()).ln()
-}
-
 impl Sensor {
     pub(crate) fn new(id: u32, spec: SensorSpec, session: Session, seed: u64) -> Self {
         let channels = spec.targets.len();
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed ^ (u64::from(id) << 32) ^ 0x5e45_0e5e);
-        let need = (0..channels).map(|_| exp1(&mut rng)).collect();
+        let encoders = (0..channels)
+            .map(|_| Channel::new(&mut || rng.random::<f64>()))
+            .collect();
         let spec = Arc::new(spec);
         let state = Arc::new(Mutex::new(State {
             anchor: None,
             last: None,
-            need,
-            reference: vec![None; channels],
+            channels: encoders,
             rng,
             stats: SensorStats::default(),
         }));
@@ -314,9 +311,14 @@ impl Sensor {
                 batch.values.len()
             )));
         }
-        if matches!(self.spec.encoding, Encoding::Spikes { .. }) {
-            return Err(SessionError::Invalid("this sensor sends spikes, not samples".into()));
-        }
+        let encoding = match self.spec.encoding {
+            Encoding::Current { gain_mv } => SampleEncoding::Current { gain_mv },
+            Encoding::Rate { max_hz, mv } => SampleEncoding::Rate { max_hz, mv },
+            Encoding::Threshold { level, mv } => SampleEncoding::Threshold { level, mv },
+            Encoding::Spikes { .. } => {
+                return Err(SessionError::Invalid("this sensor sends spikes, not samples".into()));
+            }
+        };
         let moment = self.session.sensor_moment()?;
         let samples = (batch.values.len() / channels) as u64;
         let mut st = self.lock();
@@ -328,56 +330,27 @@ impl Sensor {
         let mut inputs = Vec::new();
         let mut log = Vec::new();
         let dt_sim_s = batch.dt_ns as f64 * anchor.speed / 1e9;
+        let state = &mut *st;
         for (s, values) in batch.values.chunks_exact(channels).enumerate() {
             let t_ns = batch.t0_ns + s as u64 * batch.dt_ns;
             let t = anchor.map(t_ns);
-            st.last = Some((t_ns, t));
+            state.last = Some((t_ns, t));
             for (c, &v) in values.iter().enumerate() {
                 log.push((c as u32, t_ns, t, v));
                 let targets = &self.spec.targets[c];
-                let mut send = |at: SimTime, mv: f32| {
-                    for &n in targets {
-                        inputs.push((n, at, mv));
-                    }
-                };
-                match self.spec.encoding {
-                    Encoding::Current { gain_mv } => {
-                        let mv = gain_mv * v;
-                        if mv != 0.0 {
-                            send(t, mv);
+                let rng = &mut state.rng;
+                state.channels[c].encode(
+                    encoding,
+                    v,
+                    dt_sim_s,
+                    &mut || rng.random::<f64>(),
+                    &mut |offset_s, mv| {
+                        let at = if offset_s > 0.0 { t.saturating_add(SimDuration::from_secs_f64(offset_s)) } else { t };
+                        for &n in targets {
+                            inputs.push((n, at, mv));
                         }
-                    }
-                    Encoding::Rate { max_hz, mv } => {
-                        let rate = f64::from(v.clamp(0.0, 1.0)) * max_hz;
-                        // Time rescaling: an event whenever the integrated rate reaches the channel's next Exp(1)
-                        // draw, so the process is exact across samples of different rates.
-                        let mut start = 0.0;
-                        if rate > 0.0 {
-                            loop {
-                                let mass = rate * (dt_sim_s - start);
-                                if st.need[c] > mass {
-                                    st.need[c] -= mass;
-                                    break;
-                                }
-                                start += st.need[c] / rate;
-                                send(t.saturating_add(SimDuration::from_secs_f64(start)), mv);
-                                st.need[c] = exp1(&mut st.rng);
-                            }
-                        }
-                    }
-                    Encoding::Threshold { level, mv } => {
-                        let reference = st.reference[c].get_or_insert(v);
-                        while v - *reference >= level {
-                            *reference += level;
-                            send(t, mv);
-                        }
-                        while *reference - v >= level {
-                            *reference -= level;
-                            send(t, -mv);
-                        }
-                    }
-                    Encoding::Spikes { .. } => unreachable!("checked above"),
-                }
+                    },
+                );
             }
         }
         st.stats.inputs += inputs.len() as u64;

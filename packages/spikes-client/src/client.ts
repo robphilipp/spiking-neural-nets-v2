@@ -9,6 +9,7 @@ import type { ClientMessage } from "./generated/ClientMessage";
 import type { Cluster } from "./generated/Cluster";
 import type { Deployment } from "./generated/Deployment";
 import type { Input } from "./generated/Input";
+import type { InputSource } from "./generated/InputSource";
 import type { Network } from "./generated/Network";
 import type { NetworkPreview } from "./generated/NetworkPreview";
 import type { NeuronState } from "./generated/NeuronState";
@@ -279,6 +280,16 @@ export abstract class ProtocolClient {
 
   async addInput(session: number, input: Input): Promise<void> {
     await this.request({ type: "addInput", session, input });
+  }
+
+  /** Gives the run its inputs (an input file's sources): once per build, before it runs; a reset applies them again. */
+  async setInputs(session: number, sources: InputSource[]): Promise<void> {
+    await this.request({ type: "setInputs", session, sources });
+  }
+
+  /** Fires a pulse source of the run's inputs now. */
+  async fire(session: number, source: string): Promise<void> {
+    await this.request({ type: "fire", session, source });
   }
 
   /** Adds a connection now (also while running); `inhibitory` and `learning` default to the sender's sign and none. */

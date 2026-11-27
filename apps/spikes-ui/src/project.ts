@@ -1,7 +1,9 @@
-// A project: a folder with `project.toml` and the network description it names.
+// A project: a folder with `project.toml`, the network description it names, and its input files.
 //
 //   name = "ring experiments"
 //   network = "network.boo"
+//   inputs = ["baseline.inputs.toml", "touch.inputs.toml"]   # input files (see inputFile.ts)
+//   selected_inputs = "touch.inputs.toml"                    # the one runs use (optional: none)
 //
 //   [run]
 //   seed = 1
@@ -9,14 +11,11 @@
 //   speed = 1.0          # simulated s per wall s; "max" for as fast as possible
 //   duration_s = 10      # omit to run until stopped
 //
-//   [background]         # optional: Poisson input
-//   rate_hz = 5          # per neuron
-//   mv = 12
-//   neurons = "input-"   # only these neurons: names starting with this (default: all)
-//   match = "regex"      # optional: `neurons` is a regular expression instead ("prefix", the default)
+// A project from before input files, with a `[background]` table (rate_hz, mv, neurons, match), is read as one with
+// a `background.inputs.toml` holding a Poisson source, selected (saving writes it out).
 
 import { parse, stringify } from "smol-toml";
-import type { NeuronMatch } from "./neuronMatch";
+import type { InputFile } from "./inputFile";
 
 export interface RunSettings {
   seed: number;
@@ -27,24 +26,29 @@ export interface RunSettings {
   durationS: number | null;
 }
 
-export interface Background {
-  rateHz: number;
-  mv: number;
-  /** Which neurons (an empty pattern: all). */
-  neurons: NeuronMatch;
-}
-
 export interface Project {
   name: string;
   /** The network description's file, relative to the project folder. */
   network: string;
   run: RunSettings;
-  background: Background | null;
+  /** Input files, relative to the project folder. */
+  inputs: string[];
+  /** The input file runs use, if any (one of `inputs`). */
+  selectedInputs: string | null;
 }
 
 export const DEFAULT_RUN: RunSettings = { seed: 1, shards: 2, speed: 1, durationS: null };
 
-export const newProject = (name: string): Project => ({ name, network: "network.boo", run: { ...DEFAULT_RUN }, background: null });
+/** A new project's input file. */
+export const DEFAULT_INPUTS = "inputs.inputs.toml";
+
+export const newProject = (name: string): Project => ({
+  name,
+  network: "network.boo",
+  run: { ...DEFAULT_RUN },
+  inputs: [DEFAULT_INPUTS],
+  selectedInputs: DEFAULT_INPUTS,
+});
 
 export class ProjectError extends Error {}
 
@@ -53,13 +57,24 @@ const number = (value: unknown, what: string, check: (n: number) => boolean): nu
   return value;
 };
 
-const matchMode = (value: unknown): "regex" => {
-  if (value === "regex") return "regex";
-  throw new ProjectError(`project.toml: background.match must be "prefix" or "regex" (got ${String(value)})`);
+/** A file name inside the project folder. */
+const inFolder = (file: string, what: string): string => {
+  if (file.includes("..") || file.startsWith("/") || file.includes("\\")) throw new ProjectError(`project.toml: ${what} must be inside the project folder`);
+  return file;
 };
 
+/** The input file made from a `[background]` table. */
+export const MIGRATED_INPUTS = "background.inputs.toml";
+
+/** What `project.toml` holds: the project, and (for a project from before input files) the input file made from
+ *  its `[background]`. */
+export interface ParsedProject {
+  project: Project;
+  migrated: InputFile | null;
+}
+
 /** Reads `project.toml`. */
-export function parseProject(text: string): Project {
+export function parseProject(text: string): ParsedProject {
   let toml: Record<string, unknown>;
   try {
     toml = parse(text) as Record<string, unknown>;
@@ -67,30 +82,59 @@ export function parseProject(text: string): Project {
     throw new ProjectError(`project.toml: ${e instanceof Error ? e.message : String(e)}`);
   }
   const name = typeof toml.name === "string" ? toml.name : "untitled";
-  const network = typeof toml.network === "string" ? toml.network : "network.boo";
-  if (network.includes("..") || network.startsWith("/")) throw new ProjectError("project.toml: the network file must be inside the project folder");
+  const network = inFolder(typeof toml.network === "string" ? toml.network : "network.boo", "the network file");
   const run = (toml.run ?? {}) as Record<string, unknown>;
   const speed = run.speed === undefined ? DEFAULT_RUN.speed : run.speed === "max" ? null : number(run.speed, "run.speed", (n) => n > 0);
+  let inputs: string[] = [];
+  if (toml.inputs !== undefined) {
+    if (!Array.isArray(toml.inputs) || !toml.inputs.every((f) => typeof f === "string")) {
+      throw new ProjectError("project.toml: inputs must be a list of file names");
+    }
+    inputs = (toml.inputs as string[]).map((f) => inFolder(f, "an input file"));
+  }
+  let selectedInputs: string | null = typeof toml.selected_inputs === "string" ? toml.selected_inputs : null;
+  if (selectedInputs !== null && !inputs.includes(selectedInputs)) {
+    throw new ProjectError(`project.toml: selected_inputs '${selectedInputs}' isn't one of inputs`);
+  }
+  let migrated: InputFile | null = null;
   const background = toml.background as Record<string, unknown> | undefined;
-  return {
-    name,
-    network,
-    run: {
-      seed: run.seed === undefined ? DEFAULT_RUN.seed : number(run.seed, "run.seed", Number.isInteger),
-      shards: run.shards === undefined ? DEFAULT_RUN.shards : number(run.shards, "run.shards", (n) => Number.isInteger(n) && n >= 1),
-      speed,
-      durationS: run.duration_s === undefined ? null : number(run.duration_s, "run.duration_s", (n) => n > 0),
-    },
-    background: background
-      ? {
-          rateHz: number(background.rate_hz, "background.rate_hz", (n) => n > 0),
+  if (background) {
+    const pattern = typeof background.neurons === "string" ? background.neurons : "";
+    if (background.match !== undefined && background.match !== "prefix" && background.match !== "regex") {
+      throw new ProjectError(`project.toml: background.match must be "prefix" or "regex" (got ${String(background.match)})`);
+    }
+    migrated = {
+      description: "Background input (from project.toml's [background])",
+      sources: [
+        {
+          name: "background",
+          kind: "poisson",
+          targets: background.match === "regex" ? { regex: pattern } : { prefix: pattern },
+          start: 0,
+          duration: null,
+          enabled: true,
+          hz: number(background.rate_hz, "background.rate_hz", (n) => n > 0),
           mv: number(background.mv, "background.mv", Number.isFinite),
-          neurons: {
-            mode: background.match === undefined || background.match === "prefix" ? "prefix" : matchMode(background.match),
-            pattern: typeof background.neurons === "string" ? background.neurons : "",
-          },
-        }
-      : null,
+        },
+      ],
+    };
+    if (!inputs.includes(MIGRATED_INPUTS)) inputs = [...inputs, MIGRATED_INPUTS];
+    selectedInputs = MIGRATED_INPUTS;
+  }
+  return {
+    project: {
+      name,
+      network,
+      run: {
+        seed: run.seed === undefined ? DEFAULT_RUN.seed : number(run.seed, "run.seed", Number.isInteger),
+        shards: run.shards === undefined ? DEFAULT_RUN.shards : number(run.shards, "run.shards", (n) => Number.isInteger(n) && n >= 1),
+        speed,
+        durationS: run.duration_s === undefined ? null : number(run.duration_s, "run.duration_s", (n) => n > 0),
+      },
+      inputs,
+      selectedInputs,
+    },
+    migrated,
   };
 }
 
@@ -98,12 +142,9 @@ export function parseProject(text: string): Project {
 export function serializeProject(p: Project): string {
   const run: Record<string, unknown> = { seed: p.run.seed, shards: p.run.shards, speed: p.run.speed ?? "max" };
   if (p.run.durationS !== null) run.duration_s = p.run.durationS;
-  const toml: Record<string, unknown> = { name: p.name, network: p.network, run };
-  if (p.background) {
-    const b: Record<string, unknown> = { rate_hz: p.background.rateHz, mv: p.background.mv };
-    if (p.background.neurons.pattern) b.neurons = p.background.neurons.pattern;
-    if (p.background.neurons.mode === "regex") b.match = "regex";
-    toml.background = b;
-  }
+  const toml: Record<string, unknown> = { name: p.name, network: p.network };
+  if (p.inputs.length) toml.inputs = p.inputs;
+  if (p.selectedInputs !== null) toml.selected_inputs = p.selectedInputs;
+  toml.run = run;
   return stringify(toml) + "\n";
 }

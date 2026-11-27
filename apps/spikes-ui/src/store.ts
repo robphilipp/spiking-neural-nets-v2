@@ -4,7 +4,8 @@
 
 import type { Network, NetworkPreview, SourceError, State as SessionState } from "@spikes/client";
 import { create } from "zustand";
-import { DEFAULT_RUN, type Background, newProject, type Project, type RunSettings } from "./project";
+import { emptyInputFile, type InputFile } from "./inputFile";
+import { DEFAULT_RUN, newProject, type Project, type RunSettings } from "./project";
 import type { ThemeChoice } from "./theme";
 
 export function remember(key: string, value: unknown) {
@@ -60,33 +61,56 @@ export interface ProjectState {
   /** The project folder, or null for an unsaved project. */
   folder: string | null;
   project: Project;
+  /** The project's input files, by file name (each of `project.inputs`). */
+  inputFiles: Record<string, InputFile>;
   /** The description as last saved (to show unsaved changes). */
   savedDescription: string | null;
   savedProject: string | null;
+  /** The input files as last saved (JSON). */
+  savedInputs: string | null;
   /** Recently opened folders, newest first. */
   recent: string[];
 }
 
 const RECENT_KEY = "spikes.recentProjects";
 
+const freshInputs = (p: Project): Record<string, InputFile> => Object.fromEntries(p.inputs.map((f) => [f, emptyInputFile()]));
+
 export const useProject = create<ProjectState>()(() => ({
   folder: null,
   project: newProject("untitled"),
+  inputFiles: freshInputs(newProject("untitled")),
   savedDescription: null,
   savedProject: null,
+  savedInputs: null,
   recent: recall<string[]>(RECENT_KEY, []),
 }));
 rememberIn(useProject, RECENT_KEY, (s) => s.recent);
 
 const withRecent = (recent: string[], folder: string) => [folder, ...recent.filter((f) => f !== folder)].slice(0, 10);
 
-/** `saved`: whether the folder has project.toml (without it, the project shows as unsaved until it's saved). */
-export function projectOpened({ folder, project, description, saved }: { folder: string; project: Project; description: string; saved: boolean }) {
+/** `saved`: whether the folder has project.toml and the input files as read (without, the project shows as
+ *  unsaved until it's saved). */
+export function projectOpened({
+  folder,
+  project,
+  description,
+  inputFiles,
+  saved,
+}: {
+  folder: string;
+  project: Project;
+  description: string;
+  inputFiles: Record<string, InputFile>;
+  saved: boolean;
+}) {
   useProject.setState((s) => ({
     folder,
     project,
+    inputFiles,
     savedDescription: description,
     savedProject: saved ? JSON.stringify(project) : null,
+    savedInputs: saved ? JSON.stringify(inputFiles) : null,
     recent: withRecent(s.recent, folder),
   }));
 }
@@ -96,8 +120,28 @@ export function projectSaved({ folder, description }: { folder: string; descript
     folder,
     savedDescription: description,
     savedProject: JSON.stringify(s.project),
+    savedInputs: JSON.stringify(s.inputFiles),
     recent: withRecent(s.recent, folder),
   }));
+}
+
+/** An input file changed (or was added: it joins the project's list). */
+export function inputFileChanged(name: string, file: InputFile) {
+  useProject.setState((s) => ({
+    project: s.project.inputs.includes(name) ? s.project : { ...s.project, inputs: [...s.project.inputs, name] },
+    inputFiles: { ...s.inputFiles, [name]: file },
+  }));
+}
+
+/** Runs use this input file (null: none). */
+export function inputsSelected(name: string | null) {
+  useProject.setState((s) => ({ project: { ...s.project, selectedInputs: name } }));
+}
+
+/** The selected input file, if any. */
+export function selectedInputs(s: ProjectState): { name: string; file: InputFile } | null {
+  const name = s.project.selectedInputs;
+  return name === null ? null : { name, file: s.inputFiles[name] ?? emptyInputFile() };
 }
 
 export function projectRenamed(name: string) {
@@ -108,16 +152,13 @@ export function runSettingsChanged(change: Partial<RunSettings>) {
   useProject.setState((s) => ({ project: { ...s.project, run: { ...s.project.run, ...change } } }));
 }
 
-export function backgroundChanged(background: Background | null) {
-  useProject.setState((s) => ({ project: { ...s.project, background } }));
-}
-
 export function forgetRecent(folder: string) {
   useProject.setState((s) => ({ recent: s.recent.filter((f) => f !== folder) }));
 }
 
 export function newProjectStarted() {
-  useProject.setState({ folder: null, project: newProject("untitled"), savedDescription: null, savedProject: null });
+  const project = newProject("untitled");
+  useProject.setState({ folder: null, project, inputFiles: freshInputs(project), savedDescription: null, savedProject: null, savedInputs: null });
 }
 
 export { DEFAULT_RUN };

@@ -8,6 +8,7 @@ import { appDataDir, join } from "@tauri-apps/api/path";
 import { mkdir, writeTextFile } from "@tauri-apps/plugin-fs";
 import { examples } from "./examples";
 import { readProject, writeProject } from "./files";
+import { parseInputFile } from "./inputFile";
 import { newProject } from "./project";
 import { LiveView } from "./live";
 import { TauriClient } from "./tauriClient";
@@ -18,37 +19,49 @@ export async function selftest(): Promise<void> {
   try {
     // Project files through the real fs plugin and its permissions (the app's data folder is in scope).
     const folder = await join(await appDataDir(), "selftest-project");
-    const project = {
-      ...newProject("selftest"),
-      background: { rateHz: 5, mv: 12, neurons: { mode: "prefix" as const, pattern: "" } },
+    const project = newProject("selftest");
+    const inputFiles = {
+      [project.inputs[0]!]: parseInputFile(
+        '[[source]]\nname = "background"\nkind = "poisson"\nneurons = { prefix = "" }\nhz = 5\nmv = 12\n',
+      ),
     };
     await writeProject(
       folder,
       project,
       "(neurons=[(name=a, position=[0, 0, 0])])",
+      inputFiles,
     );
     const back = await readProject(folder);
     // A folder of networks without project.toml: one is the project's network; with several, which is asked.
-    const loose = await join(await appDataDir(), "selftest-networks");
+    // (Two folders whose contents never change: files written by an earlier run are still there, and the app may
+    // not delete files.)
+    const loose = await join(await appDataDir(), "selftest-one-network");
     await mkdir(loose, { recursive: true });
     await writeTextFile(await join(loose, "one.boo"), "(neurons=[(name=one, position=[0, 0, 0])])");
     const single = await readProject(loose);
-    await writeTextFile(await join(loose, "two.boo"), "(neurons=[(name=two, position=[0, 0, 0])])");
-    const several = await readProject(loose);
-    const chosen = await readProject(loose, "two.boo");
-    const projectOk =
-      back.kind === "project" &&
-      back.saved &&
-      JSON.stringify(back.project) === JSON.stringify(project) &&
-      back.description.includes("name=a") &&
-      single.kind === "project" &&
-      !single.saved &&
-      single.project.network === "one.boo" &&
-      single.description.includes("name=one") &&
-      several.kind === "choose" &&
-      several.networks.join() === "one.boo,two.boo" &&
-      chosen.kind === "project" &&
-      chosen.description.includes("name=two");
+    const looser = await join(await appDataDir(), "selftest-two-networks");
+    await mkdir(looser, { recursive: true });
+    await writeTextFile(await join(looser, "one.boo"), "(neurons=[(name=one, position=[0, 0, 0])])");
+    await writeTextFile(await join(looser, "two.boo"), "(neurons=[(name=two, position=[0, 0, 0])])");
+    const several = await readProject(looser);
+    const chosen = await readProject(looser, "two.boo");
+    // Each check by name, so a failure says which.
+    const projectChecks: Record<string, boolean> = {
+      read: back.kind === "project",
+      saved: back.kind === "project" && back.saved,
+      settings: back.kind === "project" && JSON.stringify(back.project) === JSON.stringify(project),
+      inputFiles: back.kind === "project" && JSON.stringify(back.inputFiles) === JSON.stringify(inputFiles),
+      network: back.kind === "project" && back.description.includes("name=a"),
+      singleNetwork:
+        single.kind === "project" && !single.saved && single.project.network === "one.boo" && single.description.includes("name=one"),
+      severalNetworks: several.kind === "choose" && several.networks.join() === "one.boo,two.boo",
+      chosenNetwork: chosen.kind === "project" && chosen.description.includes("name=two"),
+    };
+    const projectFailed = Object.entries(projectChecks).filter(([, ok]) => !ok).map(([name]) => name);
+    const projectOk = projectFailed.length === 0;
+    const projectNote = projectOk
+      ? ""
+      : ` projectFailed=${projectFailed.join(",")}${back.kind === "project" ? ` readBack=${JSON.stringify(back.project)} ${JSON.stringify(back.inputFiles)}` : ""}`;
 
     const client = await TauriClient.connect();
     const ring = examples.find((e) => e.name === "ring")!.text;
@@ -157,7 +170,7 @@ export async function selftest(): Promise<void> {
       errorsOk;
     await report(
       ok,
-      `raster=${rasterPoints} rate=${ratePoints} project=${projectOk} neurons=${network.neurons.length} frames=${frames.length} spikes=${spikes} runEnded=${ended} sensorInputSpikes=${inputSpikes} errors=${errors.join(" | ")} reported=${reported.join(" | ")}`,
+      `raster=${rasterPoints} rate=${ratePoints} project=${projectOk}${projectNote} neurons=${network.neurons.length} frames=${frames.length} spikes=${spikes} runEnded=${ended} sensorInputSpikes=${inputSpikes} errors=${errors.join(" | ")} reported=${reported.join(" | ")}`,
     );
   } catch (e) {
     await report(false, `error: ${e instanceof Error ? e.message : String(e)}`);

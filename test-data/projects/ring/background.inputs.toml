@@ -1,0 +1,8 @@
+description = "Poisson background input to the first column of the ring"
+
+[[source]]
+name = "background"
+kind = "poisson"
+neurons = { prefix = "hidden-1" }
+hz = 20
+mv = 10

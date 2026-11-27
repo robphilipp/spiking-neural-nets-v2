@@ -161,6 +161,8 @@ pub struct NetworkInfo {
     pub modulators: Vec<String>,
     /// Learning rules new connections can use.
     pub learning_rules: Vec<String>,
+    /// The description's sets: name and members (neuron indices), in description order.
+    pub sets: Vec<(String, Vec<u32>)>,
     /// Each neuron's spatial cell (for binned spike frames): a 16 × 16 × 16 grid over the network's bounding box,
     /// numbered `ix + 16·(iy + 16·iz)`.
     pub cells: Vec<u32>,
@@ -200,6 +202,7 @@ impl NetworkInfo {
             synapse_count: net.synapse_count,
             modulators: description.modulators.iter().map(|m| m.name.clone()).collect(),
             learning_rules: net.learning_rules(),
+            sets: description.sets.iter().map(|s| (s.name.clone(), s.members.clone())).collect(),
             ids,
             indices,
         }
@@ -222,6 +225,7 @@ impl NetworkInfo {
             synapses,
             modulators: Vec::new(),
             learning_rules: Vec::new(),
+            sets: Vec::new(),
         }
     }
 

@@ -19,6 +19,7 @@ spikes-dna = { version = "0.1.0", path = "../spikes-dna" }
 spikes-model = { version = "0.1.0", path = "../spikes-model" }
 spikes-network = { version = "0.1.0", path = "../spikes-network" }
 spikes-record = { version = "0.1.0", path = "../spikes-record" }
+spikes-signal = { path = "../spikes-signal" }
 tempo-runtime = { version = "0.1.0", path = "../tempo-runtime" }
 
 [lints]

@@ -30,7 +30,9 @@ import { useChartSettings, useChartKey, useTimeDomain, ZOOM } from "../chartSett
 import { connectLive, useLive } from "../live";
 import { describeMatch, matchNeurons, type NeuronMatch } from "../neuronMatch";
 import { useBehavior } from "../useBehavior";
-import { backgroundChanged, built, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
+import { built, inputFileChanged, inputsSelected, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
+import { backgroundOf, type BackgroundSource, emptyInputFile, fromMatch, notRunYet, toMatch, withBackground } from "../inputFile";
+import { DEFAULT_INPUTS } from "../project";
 import { useChartColors } from "../theme";
 
 /** Speed on a log scale: slider value v means 2^v simulated seconds per wall second. */
@@ -40,6 +42,9 @@ const speedLabel = (v: number) => (v >= 0 ? `×${speedOf(v)}` : `×1/${2 ** -v}`
 /** How many raster rows at most. */
 const MAX_ROWS = 300;
 
+/** The input file selector's "none". */
+const NO_INPUTS = "\u0000none";
+
 export function RunPage() {
   const colors = useChartColors();
   const { client } = useConnection();
@@ -48,7 +53,11 @@ export function RunPage() {
 
   // Run settings belong to the project (saved in project.toml).
   const run = useProject((s) => s.project.run);
-  const background = useProject((s) => s.project.background);
+  // Inputs: the project's selected input file (its "background" source is the background input below).
+  const inputNames = useProject((s) => s.project.inputs);
+  const inputsName = useProject((s) => s.project.selectedInputs);
+  const inputs = useProject((s) => (s.project.selectedInputs === null ? null : (s.inputFiles[s.project.selectedInputs] ?? emptyInputFile())));
+  const background = backgroundOf(inputs);
   const { shards, seed } = run;
   const asFastAsPossible = run.speed === null;
   const [lastSpeedLog, setLastSpeedLog] = useState(0);
@@ -67,7 +76,18 @@ export function RunPage() {
   const [show3d, setShow3d] = useState(true);
   const tooltips = useSettings((s) => s.tooltips);
   const [stimulus, setStimulus] = useState<{ neurons: NeuronMatch; mv: number }>({ neurons: { mode: "prefix", pattern: "" }, mv: 10 });
-  const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12, neurons: { mode: "prefix", pattern: "" } as NeuronMatch });
+  /** The background input's settings while it isn't in the input file yet. */
+  const [backgroundDraft, setBackgroundDraft] = useState<BackgroundSource>({
+    name: "background",
+    kind: "poisson",
+    targets: { prefix: "" },
+    hz: 5,
+    mv: 12,
+    start: 0,
+    duration: null,
+    enabled: false,
+  });
+  const shownBackground = background ?? backgroundDraft;
   const [windowMs, setWindowMs] = useState(20_000);
   const timeDomain = useTimeDomain(windowMs);
   const chartKey = useChartKey(windowMs);
@@ -90,9 +110,9 @@ export function RunPage() {
   useEffect(() => {
     if (!seeking) setSeekMs(session.simMs);
   }, [session.simMs, seeking]);
-  /** The background input the current network was built with (it's applied at Build). */
-  const [builtBackground, setBuiltBackground] = useState<string | null>(() => JSON.stringify(background));
-  const needsRebuild = network !== null && JSON.stringify(background) !== builtBackground;
+  /** The input file the current network was built with (it's given to the run at Build). */
+  const [builtInputs, setBuiltInputs] = useState<string | null>(() => JSON.stringify([inputsName, inputs]));
+  const needsRebuild = network !== null && JSON.stringify([inputsName, inputs]) !== builtInputs;
   const [rasterRef, width] = useWidth();
   // Connected sensors (from this page, the Inputs page or any other client), refreshed every second.
   const [sensors, setSensors] = useState<SensorInfo[]>([]);
@@ -185,10 +205,17 @@ export function RunPage() {
   const lineStyles = new Map<string, SeriesLineStyle>(
     [...rows, "rate"].map((name) => [name, { ...defaultLineStyle(), color: colors.series, highlightColor: colors.highlight }]),
   );
-  const setBackground = (next: typeof backgroundDraft) => {
-    setBackgroundDraft(next);
-    if (background) backgroundChanged(next);
+  /** Changes the background input: in the selected input file (creating one if none is selected). */
+  const setBackground = (change: Partial<BackgroundSource>) => {
+    if (!background && change.enabled === undefined) {
+      setBackgroundDraft({ ...backgroundDraft, ...change });
+      return;
+    }
+    const name = inputsName ?? inputNames[0] ?? DEFAULT_INPUTS;
+    if (inputsName === null) inputsSelected(name);
+    inputFileChanged(name, withBackground(inputs ?? useProject.getState().inputFiles[name] ?? emptyInputFile(), change, backgroundDraft));
   };
+  const idle = notRunYet(inputs ?? emptyInputFile());
 
   return (
     <div className="flex flex-col gap-3">
@@ -205,9 +232,9 @@ export function RunPage() {
               setBuilding(true);
               try {
                 const nodes = replay ? [] : nodesSetting.split(",").map((n) => n.trim()).filter(Boolean);
-                await buildNetwork(client!, id, { shards, seed, nodes, background: replay ? null : background });
+                await buildNetwork(client!, id, { shards, seed, nodes, inputs: replay ? null : inputs });
                 setBuiltNodes(nodes);
-                setBuiltBackground(JSON.stringify(background));
+                setBuiltInputs(JSON.stringify([inputsName, inputs]));
               } finally {
                 setBuilding(false);
               }
@@ -409,29 +436,43 @@ export function RunPage() {
               Stimulate
             </Button>
             <div className="flex-1" />
+            <Choice
+              label="Input file"
+              width={210}
+              value={inputsName ?? NO_INPUTS}
+              onChange={(v) => inputsSelected(v === NO_INPUTS ? null : v)}
+              options={[{ value: NO_INPUTS, label: "none" }, ...inputNames.map((n) => ({ value: n, label: n.replace(/\.inputs\.toml$/, "") }))]}
+              testId="input-file"
+            />
             <Toggle
               label="Background input"
-              checked={background !== null}
-              onChange={(on) => backgroundChanged(on ? backgroundDraft : null)}
+              checked={background?.enabled ?? false}
+              onChange={(enabled) => setBackground({ enabled })}
               testId="background"
-              title="Poisson input, applied when the network is built"
+              title="Poisson input: the input file's 'background' source, given to the run when the network is built"
             />
             <NeuronMatchField
               label="Background neurons"
               width={270}
-              value={backgroundDraft.neurons}
-              onChange={(neurons) => setBackground({ ...backgroundDraft, neurons })}
+              value={"set" in shownBackground.targets ? { mode: "prefix", pattern: "" } : toMatch(shownBackground.targets)}
+              onChange={(neurons) => setBackground({ targets: fromMatch(neurons) })}
               neurons={network?.neurons}
               placeholder="all"
               testId="background-neurons"
             />
-            <NumberField label="Hz per neuron" width={120} min={0.001} value={backgroundDraft.rateHz} onChange={(rateHz) => setBackground({ ...backgroundDraft, rateHz })} />
-            <NumberField label="mV" width={80} value={backgroundDraft.mv} onChange={(mv) => setBackground({ ...backgroundDraft, mv })} />
+            <NumberField label="Hz per neuron" width={120} min={0.001} value={shownBackground.hz} onChange={(hz) => setBackground({ hz })} />
+            <NumberField label="mV" width={80} value={shownBackground.mv} onChange={(mv) => setBackground({ mv })} />
           </Row>
+        )}
+        {inputs && !replay && (
+          <p className="text-xs text-muted-foreground" data-testid="input-summary">
+            {inputs.sources.filter((x) => x.enabled).length} of {inputs.sources.length} source{inputs.sources.length === 1 ? "" : "s"} on
+            {idle.length > 0 && ` (${idle.map((x) => x.name).join(", ")}: realtime, not run yet)`}
+          </p>
         )}
         {needsRebuild && !replay && (
           <p className="text-xs text-warning" data-testid="rebuild-hint">
-            Background input is applied when the network is built: {running ? "stop and rebuild" : "press Rebuild"} to apply the change.
+            Inputs are given to the run when the network is built: {running ? "stop and rebuild" : "press Rebuild"} to apply the change.
           </p>
         )}
       </Panel>

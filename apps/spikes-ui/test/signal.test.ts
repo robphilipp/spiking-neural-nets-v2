@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { compile, sample, SignalError } from "../src/signal";
+import { readFileSync } from "node:fs";
+import { compile, noiseKey, sample, SignalError } from "../src/signal";
 
 const f = (s: string) => compile(s);
 
@@ -55,4 +56,36 @@ describe("signal formulas", () => {
   it("sample sample-major", () => {
     expect([...sample(f("c + t"), 2, 1, 3, 2)]).toEqual([3, 4, 4, 5]);
   });
+});
+
+describe("the engine's formula language (crates/spikes-signal)", () => {
+  // Samples written by the engine's test (`cargo test -p spikes-signal`): the same formulas here must give the same
+  // values, noise included. sin, log and the like may differ in the last bit between JavaScript and Rust.
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/signal-parity.json", import.meta.url), "utf8")) as {
+    seed: number;
+    source: string;
+    key: string;
+    channels: number;
+    samples: number;
+    dtMs: number;
+    cases: Array<{ formula: string; values: number[] }>;
+  };
+
+  it("derives the same noise key from the seed and the source's name", () => {
+    expect(noiseKey(fixture.seed, fixture.source)).toBe(BigInt(fixture.key));
+  });
+
+  for (const { formula, values } of fixture.cases) {
+    it(`agrees on ${formula}`, () => {
+      const signal = compile(formula);
+      const key = noiseKey(fixture.seed, fixture.source);
+      for (let s = 0; s < fixture.samples; s++) {
+        for (let c = 0; c < fixture.channels; c++) {
+          const got = signal(s * fixture.dtMs, c, fixture.channels, { sample: s, key });
+          const want = values[s * fixture.channels + c]!;
+          expect(Math.abs(got - want), `sample ${s}, channel ${c}: ${got} vs ${want}`).toBeLessThanOrEqual(1e-12 * Math.max(1, Math.abs(want)));
+        }
+      }
+    });
+  }
 });

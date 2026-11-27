@@ -4284,6 +4284,7 @@ dependencies = [
  "serde",
  "spikes-dna",
  "spikes-model",
+ "spikes-signal",
  "tempo-core",
  "tempo-runtime",
  "tempo-testkit",
@@ -4342,8 +4343,17 @@ dependencies = [
  "spikes-model",
  "spikes-network",
  "spikes-record",
+ "spikes-signal",
  "tempo-cluster",
  "tempo-runtime",
+]
+
+[[package]]
+name = "spikes-signal"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

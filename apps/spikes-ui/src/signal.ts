@@ -8,10 +8,23 @@
 //   step(x)        1 for x ≥ 0, else 0
 //   pulse(t, period, width)   1 for the first `width` of every `period`, else 0
 //   clamp(x, lo, hi)
+//   rand()         uniform in [0, 1): a fresh value per sample and channel (seeded: see `noiseKey`)
+//   gauss()        standard normal, likewise
+//
+// The engine has the same language (crates/spikes-signal): a test compares the two on the same formulas, noise
+// included (test/signal.test.ts, against samples the engine's test writes).
 //
 // Example: a stripe moving across a 7-wide line sensor every 100 ms:  floor(t / 100) % 7 == c % 7
 
-export type Signal = (t: number, c: number, n: number) => number;
+/** Where a formula is evaluated: the sample's index (from the source's first), and the noise key. */
+export interface At {
+  sample: number;
+  key: bigint;
+}
+
+const NO_NOISE: At = { sample: 0, key: 0n };
+
+export type Signal = (t: number, c: number, n: number, at?: At) => number;
 
 export class SignalError extends Error {
   constructor(
@@ -22,7 +35,44 @@ export class SignalError extends Error {
   }
 }
 
-type Node = (t: number, c: number, n: number) => number;
+type Node = (t: number, c: number, n: number, at: At) => number;
+
+// ----- seeded noise: the engine's counter-based scheme (crates/spikes-signal/src/noise.rs), bit for bit -----
+
+const MASK = (1n << 64n) - 1n;
+const GOLDEN = 0x9e3779b97f4a7c15n;
+
+/** splitmix64's finalizer. */
+function mix(z: bigint): bigint {
+  z = ((z ^ (z >> 30n)) * 0xbf58476d1ce4e5b9n) & MASK;
+  z = ((z ^ (z >> 27n)) * 0x94d049bb133111ebn) & MASK;
+  return z ^ (z >> 31n);
+}
+
+/** FNV-1a over a name's UTF-8 bytes. */
+function fnv1a(name: string): bigint {
+  let h = 0xcbf29ce484222325n;
+  for (const b of new TextEncoder().encode(name)) h = ((h ^ BigInt(b)) * 0x100000001b3n) & MASK;
+  return h;
+}
+
+/** A source's noise key: the run's seed and the source's name (as the engine computes it). */
+export function noiseKey(seed: number | bigint, source: string): bigint {
+  return mix(((BigInt(seed) + GOLDEN) & MASK) ^ fnv1a(source));
+}
+
+function uniform(key: bigint, channel: number, sample: number, site: number, part: number): number {
+  let z = mix(key ^ ((BigInt(channel) * GOLDEN) & MASK));
+  z = mix(z ^ ((BigInt(sample) * 0xd6e8feb86659fd93n) & MASK));
+  z = mix(z ^ ((((BigInt(site) << 32n) | BigInt(part)) * 0xa0761d6478bd642fn) & MASK));
+  return Number(z >> 11n) * 2 ** -53;
+}
+
+function gauss(key: bigint, channel: number, sample: number, site: number): number {
+  const u1 = 1 - uniform(key, channel, sample, site, 0);
+  const u2 = uniform(key, channel, sample, site, 1);
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
 
 const FUNCTIONS: Record<string, { arity: number; f: (...a: number[]) => number }> = {
   sin: { arity: 1, f: Math.sin },
@@ -46,6 +96,8 @@ const FUNCTIONS: Record<string, { arity: number; f: (...a: number[]) => number }
 /** Compiles a formula. Throws a SignalError (with the position) for a malformed one. */
 export function compile(source: string): Signal {
   let i = 0;
+  /** Call sites of rand() and gauss(), numbered in order (so two calls are independent). */
+  let sites = 0;
   const skip = () => {
     while (i < source.length && /\s/.test(source[i]!)) i++;
   };
@@ -71,7 +123,7 @@ export function compile(source: string): Signal {
     const yes = conditional();
     expect(":");
     const no = conditional();
-    return (t, c, n) => (test(t, c, n) !== 0 ? yes(t, c, n) : no(t, c, n));
+    return (t, c, n, at) => (test(t, c, n, at) !== 0 ? yes(t, c, n, at) : no(t, c, n, at));
   };
   const comparison = (): Node => {
     let left = additive();
@@ -88,7 +140,7 @@ export function compile(source: string): Signal {
         "<": (a, b) => a < b,
         ">": (a, b) => a > b,
       };
-      left = (t, c, n) => (cmp[op]!(l(t, c, n), r(t, c, n)) ? 1 : 0);
+      left = (t, c, n, at) => (cmp[op]!(l(t, c, n, at), r(t, c, n, at)) ? 1 : 0);
     }
   };
   const additive = (): Node => {
@@ -97,11 +149,11 @@ export function compile(source: string): Signal {
       if (eat("+")) {
         const l = left;
         const r = multiplicative();
-        left = (t, c, n) => l(t, c, n) + r(t, c, n);
+        left = (t, c, n, at) => l(t, c, n, at) + r(t, c, n, at);
       } else if (eat("-")) {
         const l = left;
         const r = multiplicative();
-        left = (t, c, n) => l(t, c, n) - r(t, c, n);
+        left = (t, c, n, at) => l(t, c, n, at) - r(t, c, n, at);
       } else return left;
     }
   };
@@ -114,12 +166,12 @@ export function compile(source: string): Signal {
       const r = unary();
       left =
         op === "*"
-          ? (t, c, n) => l(t, c, n) * r(t, c, n)
+          ? (t, c, n, at) => l(t, c, n, at) * r(t, c, n, at)
           : op === "/"
-            ? (t, c, n) => l(t, c, n) / r(t, c, n)
-            : (t, c, n) => {
-                const b = r(t, c, n);
-                return ((l(t, c, n) % b) + b) % b; // a modulus that is never negative for b > 0
+            ? (t, c, n, at) => l(t, c, n, at) / r(t, c, n, at)
+            : (t, c, n, at) => {
+                const b = r(t, c, n, at);
+                return ((l(t, c, n, at) % b) + b) % b; // a modulus that is never negative for b > 0
               };
     }
   };
@@ -127,7 +179,7 @@ export function compile(source: string): Signal {
   const unary = (): Node => {
     if (eat("-")) {
       const x = unary();
-      return (t, c, n) => -x(t, c, n);
+      return (t, c, n, at) => -x(t, c, n, at);
     }
     eat("+");
     return power();
@@ -136,7 +188,7 @@ export function compile(source: string): Signal {
     const base = primary();
     if (!eat("^")) return base;
     const exponent = unary(); // right-associative
-    return (t, c, n) => base(t, c, n) ** exponent(t, c, n);
+    return (t, c, n, at) => base(t, c, n, at) ** exponent(t, c, n, at);
   };
   const primary = (): Node => {
     skip();
@@ -159,31 +211,44 @@ export function compile(source: string): Signal {
     if (word === "c") return (_, c) => c;
     if (word === "n") return (_, __, n) => n;
     if (word === "pi") return () => Math.PI;
+    if (word === "rand" || word === "gauss") {
+      expect("(");
+      expect(")");
+      const site = sites++;
+      return word === "rand"
+        ? (_, c, __, at) => uniform(at.key, c, at.sample, site, 0)
+        : (_, c, __, at) => gauss(at.key, c, at.sample, site);
+    }
     const fn = FUNCTIONS[word];
-    if (!fn) return fail(`unknown name '${word}' (use t, c, n, pi, or a function like sin, pulse, step)`);
+    if (!fn) {
+      i -= word.length;
+      return fail(`unknown name '${word}' (use t, c, n, pi, or a function like sin, pulse, step, rand)`);
+    }
     expect("(");
     const args: Node[] = [conditional()];
     while (eat(",")) args.push(conditional());
     expect(")");
     if (args.length !== fn.arity) fail(`${word} takes ${fn.arity} argument${fn.arity > 1 ? "s" : ""}`);
-    return (t, c, n) => fn.f(...args.map((a) => a(t, c, n)));
+    return (t, c, n, at) => fn.f(...args.map((a) => a(t, c, n, at)));
   };
 
   const node = conditional();
   skip();
   if (i < source.length) fail(`unexpected '${source[i]}'`);
-  return (t, c, n) => {
-    const v = node(t, c, n);
+  return (t, c, n, at = NO_NOISE) => {
+    const v = node(t, c, n, at);
     return Number.isFinite(v) ? v : 0;
   };
 }
 
-/** Samples a signal: `values[s * channels + c]` for samples `first … first + count − 1`, `dtMs` apart. */
-export function sample(signal: Signal, channels: number, dtMs: number, first: number, count: number): Float32Array {
+/** Samples a signal: `values[s * channels + c]` for samples `first … first + count − 1`, `dtMs` apart. `key`: the
+ *  noise key ({@link noiseKey}). */
+export function sample(signal: Signal, channels: number, dtMs: number, first: number, count: number, key = 0n): Float32Array {
   const values = new Float32Array(count * channels);
   for (let s = 0; s < count; s++) {
     const t = (first + s) * dtMs;
-    for (let c = 0; c < channels; c++) values[s * channels + c] = signal(t, c, channels);
+    const at = { sample: first + s, key };
+    for (let c = 0; c < channels; c++) values[s * channels + c] = signal(t, c, channels, at);
   }
   return values;
 }

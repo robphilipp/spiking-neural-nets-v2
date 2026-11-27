@@ -13,6 +13,7 @@ tempo-runtime = { path = "../tempo-runtime", features = ["serde"] }
 tempo-core = { path = "../tempo-core", features = ["serde"] }
 spikes-model = { path = "../spikes-model" }
 spikes-dna = { path = "../spikes-dna" }
+spikes-signal = { path = "../spikes-signal" }
 rand.workspace = true
 rand_xoshiro.workspace = true
 

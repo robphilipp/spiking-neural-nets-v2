@@ -1,0 +1,16 @@
+description = "A travelling wave around the ring, plus taps on one neuron"
+
+[[source]]
+name = "wave"
+kind = "signal"
+neurons = { regex = "^hidden-\\d01$" }   # hidden-101, hidden-201, … one per column
+formula = "0.5 + 0.5 * sin(2 * pi * t / 400 - 2 * pi * c / n)"
+sample = "1 ms"
+encoding = { kind = "rate", max_hz = 60, mv = 10 }
+
+[[source]]
+name = "taps"
+kind = "pulse"
+neurons = { prefix = "hidden-305" }
+at = ["1 s", "2 s", "3 s"]
+mv = 12

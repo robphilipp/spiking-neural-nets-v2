@@ -1,6 +1,6 @@
 # 05 Inputs: input files, simulated and realtime sources, the Inputs view
 
-Status: **reviewed**, 2026-11-27 (decisions below; the open questions answered). Replaces today's three ways of giving a network input (the Run page's
+Status: **reviewed**, 2026-11-27 (decisions below; the open questions answered). **I1 done** (2026-11-27). Replaces today's three ways of giving a network input (the Run page's
 **Stimulate** and **Background input**, and the Inputs page's designed signal and microphone) with one model and
 one view.
 
@@ -234,6 +234,37 @@ duration = "500 ms"
 | **I5** Test runs and data | the throwaway test run; `data(…)` lookups and `file` sources (recorded streams, CSV/WAV) in simulated time; position mapping of channel grids; docs; examples (e.g. nemotode input files). |
 
 Each phase: unit tests (engine and TS), e2e tests through the view, docs.
+
+### I1 status: done (2026-11-27)
+
+- **`spikes-signal`** (new crate): the formula language in Rust (the UI's grammar and functions, `round` as
+  JavaScript rounds), `rand()` and `gauss()` (counter-based: a hash of the key, channel, sample and call site, so
+  values don't depend on order, threads or shards), and the sample encoders, now shared with sensors (`sensors.rs`
+  uses them; same behaviour and random draws). `tests/parity.rs` writes samples of 14 formulas, noise included, to
+  `apps/spikes-ui/test/fixtures/signal-parity.json`; `signal.test.ts` checks `signal.ts` against them (equal, up to
+  the last bit of `sin`, `log` and the like). `signal.ts` has the same noise in BigInt.
+- **Engine**: `PulseInput` and `SignalInput` actors (the signal samples its formula in simulated time, `t` from the
+  source's start, encodes, and sends at exact times; saved and restored with snapshots); `InputSpec::Pulses` and
+  `Signal`; `Session::set_inputs` (named sources with start times, once per build at time 0, all checked before any
+  starts, noise keyed by the build's seed and the source's name) and `Session::fire`; Reset applies the set again;
+  cluster nodes get the sources like any input. `NetworkInfo` and the API's `Network` carry the description's sets.
+  Protocol: `setInputs`, `fire`, `Input::pulses` and `Input::signal`, `InputSource`, `NeuronSet`.
+- **UI**: `inputFile.ts` (the file format, read and written with inline tables; times in units; target resolution
+  by prefix, regex or set; the engine's sources); `project.toml` lists input files and the selected one, and a
+  `[background]` table becomes `background.inputs.toml`; project folders read and write input files (desktop), the
+  browser downloads them. Build gives the selected file's sources to the run. The Run page has an **Input file**
+  selector, and its Background controls edit the selected file's `background` source (until the Inputs view, I3);
+  realtime sources in a file are listed as not run yet.
+- **Tests**: Rust `tests/inputs.rs` (signals drive their channels at their rates; repeat exactly with a seed on 1
+  or 4 shards; pulses and start times; once per build, checked first, repeated by Reset; fire; a saved run with a
+  noisy signal continues exactly), `tests/cluster.rs` (an input set runs the same on two node agents); TS
+  `inputFile.test.ts`, `project.test.ts` (with every sample project), the parity test; e2e `input-files.spec.ts`
+  (the background input as a file's source, downloaded; `setInputs` and `fire` through the server); the desktop
+  self-test writes and reads an input file.
+- `test-data/projects/ring` uses input files (`background.inputs.toml`, and `wave.inputs.toml`: a travelling wave
+  and taps).
+- **Not yet**: trials (I2), the Inputs view (I3), realtime sources (I4), `data(…)` and file sources (I5). Fire has
+  no button until the Inputs view; Stimulate stays on the Run page until then.
 
 ## 6. Questions answered (2026-11-27)
 

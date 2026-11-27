@@ -236,6 +236,21 @@ pub enum Request {
         /// The input.
         input: Input,
     },
+    /// Gives the run its inputs (an input file's sources): once per build, before it runs; a reset applies them
+    /// again. Replies `done`.
+    SetInputs {
+        /// The session.
+        session: u32,
+        /// The sources (unique names).
+        sources: Vec<InputSource>,
+    },
+    /// Fires a pulse source of the run's inputs now (a manual trigger). Replies `done`.
+    Fire {
+        /// The session.
+        session: u32,
+        /// The pulse source's name.
+        source: String,
+    },
     /// Adds a connection, now (also while running).
     Connect {
         /// The session.
@@ -413,6 +428,43 @@ pub enum Input {
         #[serde(default)]
         duration_ms: Option<f64>,
     },
+    /// Every target at each time.
+    Pulses {
+        /// Neuron indices.
+        targets: Vec<u32>,
+        /// When, ms from the input's start.
+        at_ms: Vec<f64>,
+        /// Input per pulse.
+        mv: f32,
+    },
+    /// A formula sampled in simulated time (`t`: ms from the input's start), encoded into each channel's neurons.
+    Signal {
+        /// Each channel's neuron indices.
+        channels: Vec<Vec<u32>>,
+        /// The formula (the signal language: `t`, `c`, `n`, functions, `rand()`, `gauss()`).
+        formula: String,
+        /// Time between samples, ms.
+        sample_ms: f64,
+        /// How samples become input (`current`, `rate` or `threshold`).
+        encoding: Encoding,
+        /// How long; `null` for ever.
+        #[serde(default)]
+        duration_ms: Option<f64>,
+    },
+}
+
+/// A named source of a run's inputs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct InputSource {
+    /// Its name.
+    pub name: String,
+    /// When it starts, ms from the run's start.
+    #[serde(default)]
+    pub start_ms: f64,
+    /// What it does.
+    pub input: Input,
 }
 
 /// Which neurons a view wants.
@@ -818,6 +870,19 @@ pub struct Network {
     pub modulators: Vec<String>,
     /// Learning rules new connections can use.
     pub learning_rules: Vec<String>,
+    /// The description's sets, in description order.
+    pub sets: Vec<NeuronSet>,
+}
+
+/// A named set of neurons from the network description.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NeuronSet {
+    /// Its name.
+    pub name: String,
+    /// Its neurons (indices).
+    pub members: Vec<u32>,
 }
 
 /// One neuron.

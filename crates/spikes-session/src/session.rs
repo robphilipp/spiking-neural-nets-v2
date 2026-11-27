@@ -9,7 +9,7 @@ use spikes_dna::NetworkDescription;
 use spikes_model::Phase;
 use spikes_network::{
     BuildOptions, Event, ModulatorMsg, ModulatorRef, Network, NeuronActor, NeuronMsg, NeuronRef, PeriodicInput,
-    PoissonInput, Runtime, SimMsg,
+    PoissonInput, PulseInput, Runtime, SignalInput, SimMsg,
 };
 use spikes_record::{RecordOptions, Recorder, RunInfo, SensorLog, Summary};
 use tempo_runtime::{ClockHandle, Control, Jitter, RuntimeConfig, SimDuration, SimTime};
@@ -149,14 +149,77 @@ pub enum InputSpec {
         /// How long; `None` for ever.
         duration: Option<SimDuration>,
     },
+    /// Every target at each of `times` (from the input's start).
+    Pulses {
+        /// Neurons (by index).
+        targets: Vec<u32>,
+        /// When, from the input's start.
+        times: Vec<SimDuration>,
+        /// Input per pulse in mV.
+        mv: f32,
+    },
+    /// A formula sampled in simulated time (`t` in ms from the input's start), encoded, into each channel's neurons.
+    Signal {
+        /// Each channel's neurons (by index).
+        channels: Vec<Vec<u32>>,
+        /// The formula (see `spikes_signal::formula`).
+        formula: String,
+        /// Time between samples.
+        sample: SimDuration,
+        /// How samples become input.
+        encoding: spikes_signal::SampleEncoding,
+        /// The noise key (set by [`Session::set_inputs`] from the seed and the source's name).
+        key: u64,
+        /// How long; `None` for ever.
+        duration: Option<SimDuration>,
+    },
 }
 
 impl InputSpec {
-    fn targets(&self) -> &[u32] {
+    /// Every neuron it reaches.
+    fn targets(&self) -> Vec<u32> {
         match self {
-            Self::Poisson { targets, .. } | Self::Periodic { targets, .. } => targets,
+            Self::Poisson { targets, .. } | Self::Periodic { targets, .. } | Self::Pulses { targets, .. } => {
+                targets.clone()
+            }
+            Self::Signal { channels, .. } => channels.iter().flatten().copied().collect(),
         }
     }
+
+    /// Checks it can run, without starting it.
+    fn validate(&self, network: &NetworkInfo) -> Result<(), SessionError> {
+        if let Some(&i) = self.targets().iter().find(|&&i| network.id(i).is_none()) {
+            return Err(SessionError::NotFound(format!("neuron {i}")));
+        }
+        match self {
+            Self::Poisson { rate_hz, .. } if !(rate_hz.is_finite() && *rate_hz > 0.0) => {
+                Err(SessionError::Invalid(format!("rate must be positive, not {rate_hz}")))
+            }
+            Self::Periodic { period, .. } if period.is_zero() => {
+                Err(SessionError::Invalid("the period must be positive".into()))
+            }
+            Self::Signal { formula, sample, .. } => {
+                if sample.is_zero() {
+                    return Err(SessionError::Invalid("the sample interval must be positive".into()));
+                }
+                spikes_signal::Formula::compile(formula)
+                    .map(|_| ())
+                    .map_err(|e| SessionError::Invalid(format!("formula: {e}")))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// A named input of an input file, as the engine runs it (app plan 05): [`Session::set_inputs`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct InputSource {
+    /// Its name (unique in the set; it keys the signal's noise, and [`Session::fire`] finds it by it).
+    pub name: String,
+    /// When it starts, from the run's start.
+    pub start: SimDuration,
+    /// What it does.
+    pub input: InputSpec,
 }
 
 /// Something that happened to a session.
@@ -241,6 +304,8 @@ struct Inner {
     lockstep: bool,
     /// Inputs added since the build, and when: a saved run adds them again before restoring.
     inputs: Vec<(InputSpec, SimTime)>,
+    /// The input set given since the build ([`Session::set_inputs`]), which a reset applies again.
+    input_set: Option<Vec<InputSource>>,
     /// The node agents the network was last built on, and the synapses each node made (this one first), for
     /// [`Session::deployment`].
     built_on: (Vec<String>, Vec<u64>),
@@ -311,6 +376,7 @@ impl Session {
                     member: None,
                     lockstep: true,
                     inputs: Vec::new(),
+                    input_set: None,
                     built_on: (Vec::new(), Vec::new()),
                     homes: None,
                 }),
@@ -508,25 +574,94 @@ impl Session {
     /// (such as background input) are added again; connections made or pruned since, and later inputs, are gone. A
     /// replay goes back to its start. Allowed unless running.
     pub fn reset(&self) -> Result<Arc<NetworkInfo>, SessionError> {
-        let (settings, inputs) = {
+        let (settings, set, inputs) = {
             let inner = self.inner();
             expect_not_running(&inner)?;
             if matches!(inner.phase, Stage::Loaded) && inner.network.neurons.is_empty() {
                 return Err(SessionError::Invalid("build the network first".into()));
             }
+            let set = inner.input_set.clone();
+            // Other inputs added before the run, besides the input set's.
+            let in_set = |input: &InputSpec| set.iter().flatten().any(|s| &s.input == input);
             let at_start: Vec<InputSpec> = inner
                 .inputs
                 .iter()
-                .filter(|(_, at)| *at == SimTime::ZERO)
+                .filter(|(input, at)| *at == SimTime::ZERO && !in_set(input))
                 .map(|(input, _)| input.clone())
                 .collect();
-            (inner.settings, at_start)
+            (inner.settings, set, at_start)
         };
         let network = self.build(settings)?;
+        if let Some(set) = set {
+            self.set_inputs(set)?;
+        }
         for input in inputs {
             self.add_input_at(input, Some(SimTime::ZERO))?;
         }
         Ok(network)
+    }
+
+    /// Gives the run its inputs (an input file's sources, app plan 05): once per build, before it runs (a reset
+    /// applies them again; to change them, build again). Each source starts at its `start`; signals' noise is keyed
+    /// by the build's seed and the source's name, so a run repeats exactly. Everything is checked before anything
+    /// starts.
+    ///
+    /// # Errors
+    /// Unless built and at time 0 without inputs given yet; for a replay; for an invalid source (with its name).
+    pub fn set_inputs(&self, sources: Vec<InputSource>) -> Result<(), SessionError> {
+        self.not_replay("take input")?;
+        let (seed, network) = {
+            let inner = self.inner();
+            let state = state_of(&inner);
+            let Stage::Ready(built) = &inner.phase else {
+                return Err(SessionError::State {
+                    state,
+                    action: "give inputs to",
+                });
+            };
+            if built.rt.now() != SimTime::ZERO || inner.input_set.is_some() {
+                return Err(SessionError::Invalid(
+                    "the run already has its inputs: reset or build again to change them".into(),
+                ));
+            }
+            (inner.settings.seed, Arc::clone(&inner.network))
+        };
+        let mut names = std::collections::HashSet::new();
+        let mut sources = sources;
+        for source in &mut sources {
+            if !names.insert(source.name.clone()) {
+                return Err(SessionError::Invalid(format!("two sources are named '{}'", source.name)));
+            }
+            if let InputSpec::Signal { key, .. } = &mut source.input {
+                *key = spikes_signal::noise::key(seed, &source.name);
+            }
+            source
+                .input
+                .validate(&network)
+                .map_err(|e| SessionError::Invalid(format!("input '{}': {e}", source.name)))?;
+        }
+        for source in &sources {
+            self.add_input_at(source.input.clone(), Some(SimTime::ZERO.saturating_add(source.start)))?;
+        }
+        self.inner().input_set = Some(sources);
+        Ok(())
+    }
+
+    /// Fires a pulse source of the input set now (a manual trigger: what Stimulate did), whatever its times.
+    ///
+    /// # Errors
+    /// If there's no such pulse source; unless built.
+    pub fn fire(&self, source: &str) -> Result<(), SessionError> {
+        let (targets, mv) = {
+            let inner = self.inner();
+            let found = inner.input_set.iter().flatten().find(|s| s.name == source);
+            match found.map(|s| &s.input) {
+                Some(InputSpec::Pulses { targets, mv, .. }) => (targets.clone(), *mv),
+                Some(_) => return Err(SessionError::Invalid(format!("input '{source}' isn't a pulse"))),
+                None => return Err(SessionError::NotFound(format!("input '{source}'"))),
+            }
+        };
+        self.stimulate(&targets, mv)
     }
 
     /// Builds the runtime and network (as one node of a cluster with `node`).
@@ -571,6 +706,7 @@ impl Session {
         inner.network = Arc::clone(&network);
         inner.settings = settings;
         inner.inputs.clear();
+        inner.input_set = None;
         inner.built_on = (Vec::new(), Vec::new());
         inner.homes = None;
         Ok((rt, net, network))
@@ -2021,16 +2157,13 @@ const SAVED_MAGIC: &[u8; 8] = b"SPKSAVE1";
 
 /// Spawns a synthetic input that starts at `start`.
 fn spawn_input(rt: &mut Runtime, network: &NetworkInfo, input: InputSpec, start: SimTime) -> Result<(), SessionError> {
-    let targets = input
-        .targets()
-        .iter()
-        .map(|&i| {
-            network
-                .id(i)
-                .map(NeuronRef::new)
-                .ok_or_else(|| SessionError::NotFound(format!("neuron {i}")))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    input.validate(network)?;
+    let resolve = |list: &[u32]| -> Vec<NeuronRef> {
+        list.iter()
+            .filter_map(|&i| network.id(i).map(NeuronRef::new))
+            .collect()
+    };
+    let targets = resolve(&input.targets());
     let delay = spikes_network::INPUT_DELAY;
     match input {
         InputSpec::Poisson {
@@ -2061,6 +2194,39 @@ fn spawn_input(rt: &mut Runtime, network: &NetworkInfo, input: InputSpec, start:
                 delay,
                 start,
                 until: duration.map_or(SimTime::MAX, |d| start.saturating_add(d)),
+            });
+        }
+        InputSpec::Pulses { times, mv, .. } => {
+            let mut times: Vec<SimTime> = times.iter().map(|&t| start.saturating_add(t)).collect();
+            times.sort_unstable();
+            rt.spawn(PulseInput {
+                targets,
+                times,
+                mv,
+                delay,
+            });
+        }
+        InputSpec::Signal {
+            channels,
+            formula,
+            sample,
+            encoding,
+            key,
+            duration,
+        } => {
+            let formula = spikes_signal::Formula::compile(&formula)
+                .map_err(|e| SessionError::Invalid(format!("formula: {e}")))?;
+            rt.spawn(SignalInput {
+                channels: channels.iter().map(|c| resolve(c)).collect(),
+                formula,
+                encoding,
+                sample,
+                key,
+                delay,
+                start,
+                until: duration.map_or(SimTime::MAX, |d| start.saturating_add(d)),
+                encoders: Vec::new(),
+                next: 0,
             });
         }
     }
