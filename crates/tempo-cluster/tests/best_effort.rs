@@ -96,18 +96,24 @@ fn run(time_factor: f64) -> (u64, u64) {
 
 #[test]
 fn slowing_the_clock_makes_events_on_time() {
-    let (events_fast, late_fast) = run(1.0);
-    let (events_slow, late_slow) = run(20.0);
-    eprintln!("real time: {late_fast} of {events_fast} late; 20× slower: {late_slow} of {events_slow} late");
-    assert!(events_fast > 1000 && events_slow > 1000, "events should cross nodes");
-    let (fast, slow) = (
-        late_fast as f64 / events_fast as f64,
-        late_slow as f64 / events_slow as f64,
-    );
-    // Timing-based, so with margins for a busy machine (alone: ~8% late at real time, ~0.3% at 20× slower).
-    assert!(
-        slow <= fast / 2.0,
-        "slower runs have far fewer late events: {slow} vs {fast}"
-    );
-    assert!(slow < 0.05, "at 20× slower nearly every event is on time: {slow}");
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "slowing_the_clock_makes_events_on_time",
+        || {
+            let (events_fast, late_fast) = run(1.0);
+            let (events_slow, late_slow) = run(20.0);
+            eprintln!("real time: {late_fast} of {events_fast} late; 20× slower: {late_slow} of {events_slow} late");
+            assert!(events_fast > 1000 && events_slow > 1000, "events should cross nodes");
+            let (fast, slow) = (
+                late_fast as f64 / events_fast as f64,
+                late_slow as f64 / events_slow as f64,
+            );
+            // Timing-based, so with margins for a busy machine (alone: ~8% late at real time, ~0.3% at 20× slower).
+            assert!(
+                slow <= fast / 2.0,
+                "slower runs have far fewer late events: {slow} vs {fast}"
+            );
+            assert!(slow < 0.05, "at 20× slower nearly every event is on time: {slow}");
+        },
+    )
 }

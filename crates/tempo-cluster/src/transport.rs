@@ -4,7 +4,7 @@
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Sends frames to other nodes. Never blocks for long: frames are queued.
@@ -22,16 +22,25 @@ pub trait FrameSink: Send + Sync {
 }
 
 /// Several nodes in one process, connected in memory: a frame is handed to its receiver straight away, on the
-/// sender's thread.
+/// sender's thread. A frame for a node that hasn't joined yet (its thread is still starting) is kept, and handed
+/// over, in order, when it joins.
 #[derive(Default)]
 pub struct MemoryNetwork {
-    sinks: Vec<OnceLock<Arc<dyn FrameSink>>>,
+    nodes: Vec<Mutex<MemoryNode>>,
+}
+
+/// A node of a [`MemoryNetwork`]: its sink once joined, and the frames that came before.
+#[derive(Default)]
+struct MemoryNode {
+    sink: Option<Arc<dyn FrameSink>>,
+    /// Frames sent before it joined: (from, frame), in order.
+    early: Vec<(u32, Vec<u8>)>,
 }
 
 impl std::fmt::Debug for MemoryNetwork {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoryNetwork")
-            .field("nodes", &self.sinks.len())
+            .field("nodes", &self.nodes.len())
             .finish()
     }
 }
@@ -40,13 +49,20 @@ impl MemoryNetwork {
     /// A network of `nodes` nodes.
     pub fn new(nodes: u32) -> Arc<Self> {
         Arc::new(Self {
-            sinks: (0..nodes).map(|_| OnceLock::new()).collect(),
+            nodes: (0..nodes).map(|_| Mutex::default()).collect(),
         })
     }
 
-    /// Node `node`'s transport; what reaches the node goes to `sink`.
+    /// Node `node`'s transport; what reaches the node goes to `sink` (first, anything sent to it before it joined).
     pub fn transport(self: &Arc<Self>, node: u32, sink: Arc<dyn FrameSink>) -> Arc<dyn Transport> {
-        assert!(self.sinks[node as usize].set(sink).is_ok(), "node {node} joined twice");
+        let mut slot = self.nodes[node as usize].lock().unwrap_or_else(|p| p.into_inner());
+        assert!(slot.sink.is_none(), "node {node} joined twice");
+        // Under the lock, so a frame sent meanwhile waits and comes after these.
+        for (from, frame) in std::mem::take(&mut slot.early) {
+            sink.on_frame(from, &frame);
+        }
+        slot.sink = Some(sink);
+        drop(slot);
         Arc::new(MemoryTransport {
             network: Arc::clone(self),
             node,
@@ -61,9 +77,16 @@ struct MemoryTransport {
 
 impl Transport for MemoryTransport {
     fn send(&self, to: u32, frame: Vec<u8>) {
-        match self.network.sinks[to as usize].get() {
-            Some(sink) => sink.on_frame(self.node, &frame),
-            None => panic!("node {to} hasn't joined the memory network"),
+        let mut slot = self.network.nodes[to as usize]
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        match slot.sink.clone() {
+            Some(sink) => {
+                drop(slot);
+                sink.on_frame(self.node, &frame);
+            }
+            // Not joined yet: kept for when it does.
+            None => slot.early.push((self.node, frame)),
         }
     }
 }

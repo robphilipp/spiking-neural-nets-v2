@@ -4346,6 +4346,7 @@ dependencies = [
  "spikes-signal",
  "tempo-cluster",
  "tempo-runtime",
+ "tempo-testkit",
 ]
 
 [[package]]

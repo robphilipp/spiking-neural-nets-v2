@@ -147,26 +147,33 @@ fn line_sensor(engine: &Engine, nodes: Vec<String>, record: PathBuf) -> (Seen, S
 
 #[test]
 fn a_cluster_session_sees_exactly_what_one_process_sees() {
-    let engine = Engine::new();
-    let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    let (alone, alone_state, alone_rows, alone_synapses) = line_sensor(&engine, Vec::new(), tmp.join("cluster-alone"));
-    assert!(
-        alone.spikes.len() > 200 && !alone.membrane.is_empty(),
-        "{} spikes",
-        alone.spikes.len()
-    );
-    let (cluster, cluster_state, cluster_rows, cluster_synapses) =
-        line_sensor(&engine, agents(2), tmp.join("cluster-3"));
-    assert_eq!(cluster.spikes.len(), alone.spikes.len());
-    assert_eq!(cluster.spikes, alone.spikes, "the same spikes at the same times");
-    assert_eq!(cluster.membrane, alone.membrane, "the same membrane traces");
-    assert_eq!(cluster.weights, alone.weights, "the same weights");
-    assert_eq!(cluster_state, alone_state, "a neuron on another node answers queries");
-    assert_eq!(cluster_rows, alone_rows, "the recording has everything");
-    assert_eq!(
-        cluster_synapses, alone_synapses,
-        "the same synapses after connecting and pruning"
-    );
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "a_cluster_session_sees_exactly_what_one_process_sees",
+        || {
+            let engine = Engine::new();
+            let tmp = Path::new(env!("CARGO_TARGET_TMPDIR"));
+            let (alone, alone_state, alone_rows, alone_synapses) =
+                line_sensor(&engine, Vec::new(), tmp.join("cluster-alone"));
+            assert!(
+                alone.spikes.len() > 200 && !alone.membrane.is_empty(),
+                "{} spikes",
+                alone.spikes.len()
+            );
+            let (cluster, cluster_state, cluster_rows, cluster_synapses) =
+                line_sensor(&engine, agents(2), tmp.join("cluster-3"));
+            assert_eq!(cluster.spikes.len(), alone.spikes.len());
+            assert_eq!(cluster.spikes, alone.spikes, "the same spikes at the same times");
+            assert_eq!(cluster.membrane, alone.membrane, "the same membrane traces");
+            assert_eq!(cluster.weights, alone.weights, "the same weights");
+            assert_eq!(cluster_state, alone_state, "a neuron on another node answers queries");
+            assert_eq!(cluster_rows, alone_rows, "the recording has everything");
+            assert_eq!(
+                cluster_synapses, alone_synapses,
+                "the same synapses after connecting and pruning"
+            );
+        },
+    )
 }
 
 /// The reward network: dopamine released from the coordinator reaches synapses on every node.
@@ -194,94 +201,112 @@ fn reward(engine: &Engine, nodes: Vec<String>) -> Vec<String> {
 
 #[test]
 fn dopamine_reaches_every_node() {
-    let engine = Engine::new();
-    let alone = reward(&engine, Vec::new());
-    let cluster = reward(&engine, agents(2));
-    assert_eq!(cluster, alone);
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "dopamine_reaches_every_node",
+        || {
+            let engine = Engine::new();
+            let alone = reward(&engine, Vec::new());
+            let cluster = reward(&engine, agents(2));
+            assert_eq!(cluster, alone);
+        },
+    )
 }
 
 #[test]
 fn best_effort_runs_follow_the_coordinators_clock_and_count_late_spikes() {
-    let engine = Engine::new();
-    let session = engine
-        .create("line", data("networks", "line-sensor-layers-wta.boo"))
-        .unwrap();
-    session.set_nodes(agents(2)).unwrap();
-    let network = session.build(BuildSettings::default()).unwrap();
-    let inputs: Vec<u32> = (0..network.neurons.len() as u32)
-        .filter(|&i| network.neurons.get(i).unwrap().name.starts_with("input-"))
-        .collect();
-    session
-        .add_input(InputSpec::Poisson {
-            targets: inputs,
-            rate_hz: 2_000.0,
-            mv: 6.0,
-            duration: None,
-        })
-        .unwrap();
-    session.set_lockstep(false);
-    session
-        .start(RunSettings {
-            speed: Speed::Factor(1.0),
-            duration: None,
-            record: None,
-        })
-        .unwrap();
-    std::thread::sleep(Duration::from_millis(400));
-    // Pause, step and resume reach every node.
-    session.pause().unwrap();
-    std::thread::sleep(Duration::from_millis(50));
-    let paused = session.sim_time();
-    session.step(SimDuration::from_millis(20)).unwrap();
-    std::thread::sleep(Duration::from_millis(50));
-    session.resume().unwrap();
-    std::thread::sleep(Duration::from_millis(200));
-    session.stop().unwrap();
-    assert_eq!(session.failure(), None);
-    assert!(
-        session.sim_time() > paused + SimDuration::from_millis(100),
-        "it resumed"
-    );
-    let status = session.cluster_status().unwrap();
-    assert!(!status.lockstep);
-    let crossing: u64 = status.links.iter().map(|(_, _, a)| a.events).sum();
-    assert!(crossing > 100, "spikes crossed between nodes: {:?}", status.links);
-    assert!(
-        status
-            .links
-            .iter()
-            .any(|(from, to, _)| *from != 0 && *to == 0 || *to != 0),
-        "every link reported"
-    );
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "best_effort_runs_follow_the_coordinators_clock_and_count_late_spikes",
+        || {
+            let engine = Engine::new();
+            let session = engine
+                .create("line", data("networks", "line-sensor-layers-wta.boo"))
+                .unwrap();
+            session.set_nodes(agents(2)).unwrap();
+            let network = session.build(BuildSettings::default()).unwrap();
+            let inputs: Vec<u32> = (0..network.neurons.len() as u32)
+                .filter(|&i| network.neurons.get(i).unwrap().name.starts_with("input-"))
+                .collect();
+            session
+                .add_input(InputSpec::Poisson {
+                    targets: inputs,
+                    rate_hz: 2_000.0,
+                    mv: 6.0,
+                    duration: None,
+                })
+                .unwrap();
+            session.set_lockstep(false);
+            session
+                .start(RunSettings {
+                    speed: Speed::Factor(1.0),
+                    duration: None,
+                    record: None,
+                })
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(400));
+            // Pause, step and resume reach every node.
+            session.pause().unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            let paused = session.sim_time();
+            session.step(SimDuration::from_millis(20)).unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            session.resume().unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+            session.stop().unwrap();
+            assert_eq!(session.failure(), None);
+            assert!(
+                session.sim_time() > paused + SimDuration::from_millis(100),
+                "it resumed"
+            );
+            let status = session.cluster_status().unwrap();
+            assert!(!status.lockstep);
+            let crossing: u64 = status.links.iter().map(|(_, _, a)| a.events).sum();
+            assert!(crossing > 100, "spikes crossed between nodes: {:?}", status.links);
+            assert!(
+                status
+                    .links
+                    .iter()
+                    .any(|(from, to, _)| *from != 0 && *to == 0 || *to != 0),
+                "every link reported"
+            );
 
-    // An exact run afterwards still works (as fast as possible is always in lockstep).
-    run(&session, 200, None);
-    assert!(session.cluster_status().unwrap().lockstep);
-    engine.close(session.id()).unwrap();
+            // An exact run afterwards still works (as fast as possible is always in lockstep).
+            run(&session, 200, None);
+            assert!(session.cluster_status().unwrap().lockstep);
+            engine.close(session.id()).unwrap();
+        },
+    )
 }
 
 #[test]
 fn a_network_generated_in_code_builds_on_nodes() {
-    // Its "source" is a placeholder: the nodes get the description itself.
-    let engine = Engine::new();
-    let mut description = spikes_dna::parse(&data("networks", "stdp-test.boo")).unwrap();
-    description.neurons = description
-        .neurons
-        .iter()
-        .map(|n| spikes_dna::NeuronDescription {
-            id: format!("gen-{}", n.id()),
-            ..n.to_description()
-        })
-        .collect();
-    // (Connections refer to neurons by index: renaming them changes nothing there.)
-    let session = engine.create_described("generated", "// generated in code", description);
-    session.set_nodes(agents(2)).unwrap();
-    let network = session.build(BuildSettings::default()).unwrap();
-    assert_eq!(network.neurons.get(0).unwrap().name, "gen-input-1");
-    session.stimulate(&[0, 1], 20.0).unwrap();
-    run(&session, 100, None);
-    assert!(session.query_neuron(2).unwrap().last_event > tempo_runtime::SimTime::ZERO);
-    engine.close(session.id()).unwrap();
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "a_network_generated_in_code_builds_on_nodes",
+        || {
+            // Its "source" is a placeholder: the nodes get the description itself.
+            let engine = Engine::new();
+            let mut description = spikes_dna::parse(&data("networks", "stdp-test.boo")).unwrap();
+            description.neurons = description
+                .neurons
+                .iter()
+                .map(|n| spikes_dna::NeuronDescription {
+                    id: format!("gen-{}", n.id()),
+                    ..n.to_description()
+                })
+                .collect();
+            // (Connections refer to neurons by index: renaming them changes nothing there.)
+            let session = engine.create_described("generated", "// generated in code", description);
+            session.set_nodes(agents(2)).unwrap();
+            let network = session.build(BuildSettings::default()).unwrap();
+            assert_eq!(network.neurons.get(0).unwrap().name, "gen-input-1");
+            session.stimulate(&[0, 1], 20.0).unwrap();
+            run(&session, 100, None);
+            assert!(session.query_neuron(2).unwrap().last_event > tempo_runtime::SimTime::ZERO);
+            engine.close(session.id()).unwrap();
+        },
+    )
 }
 
 const SAVED_NET: &str = "(
@@ -340,36 +365,42 @@ fn neuron_states(session: &Session) -> Vec<spikes_session::NeuronSnapshot> {
 
 #[test]
 fn a_run_saved_on_a_cluster_continues_anywhere() {
-    let engine = Engine::new();
-    let (local_save, expected) = saved_run(&engine, Vec::new());
-    assert!(
-        expected.iter().map(|n| n.spikes).sum::<u64>() > 1_000,
-        "the network is active"
-    );
-    let (cluster_save, on_cluster) = saved_run(&engine, agents(2));
-    assert_eq!(on_cluster, expected, "a cluster runs it exactly like one process");
-
-    // Saved on 2 nodes; saved in one process: continued in one process, on 2 nodes, on 3.
-    for (saved, what) in [
-        (&cluster_save, "saved on a cluster"),
-        (&local_save, "saved in one process"),
-    ] {
-        for nodes in [0, 2, 3] {
-            let session = engine
-                .create("continued", "(neurons=[(name=placeholder, position=[0, 0, 0])])")
-                .unwrap();
-            session.set_nodes(agents(nodes)).unwrap();
-            let network = session.load_saved(saved, 1).unwrap();
-            assert_eq!(
-                network.synapse_count,
-                expected_synapses(&network),
-                "{what}, {nodes} nodes"
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "a_run_saved_on_a_cluster_continues_anywhere",
+        || {
+            let engine = Engine::new();
+            let (local_save, expected) = saved_run(&engine, Vec::new());
+            assert!(
+                expected.iter().map(|n| n.spikes).sum::<u64>() > 1_000,
+                "the network is active"
             );
-            run(&session, 300, None);
-            assert_eq!(neuron_states(&session), expected, "{what}, continued on {nodes} nodes");
-            session.leave_cluster();
-        }
-    }
+            let (cluster_save, on_cluster) = saved_run(&engine, agents(2));
+            assert_eq!(on_cluster, expected, "a cluster runs it exactly like one process");
+
+            // Saved on 2 nodes; saved in one process: continued in one process, on 2 nodes, on 3.
+            for (saved, what) in [
+                (&cluster_save, "saved on a cluster"),
+                (&local_save, "saved in one process"),
+            ] {
+                for nodes in [0, 2, 3] {
+                    let session = engine
+                        .create("continued", "(neurons=[(name=placeholder, position=[0, 0, 0])])")
+                        .unwrap();
+                    session.set_nodes(agents(nodes)).unwrap();
+                    let network = session.load_saved(saved, 1).unwrap();
+                    assert_eq!(
+                        network.synapse_count,
+                        expected_synapses(&network),
+                        "{what}, {nodes} nodes"
+                    );
+                    run(&session, 300, None);
+                    assert_eq!(neuron_states(&session), expected, "{what}, continued on {nodes} nodes");
+                    session.leave_cluster();
+                }
+            }
+        },
+    )
 }
 
 fn expected_synapses(network: &spikes_session::NetworkInfo) -> u64 {
@@ -391,85 +422,91 @@ connections=[
 
 #[test]
 fn a_population_pinned_to_a_named_node_runs_there() {
-    let engine = Engine::new();
-    let session = engine.create("pinned", PINNED).unwrap();
-    let two = agents(2);
-    session
-        .set_nodes(vec![two[0].clone(), format!("edge={}", two[1])])
-        .unwrap();
-    let network = session.build(BuildSettings::default()).unwrap();
-    let nodes = session.neuron_nodes().unwrap();
-    let edge: Vec<u32> = (0..20)
-        .map(|i| nodes[network.by_name(&format!("sensors-{i}")).unwrap() as usize])
-        .collect();
-    assert!(
-        edge.iter().all(|&n| n == 2),
-        "the sensors run on 'edge', the second agent: {edge:?}"
-    );
-    let cortex: Vec<u32> = (0..200)
-        .map(|i| nodes[network.by_name(&format!("cortex-{i}")).unwrap() as usize])
-        .collect();
-    for node in 0..3 {
-        let count = cortex.iter().filter(|&&n| n == node).count();
-        assert!(count > 20, "the rest is spread over every node: {count} on node {node}");
-    }
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "a_population_pinned_to_a_named_node_runs_there",
+        || {
+            let engine = Engine::new();
+            let session = engine.create("pinned", PINNED).unwrap();
+            let two = agents(2);
+            session
+                .set_nodes(vec![two[0].clone(), format!("edge={}", two[1])])
+                .unwrap();
+            let network = session.build(BuildSettings::default()).unwrap();
+            let nodes = session.neuron_nodes().unwrap();
+            let edge: Vec<u32> = (0..20)
+                .map(|i| nodes[network.by_name(&format!("sensors-{i}")).unwrap() as usize])
+                .collect();
+            assert!(
+                edge.iter().all(|&n| n == 2),
+                "the sensors run on 'edge', the second agent: {edge:?}"
+            );
+            let cortex: Vec<u32> = (0..200)
+                .map(|i| nodes[network.by_name(&format!("cortex-{i}")).unwrap() as usize])
+                .collect();
+            for node in 0..3 {
+                let count = cortex.iter().filter(|&&n| n == node).count();
+                assert!(count > 20, "the rest is spread over every node: {count} on node {node}");
+            }
 
-    // The deployment: the hosts, each neuron's node, and each population's spread and pin.
-    let d = session.deployment().unwrap();
-    let names: Vec<&str> = d.nodes.iter().map(|n| n.name.as_str()).collect();
-    assert_eq!(names, ["main", "", "edge"]);
-    assert_eq!(d.nodes[2].address, two[1]);
-    assert_eq!(d.neuron_nodes, nodes);
-    let sensor = network.by_name("sensors-0").unwrap() as usize;
-    assert_eq!(d.neuron_pins[sensor].as_deref(), Some("edge"));
-    assert_eq!(d.neuron_pins[network.by_name("cortex-0").unwrap() as usize], None);
-    let neurons: u64 = d.nodes.iter().flat_map(|n| &n.shard_neurons).sum();
-    assert_eq!(neurons, 220);
-    let synapses: u64 = d.nodes.iter().map(|n| n.synapses).sum();
-    assert_eq!(synapses, network.synapse_count);
-    let sensors = d.groups.iter().find(|g| g.name == "sensors").unwrap();
-    assert_eq!(sensors.pinned.as_deref(), Some("edge"));
-    assert_eq!(sensors.per_node, [0, 0, 20]);
-    let cortex = d.groups.iter().find(|g| g.name == "cortex").unwrap();
-    assert_eq!(cortex.pinned, None);
-    assert_eq!(cortex.per_node.iter().sum::<u64>(), 200);
-    assert!(d.warnings.is_empty(), "{:?}", d.warnings);
+            // The deployment: the hosts, each neuron's node, and each population's spread and pin.
+            let d = session.deployment().unwrap();
+            let names: Vec<&str> = d.nodes.iter().map(|n| n.name.as_str()).collect();
+            assert_eq!(names, ["main", "", "edge"]);
+            assert_eq!(d.nodes[2].address, two[1]);
+            assert_eq!(d.neuron_nodes, nodes);
+            let sensor = network.by_name("sensors-0").unwrap() as usize;
+            assert_eq!(d.neuron_pins[sensor].as_deref(), Some("edge"));
+            assert_eq!(d.neuron_pins[network.by_name("cortex-0").unwrap() as usize], None);
+            let neurons: u64 = d.nodes.iter().flat_map(|n| &n.shard_neurons).sum();
+            assert_eq!(neurons, 220);
+            let synapses: u64 = d.nodes.iter().map(|n| n.synapses).sum();
+            assert_eq!(synapses, network.synapse_count);
+            let sensors = d.groups.iter().find(|g| g.name == "sensors").unwrap();
+            assert_eq!(sensors.pinned.as_deref(), Some("edge"));
+            assert_eq!(sensors.per_node, [0, 0, 20]);
+            let cortex = d.groups.iter().find(|g| g.name == "cortex").unwrap();
+            assert_eq!(cortex.pinned, None);
+            assert_eq!(cortex.per_node.iter().sum::<u64>(), 200);
+            assert!(d.warnings.is_empty(), "{:?}", d.warnings);
 
-    session.stimulate(&(0..20).collect::<Vec<_>>(), 10.0).unwrap();
-    run(&session, 50, None);
-    let spikes: u64 = (0..220).map(|i| session.query_neuron(i).unwrap().spikes).sum();
-    assert!(spikes >= 20, "{spikes} spikes");
-    session.leave_cluster();
+            session.stimulate(&(0..20).collect::<Vec<_>>(), 10.0).unwrap();
+            run(&session, 50, None);
+            let spikes: u64 = (0..220).map(|i| session.query_neuron(i).unwrap().spikes).sum();
+            assert!(spikes >= 20, "{spikes} spikes");
+            session.leave_cluster();
 
-    // A cluster that doesn't name the node the network pins to: refused, with what to do.
-    let unnamed = engine.create("unnamed", PINNED).unwrap();
-    unnamed.set_nodes(agents(1)).unwrap();
-    let err = unnamed.build(BuildSettings::default()).unwrap_err();
-    assert!(err.to_string().contains("edge=host:port"), "{err}");
+            // A cluster that doesn't name the node the network pins to: refused, with what to do.
+            let unnamed = engine.create("unnamed", PINNED).unwrap();
+            unnamed.set_nodes(agents(1)).unwrap();
+            let err = unnamed.build(BuildSettings::default()).unwrap_err();
+            assert!(err.to_string().contains("edge=host:port"), "{err}");
 
-    // In one process, pins don't matter: everything runs here.
-    let alone = engine.create("alone", PINNED).unwrap();
-    alone
-        .build(BuildSettings {
-            shards: 4,
-            ..BuildSettings::default()
-        })
-        .unwrap();
-    assert!(alone.neuron_nodes().unwrap().iter().all(|&n| n == 0));
-    let d = alone.deployment().unwrap();
-    assert_eq!(d.nodes.len(), 1);
-    assert_eq!(d.nodes[0].shard_neurons.len(), 4);
-    assert_eq!(d.nodes[0].shard_neurons.iter().sum::<u64>(), 220);
-    assert!(
-        d.nodes[0].shard_neurons.iter().all(|&n| n > 0),
-        "{:?}",
-        d.nodes[0].shard_neurons
-    );
-    assert!(
-        d.warnings[0].contains("pins to other nodes are ignored"),
-        "{:?}",
-        d.warnings
-    );
+            // In one process, pins don't matter: everything runs here.
+            let alone = engine.create("alone", PINNED).unwrap();
+            alone
+                .build(BuildSettings {
+                    shards: 4,
+                    ..BuildSettings::default()
+                })
+                .unwrap();
+            assert!(alone.neuron_nodes().unwrap().iter().all(|&n| n == 0));
+            let d = alone.deployment().unwrap();
+            assert_eq!(d.nodes.len(), 1);
+            assert_eq!(d.nodes[0].shard_neurons.len(), 4);
+            assert_eq!(d.nodes[0].shard_neurons.iter().sum::<u64>(), 220);
+            assert!(
+                d.nodes[0].shard_neurons.iter().all(|&n| n > 0),
+                "{:?}",
+                d.nodes[0].shard_neurons
+            );
+            assert!(
+                d.warnings[0].contains("pins to other nodes are ignored"),
+                "{:?}",
+                d.warnings
+            );
+        },
+    )
 }
 
 /// Runs nemotode (on `nodes`, if any) with an input set: a noisy signal into its nociceptive neurons and pulses into
@@ -485,29 +522,32 @@ fn nemotode_with_inputs(engine: &Engine, nodes: Vec<String>) -> Vec<String> {
         .unwrap();
     let set = |name: &str| network.sets.iter().find(|(n, _)| n == name).unwrap().1.clone();
     session
-        .set_inputs(vec![
-            spikes_session::InputSource {
-                name: "noxious".into(),
-                start: SimDuration::from_millis(20),
-                input: InputSpec::Signal {
-                    channels: set("nociceptive").into_iter().map(|i| vec![i]).collect(),
-                    formula: "clamp(0.4 + 0.3 * gauss(), 0, 1)".into(),
-                    sample: SimDuration::from_millis(1),
-                    encoding: spikes_signal::SampleEncoding::Rate { max_hz: 60.0, mv: 12.0 },
-                    key: 0,
-                    duration: None,
+        .set_inputs(
+            vec![
+                spikes_session::InputSource {
+                    name: "noxious".into(),
+                    start: SimDuration::from_millis(20),
+                    input: InputSpec::Signal {
+                        channels: set("nociceptive").into_iter().map(|i| vec![i]).collect(),
+                        formula: "clamp(0.4 + 0.3 * gauss(), 0, 1)".into(),
+                        sample: SimDuration::from_millis(1),
+                        encoding: spikes_signal::SampleEncoding::Rate { max_hz: 60.0, mv: 12.0 },
+                        key: 0,
+                        duration: None,
+                    },
                 },
-            },
-            spikes_session::InputSource {
-                name: "touch".into(),
-                start: SimDuration::ZERO,
-                input: InputSpec::Pulses {
-                    targets: set("touch_posterior"),
-                    times: (0..20).map(|k| SimDuration::from_millis(10 + 20 * k)).collect(),
-                    mv: 12.0,
+                spikes_session::InputSource {
+                    name: "touch".into(),
+                    start: SimDuration::ZERO,
+                    input: InputSpec::Pulses {
+                        targets: set("touch_posterior"),
+                        times: (0..20).map(|k| SimDuration::from_millis(10 + 20 * k)).collect(),
+                        mv: 12.0,
+                    },
                 },
-            },
-        ], Vec::new())
+            ],
+            Vec::new(),
+        )
         .unwrap();
     run(&session, 500, None);
     let states = (0..network.neurons.len() as u32)
@@ -519,8 +559,14 @@ fn nemotode_with_inputs(engine: &Engine, nodes: Vec<String>) -> Vec<String> {
 
 #[test]
 fn an_input_set_runs_the_same_on_a_cluster() {
-    let engine = Engine::new();
-    let alone = nemotode_with_inputs(&engine, Vec::new());
-    let cluster = nemotode_with_inputs(&engine, agents(2));
-    assert_eq!(cluster, alone);
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "an_input_set_runs_the_same_on_a_cluster",
+        || {
+            let engine = Engine::new();
+            let alone = nemotode_with_inputs(&engine, Vec::new());
+            let cluster = nemotode_with_inputs(&engine, agents(2));
+            assert_eq!(cluster, alone);
+        },
+    )
 }

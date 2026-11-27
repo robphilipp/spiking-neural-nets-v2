@@ -123,105 +123,129 @@ fn run_cluster(links: Vec<StrictLink<LifMsg>>, steps: &[u64]) -> (u64, Vec<(SimT
 
 #[test]
 fn three_nodes_in_memory_match_one_process() {
-    let (hash, spikes) = single();
-    assert!(spikes.len() > 100, "the network should be active");
-    assert_eq!(run_cluster(memory_links(), &[50]), (hash, spikes.clone()));
-    // Several runs in a row (start, stop, start) agree too.
-    assert_eq!(run_cluster(memory_links(), &[10, 11, 30, 50]), (hash, spikes));
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "three_nodes_in_memory_match_one_process",
+        || {
+            let (hash, spikes) = single();
+            assert!(spikes.len() > 100, "the network should be active");
+            assert_eq!(run_cluster(memory_links(), &[50]), (hash, spikes.clone()));
+            // Several runs in a row (start, stop, start) agree too.
+            assert_eq!(run_cluster(memory_links(), &[10, 11, 30, 50]), (hash, spikes));
+        },
+    )
 }
 
 #[test]
 fn three_nodes_over_tcp_match_one_process() {
-    let (hash, spikes) = single();
-    let listeners: Vec<TcpListener> = (0..SHARDS.len())
-        .map(|_| TcpListener::bind("127.0.0.1:0").unwrap())
-        .collect();
-    let addresses: Vec<_> = listeners.iter().map(|l| l.local_addr().unwrap()).collect();
-    let links: Vec<StrictLink<LifMsg>> = std::thread::scope(|s| {
-        let handles: Vec<_> = listeners
-            .iter()
-            .enumerate()
-            .map(|(n, listener)| {
-                let addresses = &addresses;
-                s.spawn(move || {
-                    let link = StrictLink::new(n as u32, SHARDS.len() as u32, SHARDS[n], Vec::new());
-                    let transport =
-                        TcpTransport::connect(n as u32, listener, addresses, 42, link.sink(), Duration::from_secs(10))
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "three_nodes_over_tcp_match_one_process",
+        || {
+            let (hash, spikes) = single();
+            let listeners: Vec<TcpListener> = (0..SHARDS.len())
+                .map(|_| TcpListener::bind("127.0.0.1:0").unwrap())
+                .collect();
+            let addresses: Vec<_> = listeners.iter().map(|l| l.local_addr().unwrap()).collect();
+            let links: Vec<StrictLink<LifMsg>> = std::thread::scope(|s| {
+                let handles: Vec<_> = listeners
+                    .iter()
+                    .enumerate()
+                    .map(|(n, listener)| {
+                        let addresses = &addresses;
+                        s.spawn(move || {
+                            let link = StrictLink::new(n as u32, SHARDS.len() as u32, SHARDS[n], Vec::new());
+                            let transport = TcpTransport::connect(
+                                n as u32,
+                                listener,
+                                addresses,
+                                42,
+                                link.sink(),
+                                Duration::from_secs(10),
+                            )
                             .unwrap();
-                    link.attach(Arc::new(transport));
-                    link
-                })
-            })
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
-    assert_eq!(run_cluster(links, &[50]), (hash, spikes));
+                            link.attach(Arc::new(transport));
+                            link
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            assert_eq!(run_cluster(links, &[50]), (hash, spikes));
+        },
+    )
 }
 
 #[test]
 fn the_coordinators_clock_paces_and_stops_the_whole_cluster() {
-    let (hash, spikes) = single();
-    // The coordinator runs at a quarter of real time; the other nodes are unpaced and follow its decisions.
-    let links = memory_links();
-    let started = std::time::Instant::now();
-    let outcomes: Vec<Outcome> = std::thread::scope(|s| {
-        let handles: Vec<_> = links
-            .into_iter()
-            .enumerate()
-            .map(|(n, link)| {
-                s.spawn(move || {
-                    node_with(n as u32, link, |rt| {
-                        if n == 0 {
-                            rt.clock().set_time_factor(0.25);
-                        }
-                        rt.run_until(ms(50));
+    tempo_testkit::with_timeout(
+        std::time::Duration::from_secs(120),
+        "the_coordinators_clock_paces_and_stops_the_whole_cluster",
+        || {
+            let (hash, spikes) = single();
+            // The coordinator runs at a quarter of real time; the other nodes are unpaced and follow its decisions.
+            let links = memory_links();
+            let started = std::time::Instant::now();
+            let outcomes: Vec<Outcome> = std::thread::scope(|s| {
+                let handles: Vec<_> = links
+                    .into_iter()
+                    .enumerate()
+                    .map(|(n, link)| {
+                        s.spawn(move || {
+                            node_with(n as u32, link, |rt| {
+                                if n == 0 {
+                                    rt.clock().set_time_factor(0.25);
+                                }
+                                rt.run_until(ms(50));
+                            })
+                        })
                     })
-                })
-            })
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
-    let wall = started.elapsed();
-    assert!(
-        wall >= Duration::from_micros(12_000),
-        "paced by the coordinator: {wall:?}"
-    );
-    assert_eq!(merge(outcomes), (hash, spikes));
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            let wall = started.elapsed();
+            assert!(
+                wall >= Duration::from_micros(12_000),
+                "paced by the coordinator: {wall:?}"
+            );
+            assert_eq!(merge(outcomes), (hash, spikes));
 
-    // Stopping the coordinator's clock ends every node's run, at the same simulation time.
-    let links = memory_links();
-    let nows: Vec<SimTime> = std::thread::scope(|s| {
-        let handles: Vec<_> = links
-            .into_iter()
-            .enumerate()
-            .map(|(n, link)| {
-                s.spawn(move || {
-                    let mut rt = Runtime::new(config(SHARDS[n], Some(placement(n as u32))));
-                    lif::build(&mut rt, &network());
-                    rt.set_link(Arc::new(link));
-                    if n == 0 {
-                        rt.clock().set_time_factor(1.0);
-                        let clock = rt.clock();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(Duration::from_millis(30));
-                            clock.stop();
-                        });
-                    }
-                    rt.run(); // until stopped
-                    rt.now()
-                })
-            })
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
-    // (Paced at real time for 30 ms: on a loaded machine the cluster may get through much less than that.)
-    assert!(
-        nows[0] > SimTime::ZERO && nows[0] < ms(200),
-        "stopped after about 30 ms: {:?}",
-        nows[0]
-    );
-    assert!(
-        nows.iter().all(|&t| t == nows[0]),
-        "every node stopped at the same time: {nows:?}"
-    );
+            // Stopping the coordinator's clock ends every node's run, at the same simulation time.
+            let links = memory_links();
+            let nows: Vec<SimTime> = std::thread::scope(|s| {
+                let handles: Vec<_> = links
+                    .into_iter()
+                    .enumerate()
+                    .map(|(n, link)| {
+                        s.spawn(move || {
+                            let mut rt = Runtime::new(config(SHARDS[n], Some(placement(n as u32))));
+                            lif::build(&mut rt, &network());
+                            rt.set_link(Arc::new(link));
+                            if n == 0 {
+                                rt.clock().set_time_factor(1.0);
+                                let clock = rt.clock();
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(Duration::from_millis(30));
+                                    clock.stop();
+                                });
+                            }
+                            rt.run(); // until stopped
+                            rt.now()
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            // (Paced at real time for 30 ms: on a loaded machine the cluster may get through much less than that.)
+            assert!(
+                nows[0] > SimTime::ZERO && nows[0] < ms(200),
+                "stopped after about 30 ms: {:?}",
+                nows[0]
+            );
+            assert!(
+                nows.iter().all(|&t| t == nows[0]),
+                "every node stopped at the same time: {nows:?}"
+            );
+        },
+    )
 }
