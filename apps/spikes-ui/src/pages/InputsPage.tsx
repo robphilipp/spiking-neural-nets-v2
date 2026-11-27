@@ -7,7 +7,6 @@ import { Heading, Notice, Panel, Stat } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { ChannelPreview } from "../components/inputs/ChannelPreview";
 import { FilesPanel } from "../components/inputs/FilesPanel";
-import { RealtimePanel } from "../components/inputs/RealtimePanel";
 import { SourceEditor } from "../components/inputs/SourceEditor";
 import { SourceList } from "../components/inputs/SourceList";
 import { Timeline } from "../components/inputs/Timeline";
@@ -29,6 +28,7 @@ import {
   useProject,
   useSession,
 } from "../store";
+import { useRealtime } from "../realtime";
 import { useBehavior } from "../useBehavior";
 
 export function InputsPage() {
@@ -42,6 +42,8 @@ export function InputsPage() {
   const [index, setIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const canFire = useCanFire(selected, file);
+  const statuses = useRealtime((s) => s.statuses);
+  const realtime = useMemo(() => Object.fromEntries(statuses.map((x) => [x.name, x])), [statuses]);
 
   // The run's time: the live view's, while it goes (the Run page keeps the session's up to date when it's showing).
   const stats = useBehavior(useLive((s) => s.view)?.stats);
@@ -133,6 +135,7 @@ export function InputsPage() {
               locked={locked}
               network={network}
               states={states}
+              realtime={realtime}
               canFire={canFire}
               onError={setError}
               onAdd={(kind) => {
@@ -152,7 +155,8 @@ export function InputsPage() {
           <Panel>
             <Heading>Timeline</Heading>
             <p className="text-xs text-muted-foreground">
-              When each source is on over the run, with trials drawn from the seed ({seed}) as they'll run{durationS === null ? "" : `, to the run's ${durationS} s`}.
+              When each source is on over the run, with trials drawn from the seed ({seed}) as they'll run{durationS === null ? "" : `, to the run's ${durationS} s`}. Realtime sources
+              (microphone, camera, sensor) have no schedule: they stream while the run goes.
             </p>
             <Timeline data={data} selected={source?.name ?? null} onSelect={(name) => setIndex(Math.max(0, file.sources.findIndex((s) => s.name === name)))} nowMs={showStatus ? simMs : null} />
           </Panel>
@@ -178,7 +182,6 @@ export function InputsPage() {
           </div>
         </>
       )}
-      <RealtimePanel />
     </div>
   );
 }

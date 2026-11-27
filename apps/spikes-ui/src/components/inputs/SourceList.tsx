@@ -5,11 +5,31 @@ import { Button } from "@/components/ui/button";
 import { Heading, Panel } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { scheduleText, type SourceState } from "../../inputEdit";
-import { describeTargets, type InputFile, type Source, SIMULATED, type SourceKind, targetNeurons } from "../../inputFile";
+import { describeTargets, type InputFile, isRealtime, type Source, type SourceKind, targetNeurons } from "../../inputFile";
+import { channelPlan } from "../../realtimeChannels";
+import type { RealtimeStatus } from "../../realtimeManager";
 import { FireButton } from "../FireButton";
 import { useMemo } from "react";
 
 const ADD: SourceKind[] = ["pulse", "poisson", "periodic", "signal"];
+/** A realtime source's live badge. */
+const LIVE_TONE: Record<RealtimeStatus["state"], string> = {
+  starting: "bg-warning text-black",
+  streaming: "bg-success text-white",
+  stopped: "bg-secondary text-muted-foreground",
+  refused: "bg-warning text-black",
+  error: "bg-destructive text-white",
+};
+
+/** What a realtime source's status says in a line: its state's detail, or the counters. */
+export function liveDetail(r: RealtimeStatus): string {
+  if (r.state === "streaming" || r.state === "stopped") {
+    const rate = r.state === "streaming" ? `${Math.round(r.samplesPerSec).toLocaleString()} samples/s · ` : "";
+    return `${rate}${r.samples.toLocaleString()} samples · ${r.late} late · ${r.dropped} dropped`;
+  }
+  return r.message;
+}
+
 const ADD_REALTIME: SourceKind[] = ["microphone", "camera", "sensor"];
 
 /** How many neurons a source's targets match in the built network, or why they can't (an unknown set, a bad regex). */
@@ -24,7 +44,7 @@ function matchOf(s: Source, network: Network | null): { count: number } | { erro
 
 const TONE: Record<SourceState, string> = {
   off: "bg-secondary text-muted-foreground",
-  "not run yet": "bg-secondary text-muted-foreground",
+  live: "bg-secondary text-secondary-foreground",
   manual: "bg-secondary text-secondary-foreground",
   "no trials": "bg-secondary text-muted-foreground",
   scheduled: "bg-secondary text-secondary-foreground",
@@ -44,6 +64,7 @@ export function SourceList({
   locked,
   network,
   states,
+  realtime,
   canFire,
   onError,
 }: {
@@ -55,6 +76,8 @@ export function SourceList({
   network: Network | null;
   /** Each source's state at the run's time (shown once the run has started); null before. */
   states: SourceState[] | null;
+  /** The realtime sources' live status in the run (by source name). */
+  realtime: Record<string, RealtimeStatus>;
   canFire: boolean;
   onError: (message: string) => void;
 }) {
@@ -66,6 +89,9 @@ export function SourceList({
       <div className="flex flex-col gap-1.5">
         {file.sources.map((s, i) => {
           const match = matches[i];
+          const live = realtime[s.name];
+          // What a realtime source sends, or why it can't: known once the network says how many neurons it drives.
+          const plan = isRealtime(s) && match && "count" in match ? channelPlan(s, match.count) : null;
           return (
             <div
               key={i}
@@ -95,13 +121,29 @@ export function SourceList({
                   )}
                   {match && "error" in match && <span className="text-destructive"> · {match.error}</span>}
                   {" · "}
-                  {scheduleText(s)}
+                  {isRealtime(s) ? "live, while the run goes" : scheduleText(s)}
                 </div>
+                {plan && (
+                  <div className={cn("mt-0.5 text-xs", "error" in plan ? "text-destructive" : "text-muted-foreground")} data-testid={`source-channels-${s.name}`}>
+                    {"error" in plan ? plan.error : `${plan.channels} channel${plan.channels === 1 ? "" : "s"}`}
+                  </div>
+                )}
+                {live && (
+                  <div className="mt-0.5 text-xs break-words text-muted-foreground tabular-nums" data-testid={`rt-detail-${s.name}`}>
+                    {liveDetail(live)}
+                  </div>
+                )}
               </button>
-              {states && (
-                <Badge className={cn("shrink-0 border-0 font-normal", TONE[states[i]!])} data-testid={`source-state-${s.name}`}>
-                  {states[i]}
+              {live ? (
+                <Badge className={cn("shrink-0 border-0 font-normal", LIVE_TONE[live.state])} data-testid={`rt-state-${s.name}`}>
+                  {live.state}
                 </Badge>
+              ) : (
+                states && (
+                  <Badge className={cn("shrink-0 border-0 font-normal", TONE[states[i]!])} data-testid={`source-state-${s.name}`}>
+                    {states[i]}
+                  </Badge>
+                )
               )}
               {s.kind === "pulse" && s.enabled && s.scope !== "trial" && <FireButton source={s.name} ready={canFire} onError={onError} compact />}
             </div>
@@ -116,7 +158,7 @@ export function SourceList({
             {k}
           </Button>
         ))}
-        <span className="ml-1 text-xs text-muted-foreground" title="Realtime sources don't run from a file yet (phase I4)">
+        <span className="ml-1 text-xs text-muted-foreground" title="Realtime sources stream in wall-clock time while the run goes">
           realtime
         </span>
         {ADD_REALTIME.map((k) => (
@@ -126,9 +168,6 @@ export function SourceList({
           </Button>
         ))}
       </div>
-      {file.sources.some((s) => s.enabled && !SIMULATED.includes(s.kind)) && (
-        <p className="text-xs text-muted-foreground">Realtime sources are kept in the file but don't run yet.</p>
-      )}
     </Panel>
   );
 }

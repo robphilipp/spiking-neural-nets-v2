@@ -414,6 +414,20 @@ export abstract class ProtocolClient {
       { type: "connectSensor", session, sensor: spec },
       "sensor",
     );
+    return this.sensorHandle(session, id);
+  }
+
+  /** Takes over the sensor called `name` that another client (the UI, for a source of an input file) declared; send
+   *  batches to the handle as for `connectSensor`. */
+  async claimSensor(session: number, name: string): Promise<Sensor> {
+    const { sensor: id } = await this.expect(
+      { type: "claimSensor", session, name },
+      "sensor",
+    );
+    return this.sensorHandle(session, id);
+  }
+
+  private sensorHandle(session: number, id: number): Sensor {
     return {
       id,
       sendSamples: (t0Ns, dtNs, channels, values) =>

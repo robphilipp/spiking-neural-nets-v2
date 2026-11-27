@@ -25,7 +25,12 @@ struct Client {
 
 impl Client {
     fn new(recordings: &Path) -> Self {
-        let (connection, out) = Connection::new(Arc::new(Engine::new()), recordings);
+        Self::on(Arc::new(Engine::new()), recordings)
+    }
+
+    /// A client of an engine that others share.
+    fn on(engine: Arc<Engine>, recordings: &Path) -> Self {
+        let (connection, out) = Connection::new(engine, recordings);
         Self {
             connection,
             out,
@@ -228,6 +233,62 @@ fn sensors_send_binary_batches() {
         .collect();
     assert!(fired.contains(&0) && fired.contains(&1), "{fired:?}");
     assert!(c.notices.iter().any(|(_, n)| matches!(n, Notice::StateChanged { .. })));
+}
+
+#[test]
+fn a_connection_claims_a_sensor_another_declared_and_the_list_counts_its_batches() {
+    let engine = Arc::new(Engine::new());
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let mut ui = Client::on(Arc::clone(&engine), dir);
+    let mut program = Client::on(engine, dir);
+    let Response::Session { session } = ui.ok(json!({"type": "createSession", "name": "ring", "description": ring()}))
+    else {
+        panic!()
+    };
+    let s = session.id;
+    ui.ok(json!({"type": "build", "session": s}));
+    ui.ok(json!({
+        "type": "connectSensor", "session": s,
+        "sensor": {"name": "probe", "targets": [[0], [1]], "encoding": {"type": "current", "gainMv": 1.0}}
+    }));
+    // Nothing of that name on another session, or by another name.
+    assert!(matches!(
+        program.call(json!({"type": "claimSensor", "session": s, "name": "other"})),
+        Outcome::Error(_)
+    ));
+    let Response::Sensor { sensor } = program.ok(json!({"type": "claimSensor", "session": s, "name": "probe"})) else {
+        panic!()
+    };
+    let batch = |seq: u32, t0_ns: u64| {
+        InputBatch::Samples {
+            sensor,
+            seq,
+            t0_ns,
+            dt_ns: 1_000_000,
+            channels: 2,
+            values: vec![0.1; 6],
+        }
+        .encode()
+    };
+    // Not running: dropped, but counted.
+    program.connection.handle_binary(&batch(0, 0)).unwrap();
+    ui.ok(json!({"type": "start", "session": s, "speed": 1.0}));
+    program.connection.handle_binary(&batch(1, 3_000_000)).unwrap();
+    ui.ok(json!({"type": "pause", "session": s}));
+    program.connection.handle_binary(&batch(2, 6_000_000)).unwrap();
+    let Response::Sensors { sensors } = ui.ok(json!({"type": "listSensors", "session": s})) else {
+        panic!()
+    };
+    assert_eq!(sensors.len(), 1, "one sensor, two handles");
+    let info = &sensors[0];
+    assert_eq!((info.name.as_str(), info.batches, info.samples), ("probe", 3, 9));
+    assert_eq!(
+        (info.late_batches, info.dropped),
+        (0, 6),
+        "the first and last batches were dropped"
+    );
+    assert_eq!(info.inputs, 6, "the batch while running became inputs");
+    ui.ok(json!({"type": "stop", "session": s}));
 }
 
 #[test]

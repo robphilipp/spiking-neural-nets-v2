@@ -318,3 +318,64 @@ fn a_session_lists_its_sensors_until_they_disconnect() {
         .count();
     assert_eq!(changes, 2, "connected, then disconnected");
 }
+
+#[test]
+fn late_and_dropped_batches_are_counted() {
+    let engine = Engine::new();
+    let s = session(&engine, 1, 5.0);
+    let sensor = s.connect_sensor(SensorSpec::new("mic", vec![vec![0]])).unwrap();
+    let batch = |t0_ns| SampleBatch {
+        t0_ns,
+        dt_ns: 1_000_000,
+        values: vec![0.1; 10],
+    };
+    s.start(RunSettings {
+        speed: Speed::Factor(1.0),
+        ..RunSettings::default()
+    })
+    .unwrap();
+    sensor.send_samples(&batch(0)).unwrap();
+    // The sensor's clock says the next batch is 10 ms on, but 150 ms of the simulation have passed: it would land
+    // in the past, so the sensor re-anchors and the batch is late.
+    std::thread::sleep(Duration::from_millis(150));
+    sensor.send_samples(&batch(10_000_000)).unwrap();
+    let stats = sensor.stats();
+    assert_eq!((stats.batches, stats.late_batches, stats.dropped), (2, 1, 0));
+    // Paused: a live sensor drops, a buffering one keeps.
+    s.pause().unwrap();
+    sensor.send_samples(&batch(20_000_000)).unwrap();
+    let stats = sensor.stats();
+    assert_eq!((stats.batches, stats.samples, stats.dropped), (3, 30, 10));
+    let keeper = buffered(&s, Encoding::Current { gain_mv: 1.0 }, vec![vec![0]]);
+    keeper.send_samples(&batch(0)).unwrap();
+    keeper.send_samples(&batch(10_000_000)).unwrap();
+    assert_eq!(
+        keeper.stats().dropped,
+        0,
+        "a buffering sensor drops nothing while paused"
+    );
+    s.stop().unwrap();
+}
+
+#[test]
+fn a_claimed_sensor_is_the_same_sensor() {
+    let engine = Engine::new();
+    let s = session(&engine, 2, 5.0);
+    let declared = s
+        .connect_sensor(SensorSpec::new("ext", vec![vec![0], vec![1]]))
+        .unwrap();
+    assert!(s.claim_sensor("nope").is_err());
+    let claimed = s.claim_sensor("ext").unwrap();
+    claimed
+        .send_samples(&SampleBatch {
+            t0_ns: 0,
+            dt_ns: 1_000_000,
+            values: vec![0.1; 4],
+        })
+        .unwrap();
+    assert_eq!(declared.stats().batches, 1, "one set of counters");
+    drop(declared);
+    assert_eq!(s.sensors().len(), 1, "the claim keeps it connected");
+    drop(claimed);
+    assert!(s.sensors().is_empty());
+}

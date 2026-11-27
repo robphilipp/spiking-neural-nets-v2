@@ -258,7 +258,15 @@ session: number,
 /**
  * The sensor.
  */
-sensor: SensorSpec, } | { "type": "disconnectSensor", 
+sensor: SensorSpec, } | { "type": "claimSensor", 
+/**
+ * The session.
+ */
+session: number, 
+/**
+ * The sensor's name.
+ */
+name: string, } | { "type": "disconnectSensor", 
 /**
  * The session.
  */

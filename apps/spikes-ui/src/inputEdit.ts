@@ -2,12 +2,15 @@
 // sources and trials, so the view stays thin and the rules (unique names, conditions that follow renames) are tested.
 
 import {
+  DEFAULT_GRID,
+  DEFAULT_LEVEL,
   expandTrials,
   formatRandom,
   formatTime,
   type InputFile,
   inputFileName,
   InputFileError,
+  isRealtime,
   meanOf,
   parseRandom,
   parseTime,
@@ -88,6 +91,7 @@ export function deleteFile(set: FileSet, name: string): FileSet {
 // ----- a file's sources -----
 
 const REALTIME_ENCODING = { type: "rate", maxHz: 200, mv: 12 } as const;
+const REALTIME_DEFAULTS = { onPause: "drop", speed: "resample" } as const;
 
 /** A new source of `kind` with sensible settings, named for the kind (made unique among `taken`). */
 export function newSource(kind: SourceKind, taken: string[]): Source {
@@ -101,8 +105,12 @@ export function newSource(kind: SourceKind, taken: string[]): Source {
       return { ...base, kind, period: 100, mv: 12 };
     case "signal":
       return { ...base, kind, formula: "pulse(t, 500, 100)", sample: 1, encoding: { type: "rate", maxHz: 100, mv: 12 } };
-    default:
-      return { ...base, kind, encoding: { ...REALTIME_ENCODING } };
+    case "microphone":
+      return { ...base, kind, encoding: { ...REALTIME_ENCODING }, ...REALTIME_DEFAULTS };
+    case "camera":
+      return { ...base, kind, mode: "luminance", grid: { ...DEFAULT_GRID }, level: DEFAULT_LEVEL, encoding: { type: "rate", maxHz: 100, mv: 12 }, ...REALTIME_DEFAULTS };
+    case "sensor":
+      return { ...base, kind, encoding: { ...REALTIME_ENCODING }, ...REALTIME_DEFAULTS };
   }
 }
 
@@ -217,7 +225,7 @@ export const timesText = (times: number[]): string => times.map(formatTime).join
 
 // ----- status during a run -----
 
-export type SourceState = "off" | "not run yet" | "manual" | "no trials" | "scheduled" | "on" | "done";
+export type SourceState = "off" | "live" | "manual" | "no trials" | "scheduled" | "on" | "done";
 
 /** The concrete instances of source `s` in an expanded file (a trial source: one per trial it's on in). */
 function instancesOf(s: Source, expanded: InputFile): Source[] {
@@ -236,7 +244,7 @@ function spanOf(s: Source): { from: number; to: number; closed: boolean } {
  *  is the file as the run gets it ({@link expandTrials}). */
 export function sourceState(s: Source, expanded: InputFile, simMs: number): SourceState {
   if (!s.enabled) return "off";
-  if (s.kind === "microphone" || s.kind === "camera" || s.kind === "sensor") return "not run yet";
+  if (isRealtime(s)) return "live"; // streams while the run goes; its live status comes from the realtime manager
   if (s.kind === "pulse" && s.at.length === 0 && s.scope !== "trial") return "manual";
   const spans = instancesOf(s, expanded).map(spanOf);
   if (!spans.length) return "no trials";
@@ -254,6 +262,8 @@ export interface TimelineRow {
   spans: Array<{ from: number; to: number; open: boolean }>;
   /** Pulses (ms). */
   marks: number[];
+  /** A realtime source: on while the run goes, with no schedule to draw. */
+  live: boolean;
 }
 
 export interface Timeline {
@@ -285,11 +295,11 @@ export function timeline(file: InputFile, runMs: number | null, seed: number): T
   const rows = file.sources.map((s): TimelineRow => {
     const spans: TimelineRow["spans"] = [];
     const marks: number[] = [];
-    for (const x of instancesOf(s, expanded)) {
+    for (const x of isRealtime(s) ? [] : instancesOf(s, expanded)) {
       if (x.kind === "pulse") marks.push(...x.at.map((t) => x.start + t));
       else spans.push({ from: x.start, to: x.duration === null ? Infinity : x.start + x.duration, open: x.duration === null });
     }
-    return { name: s.name, kind: s.kind, enabled: s.enabled, spans, marks: marks.sort((a, b) => a - b) };
+    return { name: s.name, kind: s.kind, enabled: s.enabled, spans, marks: marks.sort((a, b) => a - b), live: isRealtime(s) };
   });
   const finite = [
     ...rows.flatMap((r) => [...r.marks, ...r.spans.flatMap((p) => [p.from, p.to].filter(Number.isFinite))]),

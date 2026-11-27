@@ -1,13 +1,14 @@
 import type { Network } from "@spikes/client";
 import { ChevronDown, ChevronUp, Copy, Trash2 } from "lucide-react";
 import { useMemo } from "react";
-import { Choice, Field, Heading, Notice, Panel, Row, Toggle } from "@/components/kit";
+import { Choice, Field, Heading, Panel, Row, Toggle } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { changeSource, duplicateSource, moveSource, parseTimes, removeSource, timesText } from "../../inputEdit";
-import { type InputFile, InputFileError, type Random, type RandomField, type Source, SIMULATED } from "../../inputFile";
+import { type InputFile, InputFileError, isRealtime, type Random, type RandomField, type Source } from "../../inputFile";
 import { compile, SignalError } from "../../signal";
 import { EncodingFields } from "./EncodingFields";
 import { ParsedField, type Setting, SettingField } from "./ParsedField";
+import { RealtimeFields } from "./RealtimeFields";
 import { TargetsField } from "./TargetsField";
 
 /** What a source can do, for the heading of its settings. */
@@ -16,9 +17,9 @@ const KINDS: Record<Source["kind"], string> = {
   poisson: "Poisson: random events at a rate, like background input",
   periodic: "Periodic: a stimulus every period",
   signal: "Signal: a formula over time and channel, encoded as input",
-  microphone: "Microphone: the browser's audio spectrum",
-  camera: "Camera: a luminance grid or frame differences",
-  sensor: "Sensor: any program streaming samples by name",
+  microphone: "Microphone: the audio spectrum in log-spaced bands, live",
+  camera: "Camera: a luminance grid or frame differences, live",
+  sensor: "Sensor: any program streaming samples to it by name, live",
 };
 
 /** The settings that are random per trial can change to or from a random value: set `field` of the source. */
@@ -67,7 +68,7 @@ export function SourceEditor({
       return e instanceof SignalError ? `${e.message} (at character ${e.position + 1})` : String(e);
     }
   }, [s.kind, formula]);
-  const simulated = SIMULATED.includes(s.kind);
+  const realtime = isRealtime(s);
 
   return (
     <Panel data-testid="source-editor">
@@ -104,7 +105,7 @@ export function SourceEditor({
             data-testid="source-name"
           />
           <Toggle label="Enabled" checked={s.enabled} onChange={(enabled) => set({ enabled })} testId="source-enabled" title="A disabled source stays in the file but isn't given to the run" />
-          {trials && (
+          {trials && !realtime && (
             <Choice
               label="Runs"
               width={150}
@@ -119,6 +120,8 @@ export function SourceEditor({
           )}
         </Row>
         <TargetsField targets={s.targets} network={network} onChange={(targets) => set({ targets })} />
+        {/* A realtime source has no schedule: it streams while the run goes. */}
+        {!realtime && (
         <Row>
           <SettingField label={s.scope === "trial" ? "Start (in the trial)" : "Start"} time width={170} setting={setting("start", s.start)} onChange={num("start", s.start)} testId="source-start" />
           {s.kind !== "pulse" && (
@@ -159,6 +162,7 @@ export function SourceEditor({
             </>
           )}
         </Row>
+        )}
         {s.kind === "signal" && (
           <>
             <Field
@@ -189,17 +193,7 @@ export function SourceEditor({
             </Row>
           </>
         )}
-        {!simulated && (
-          <>
-            <Row>
-              <EncodingFields encoding={(s as Extract<Source, { encoding: unknown }>).encoding} spikes onChange={(encoding) => set({ encoding } as Partial<Source>)} />
-            </Row>
-            <Notice tone="warning" data-testid="realtime-note">
-              Realtime sources don't run from an input file yet (phase I4); they're kept in the file with their encoding. Until then, the Realtime
-              section below streams a signal or the microphone into a running network.
-            </Notice>
-          </>
-        )}
+        {realtime && <RealtimeFields s={s} set={set} network={network} />}
       </fieldset>
     </Panel>
   );

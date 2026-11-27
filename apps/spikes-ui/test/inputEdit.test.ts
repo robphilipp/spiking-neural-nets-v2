@@ -255,7 +255,7 @@ describe("a source's state during a run", () => {
   });
 
   it("tells disabled, realtime and manual sources apart", () => {
-    expect(state("voice", 0)).toBe("not run yet");
+    expect(state("voice", 0)).toBe("live");
     expect(sourceState({ ...file.sources[0]!, enabled: false }, expanded, 0)).toBe("off");
     const manual = newSource("pulse", []) as Source & { kind: "pulse" };
     expect(sourceState({ ...manual, at: [] }, expanded, 0)).toBe("manual");

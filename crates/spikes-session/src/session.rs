@@ -1864,18 +1864,33 @@ impl Session {
         lock(&self.shared.sensors).iter().filter_map(|e| e.info()).collect()
     }
 
+    pub(crate) fn next_sensor_key(&self) -> u64 {
+        self.shared
+            .next_sensor_key
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub(crate) fn register_sensor(
         &self,
+        key: u64,
         spec: Arc<SensorSpec>,
-        state: std::sync::Weak<Mutex<crate::sensors::SensorState>>,
-    ) -> u64 {
-        let key = self
-            .shared
-            .next_sensor_key
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        lock(&self.shared.sensors).push(crate::sensors::SensorEntry::new(key, spec, state));
+        inner: std::sync::Weak<crate::sensors::Inner>,
+    ) {
+        lock(&self.shared.sensors).push(crate::sensors::SensorEntry::new(key, spec, inner));
         self.notify(SessionNotice::SensorsChanged);
-        key
+    }
+
+    /// Another handle to the connected sensor called `name` (the newest, if several have it): how a program claims
+    /// a sensor that was declared elsewhere, such as by the UI for a source of an input file. The sensor stays
+    /// connected while any handle lives.
+    pub fn claim_sensor(&self, name: &str) -> Result<Sensor, SessionError> {
+        self.not_replay("take sensor input")?;
+        lock(&self.shared.sensors)
+            .iter()
+            .rev()
+            .filter(|e| e.spec.name == name)
+            .find_map(|e| e.claim())
+            .ok_or_else(|| SessionError::NotFound(format!("sensor '{name}'")))
     }
 
     pub(crate) fn unregister_sensor(&self, key: u64) {

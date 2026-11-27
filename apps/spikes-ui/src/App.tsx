@@ -27,6 +27,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SessionPicker } from "./components/SessionPicker";
 import { useConnection, useEngineError } from "./connection";
+import { useRealtimeHost } from "./realtime";
 import { DeploymentPage } from "./pages/DeploymentPage";
 import { InputsPage } from "./pages/InputsPage";
 import { NetworkPage } from "./pages/NetworkPage";
@@ -51,6 +52,7 @@ export function App() {
   const [page, setPage] = useState<Page>("network");
   const { status } = useConnection();
   const engineError = useEngineError();
+  useRealtimeHost(); // realtime sources stream while the run goes, whatever page is showing
   return (
     <TooltipProvider>
       <SidebarProvider

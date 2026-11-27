@@ -27,4 +27,16 @@ samples: number,
 /**
  * Neuron inputs produced so far.
  */
-inputs: number, };
+inputs: number, 
+/**
+ * Batches received so far.
+ */
+batches: number, 
+/**
+ * Batches that arrived too late for their place in time, after which the sensor re-anchored its clock.
+ */
+lateBatches: number, 
+/**
+ * Samples discarded while the run was paused (a sensor that doesn't buffer).
+ */
+dropped: number, };

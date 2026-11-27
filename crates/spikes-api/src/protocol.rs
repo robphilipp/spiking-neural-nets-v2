@@ -331,6 +331,15 @@ pub enum Request {
         /// The sensor.
         sensor: SensorSpec,
     },
+    /// Takes over the sensor called `name` that another connection (the UI, for a source of an input file) declared:
+    /// returns a sensor id on this connection to send batches to. The newest sensor of that name; it stays
+    /// connected while any connection holds it.
+    ClaimSensor {
+        /// The session.
+        session: u32,
+        /// The sensor's name.
+        name: String,
+    },
     /// Disconnects a sensor.
     DisconnectSensor {
         /// The session.
@@ -744,6 +753,15 @@ pub struct SensorInfo {
     /// Neuron inputs produced so far.
     #[ts(type = "number")]
     pub inputs: u64,
+    /// Batches received so far.
+    #[ts(type = "number")]
+    pub batches: u64,
+    /// Batches that arrived too late for their place in time, after which the sensor re-anchored its clock.
+    #[ts(type = "number")]
+    pub late_batches: u64,
+    /// Samples discarded while the run was paused (a sensor that doesn't buffer).
+    #[ts(type = "number")]
+    pub dropped: u64,
 }
 
 /// A description's network, built just to look at.

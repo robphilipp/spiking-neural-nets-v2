@@ -41,10 +41,11 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     viewport: { width: 1400, height: 900 },
-    permissions: ["microphone"],
+    permissions: ["microphone", "camera"],
     // WebGL on the GPU (ANGLE over Metal on macOS), as in a real window; headless Chromium otherwise draws it in
     // software, which says nothing about the 3D view's real cost.
-    // A fake microphone (a steady tone), allowed without asking, for the microphone input.
+    // A fake microphone (a steady tone) and camera (a moving test pattern), allowed without asking, for the
+    // microphone and camera sources.
     launchOptions: {
       args: [
         "--use-angle=metal",

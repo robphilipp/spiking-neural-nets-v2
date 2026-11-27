@@ -1,6 +1,6 @@
 # 05 Inputs: input files, simulated and realtime sources, the Inputs view
 
-Status: **reviewed**, 2026-11-27 (decisions below; the open questions answered). **I1, I2 and I3 done** (2026-11-27). Replaces today's three ways of giving a network input (the Run page's
+Status: **reviewed**, 2026-11-27 (decisions below; the open questions answered). **I1 to I4 done** (2026-11-27). Replaces today's three ways of giving a network input (the Run page's
 **Stimulate** and **Background input**, and the Inputs page's designed signal and microphone) with one model and
 one view.
 
@@ -347,6 +347,46 @@ Each phase: unit tests (engine and TS), e2e tests through the view, docs.
 - **Not done**: the test run (I5); position mapping of channels (I5); a random setting can't be edited for a
   source's `at` times; `file` sources; the rate preview (event rate per channel, §4); realtime sources in the file
   (I4). No marking of trials on the Run page's charts (as in I2).
+
+### I4 status: done (2026-11-27)
+
+- **File format** (`inputFile.ts`): realtime sources take `encoding` (current, rate, threshold; a sensor also
+  spikes), `on_pause = "drop" | "buffer"` (default **drop** for all three: they are live), `speed = "resample" |
+  "refuse"` (default resample: the engine's anchor scales the source's time by the run's speed; refuse: it doesn't
+  start unless the run is at x1). Microphone: `bands` (optional cap; otherwise one band per target neuron).
+  Camera: `mode = "luminance" | "changes"`, `grid = "16x16"` (columns x rows), `level` (changes, default 0.1).
+  Changes send 2 x cells channels, all "on" cells (row-major) then all "off" cells, each carrying the frame
+  difference when above `level`. Sensor: one channel per target neuron. Defaults aren't written. Realtime sources
+  have no schedule (a `start` or `duration` is an error) and can't be trial sources.
+- **Manager** (`realtimeManager.ts`, with `realtime.ts` for the store and the host hook mounted in `App`; replaces
+  `inputStreams.ts`): several sources at once, each a sensor named after the source with a status (starting,
+  streaming, stopped, refused, error; message; samples/s, samples, batches, late, dropped), counters polled from
+  `listSensors` every second. It starts the enabled sources when the run is running, holds them across pause and
+  resume (`on_pause` goes to the engine as `bufferWhilePaused`), stops them when the run ends or the session
+  changes, and follows speed changes (a speed change settles 300 ms first): as fast as possible refuses all,
+  `refuse` sources refuse at other speeds than x1 and start again at x1. A source that can't start (too few targets,
+  device refused) shows its error and the others go on. Devices: `capture.ts` (getUserMedia with echo
+  cancellation, noise suppression and gain control off; audio batches every 10 ms; video per frame, ~30 fps, from a
+  canvas at 4x the grid, averaged by `lumaGrid`); the pure channel code is in `realtimeChannels.ts`.
+- **Engine and API**: `SensorInfo` has `batches`, `lateBatches` and `dropped`; new request `claimSensor` (session,
+  name): a connection takes over a sensor another connection declared (the UI declares the source's sensor, a
+  program claims it; see `docs/inputs-sensors.md`); `claim_sensor` in `spikes-sensor` and `claimSensor` in the TS
+  client. A `Sensor` is now a shared handle (the entry in the session's list goes with the last one).
+- **UI**: realtime editors (settings, encoding, channels vs targets, a live **preview** of the capture: bands as
+  bars, the camera's grid, on and off cells green and red); source rows show the channel count or the target-count
+  error, and during a run the live status; the timeline shows realtime sources as "live" rows; the Run page says
+  how many realtime sources stream, warns when a run as fast as possible has realtime sources, and lists their
+  statuses. The old Realtime section (microphone and "Stream live") is gone: a signal streamed live in wall-clock
+  time is dropped, simulated signal sources replace it.
+- **Desktop**: `Info.plist` (NSMicrophoneUsageDescription, NSCameraUsageDescription) and `Entitlements.plist`
+  (audio-input, camera). Untested on macOS.
+- **Tests**: vitest `realtimeFile`, `realtimeChannels` (bands, grids, differences, channel counts, speed rules),
+  `realtimeManager` (fake client and devices); Rust `sensors.rs` (late and dropped counts, buffer vs drop, claim),
+  `connection.rs` (claim through the protocol, listed counters); e2e `realtime.spec.ts` (microphone, camera and a
+  claimed sensor at once; as fast as possible; speed refuse; pause drop vs buffer; too few targets; previews), with
+  Chromium's fake devices.
+- **Not done**: position mapping of channel grids (I5); start/duration for realtime sources; recording of the
+  realtime sources' settings with the run beyond what sensors record already.
 
 ## 6. Questions answered (2026-11-27)
 

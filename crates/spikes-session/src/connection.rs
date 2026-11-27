@@ -537,9 +537,19 @@ impl Connection {
                         .into(),
                         samples: s.stats.samples,
                         inputs: s.stats.inputs,
+                        batches: s.stats.batches,
+                        late_batches: s.stats.late_batches,
+                        dropped: s.stats.dropped,
                     })
                     .collect(),
             }),
+            Request::ClaimSensor { session, name } => {
+                let claimed = self.session(session)?.claim_sensor(&name).map_err(api_error)?;
+                let id = self.next_sensor;
+                self.next_sensor += 1;
+                self.sensors.insert(id, claimed);
+                Ok(Response::Sensor { sensor: id })
+            }
             Request::DisconnectSensor { sensor, .. } => {
                 self.sensors
                     .remove(&sensor)

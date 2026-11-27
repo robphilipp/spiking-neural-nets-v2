@@ -2,9 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Signed builds run with the hardened runtime (needed for notarization), which blocks the microphone unless
-	     it is declared here (Inputs > Microphone). -->
+	<!-- Signed builds run with the hardened runtime (needed for notarization), which blocks the microphone and camera
+	     unless they are declared here (Inputs > Microphone and Camera sources). -->
 	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
 	<true/>
 </dict>
 </plist>

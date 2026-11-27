@@ -10,7 +10,7 @@ const MAX_BOUNDARIES = 150;
 
 /**
  * When each source is on across the run: a row per source (bars for its on-periods, ticks for pulses; an arrow-edged
- * bar is on for ever, faded when the source is disabled or realtime), the trials above them (numbered, with their
+ * bar is on for ever, faded when the source is disabled; a realtime source has a "live" row without a schedule), the trials above them (numbered, with their
  * conditions) and a marker at the run's current time. Clicking a row selects its source.
  */
 export function Timeline({
@@ -70,12 +70,17 @@ export function Timeline({
                 data-testid="timeline-span"
                 className={cn(
                   "absolute top-1 h-3 rounded-sm bg-primary",
-                  (!r.enabled || r.kind === "microphone" || r.kind === "camera" || r.kind === "sensor") && "opacity-30",
+                  !r.enabled && "opacity-30",
                   p.open && "rounded-r-none bg-gradient-to-r from-primary to-primary/25",
                 )}
                 style={{ left: x(p.from), width: `max(2px, calc(${x(p.to)} - ${x(p.from)}))` }}
               />
             ))}
+            {r.live && (
+              <div className={cn("absolute inset-0 flex items-center px-2 text-[10px] text-muted-foreground", !r.enabled && "opacity-30")} data-testid="timeline-live">
+                live: streams in real time while the run goes
+              </div>
+            )}
             {r.marks.map((t, i) => (
               <div
                 key={i}

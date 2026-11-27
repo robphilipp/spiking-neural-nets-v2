@@ -145,24 +145,23 @@ pub(crate) struct State {
     stats: SensorStats,
 }
 
-/// A connected sensor. Send batches from any thread; dropping it (every clone) disconnects.
+/// A connected sensor. Send batches from any thread; dropping it (every clone) disconnects. Clones share one
+/// sensor: a connection can claim a sensor another connection declared (see [`Session::claim_sensor`]).
 #[derive(Clone)]
 pub struct Sensor {
+    inner: Arc<Inner>,
+}
+
+/// What clones of a sensor share. Its entry in the session's list of sensors goes when the last clone does.
+pub(crate) struct Inner {
     id: u32,
     spec: Arc<SensorSpec>,
     session: Session,
-    state: Arc<Mutex<State>>,
-    /// Its entry in the session's list of sensors, removed when the last clone goes.
-    _registration: Arc<Registration>,
-}
-
-/// A sensor's place in its session's list (see [`Session::sensors`]).
-struct Registration {
-    session: Session,
+    state: Mutex<State>,
     key: u64,
 }
 
-impl Drop for Registration {
+impl Drop for Inner {
     fn drop(&mut self) {
         self.session.unregister_sensor(self.key);
     }
@@ -179,28 +178,32 @@ pub struct SensorInfo {
     pub stats: SensorStats,
 }
 
-/// A sensor's encoding state (opaque outside this module).
-pub(crate) type SensorState = State;
-
 /// The session's record of a connected sensor.
 pub(crate) struct SensorEntry {
     pub(crate) key: u64,
     pub(crate) spec: Arc<SensorSpec>,
-    state: std::sync::Weak<Mutex<State>>,
+    inner: std::sync::Weak<Inner>,
 }
 
 impl SensorEntry {
-    pub(crate) fn new(key: u64, spec: Arc<SensorSpec>, state: std::sync::Weak<Mutex<State>>) -> Self {
-        Self { key, spec, state }
+    pub(crate) fn new(key: u64, spec: Arc<SensorSpec>, inner: std::sync::Weak<Inner>) -> Self {
+        Self { key, spec, inner }
     }
 
     pub(crate) fn info(&self) -> Option<SensorInfo> {
-        let state = self.state.upgrade()?;
-        let stats = state.lock().unwrap_or_else(|p| p.into_inner()).stats;
+        let inner = self.inner.upgrade()?;
+        let stats = inner.state.lock().unwrap_or_else(|p| p.into_inner()).stats;
         Some(SensorInfo {
             key: self.key,
             spec: Arc::clone(&self.spec),
             stats,
+        })
+    }
+
+    /// Another handle to the sensor, if it's still connected.
+    pub(crate) fn claim(&self) -> Option<Sensor> {
+        Some(Sensor {
+            inner: self.inner.upgrade()?,
         })
     }
 }
@@ -208,8 +211,8 @@ impl SensorEntry {
 impl std::fmt::Debug for Sensor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Sensor")
-            .field("id", &self.id)
-            .field("name", &self.spec.name)
+            .field("id", &self.inner.id)
+            .field("name", &self.inner.spec.name)
             .finish()
     }
 }
@@ -232,31 +235,33 @@ impl Sensor {
             .map(|_| Channel::new(&mut || rng.random::<f64>()))
             .collect();
         let spec = Arc::new(spec);
-        let state = Arc::new(Mutex::new(State {
-            anchor: None,
-            last: None,
-            channels: encoders,
-            rng,
-            stats: SensorStats::default(),
-        }));
-        let key = session.register_sensor(Arc::clone(&spec), Arc::downgrade(&state));
-        Self {
+        let key = session.next_sensor_key();
+        let inner = Arc::new(Inner {
             id,
-            spec,
+            spec: Arc::clone(&spec),
             session: session.clone(),
-            state,
-            _registration: Arc::new(Registration { session, key }),
-        }
+            state: Mutex::new(State {
+                anchor: None,
+                last: None,
+                channels: encoders,
+                rng,
+                stats: SensorStats::default(),
+            }),
+            key,
+        });
+        // Listed once it exists, so a client told of it can find it.
+        session.register_sensor(key, spec, Arc::downgrade(&inner));
+        Self { inner }
     }
 
     /// The sensor's id within its session.
     pub fn id(&self) -> u32 {
-        self.id
+        self.inner.id
     }
 
     /// Its declaration.
     pub fn spec(&self) -> &SensorSpec {
-        &self.spec
+        &self.inner.spec
     }
 
     /// Counters so far.
@@ -265,12 +270,12 @@ impl Sensor {
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|p| p.into_inner())
+        self.inner.state.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// The anchor for a batch starting at `t0_ns`, or `None` if the batch is to be dropped.
     fn anchor(&self, st: &mut State, moment: &Moment, t0_ns: u64, samples: u64) -> Option<Anchor> {
-        if moment.paused && self.spec.on_pause == OnPause::Drop {
+        if moment.paused && self.inner.spec.on_pause == OnPause::Drop {
             st.anchor = None;
             st.last = None;
             st.stats.dropped += samples;
@@ -278,7 +283,7 @@ impl Sensor {
         }
         let fresh = Anchor {
             sensor_ns: t0_ns,
-            sim: moment.now.saturating_add(self.spec.ingress_delay),
+            sim: moment.now.saturating_add(self.inner.spec.ingress_delay),
             speed: moment.speed,
         };
         let anchor = match st.anchor {
@@ -304,14 +309,14 @@ impl Sensor {
 
     /// Sends samples. Channels are `targets.len()`; `values.len()` must be a multiple of it.
     pub fn send_samples(&self, batch: &SampleBatch) -> Result<(), SessionError> {
-        let channels = self.spec.targets.len();
+        let channels = self.inner.spec.targets.len();
         if channels == 0 || !batch.values.len().is_multiple_of(channels) {
             return Err(SessionError::Invalid(format!(
                 "{} values don't make whole samples of {channels} channels",
                 batch.values.len()
             )));
         }
-        let encoding = match self.spec.encoding {
+        let encoding = match self.inner.spec.encoding {
             Encoding::Current { gain_mv } => SampleEncoding::Current { gain_mv },
             Encoding::Rate { max_hz, mv } => SampleEncoding::Rate { max_hz, mv },
             Encoding::Threshold { level, mv } => SampleEncoding::Threshold { level, mv },
@@ -319,7 +324,7 @@ impl Sensor {
                 return Err(SessionError::Invalid("this sensor sends spikes, not samples".into()));
             }
         };
-        let moment = self.session.sensor_moment()?;
+        let moment = self.inner.session.sensor_moment()?;
         let samples = (batch.values.len() / channels) as u64;
         let mut st = self.lock();
         st.stats.batches += 1;
@@ -337,7 +342,7 @@ impl Sensor {
             state.last = Some((t_ns, t));
             for (c, &v) in values.iter().enumerate() {
                 log.push((c as u32, t_ns, t, v));
-                let targets = &self.spec.targets[c];
+                let targets = &self.inner.spec.targets[c];
                 let rng = &mut state.rng;
                 state.channels[c].encode(
                     encoding,
@@ -359,15 +364,15 @@ impl Sensor {
         }
         st.stats.inputs += inputs.len() as u64;
         drop(st);
-        self.session.sensor_input(self.id, &inputs, &log)
+        self.inner.session.sensor_input(self.inner.id, &inputs, &log)
     }
 
     /// Sends events (for [`Encoding::Spikes`] sensors).
     pub fn send_spikes(&self, batch: &SpikeBatch) -> Result<(), SessionError> {
-        let Encoding::Spikes { mv } = self.spec.encoding else {
+        let Encoding::Spikes { mv } = self.inner.spec.encoding else {
             return Err(SessionError::Invalid("this sensor sends samples, not spikes".into()));
         };
-        let moment = self.session.sensor_moment()?;
+        let moment = self.inner.session.sensor_moment()?;
         let mut st = self.lock();
         st.stats.batches += 1;
         st.stats.samples += batch.events.len() as u64;
@@ -378,6 +383,7 @@ impl Sensor {
         let mut log = Vec::new();
         for &(channel, offset) in &batch.events {
             let targets = self
+                .inner
                 .spec
                 .targets
                 .get(usize::from(channel))
@@ -390,7 +396,7 @@ impl Sensor {
         }
         st.stats.inputs += inputs.len() as u64;
         drop(st);
-        self.session.sensor_input(self.id, &inputs, &log)
+        self.inner.session.sensor_input(self.inner.id, &inputs, &log)
     }
 }
 

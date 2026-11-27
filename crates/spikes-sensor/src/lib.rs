@@ -170,6 +170,19 @@ impl SensorClient {
         }
     }
 
+    /// Takes over the sensor called `name` that the UI (or another program) declared for this session, such as a
+    /// `sensor` source of an input file; returns its id for [`Self::send_samples`]. Its channels are the ones it
+    /// was declared with.
+    pub fn claim_sensor(&mut self, session: u32, name: &str) -> Result<u32> {
+        match self.request(Request::ClaimSensor {
+            session,
+            name: name.into(),
+        })? {
+            Response::Sensor { sensor } => Ok(sensor),
+            other => Err(SensorError::Protocol(format!("expected a sensor, got {other:?}"))),
+        }
+    }
+
     /// Sends samples on all channels, `dt_ns` apart, sample-major (`values[s × channels + c]`). `t0_ns` is the
     /// sensor's own clock at the first sample; keep it increasing from batch to batch. Doesn't wait for an
     /// answer, but reports an error the engine sent about an earlier batch.

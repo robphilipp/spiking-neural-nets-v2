@@ -24,14 +24,15 @@ import { WeightsPanel } from "../components/WeightsPanel";
 import { buildNetwork, inputsChanged, inputsKey } from "../buildNetwork";
 import { useConnection } from "../connection";
 import { useWidth } from "../hooks/useWidth";
-import { stopInput, useActiveInput } from "../inputStreams";
+import { useRealtime } from "../realtime";
+import { liveDetail } from "../components/inputs/SourceList";
 import { ChartControls } from "../components/ChartControls";
 import { useChartSettings, useChartKey, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectLive, useLive } from "../live";
 import { useBehavior } from "../useBehavior";
 import { built, inputsSelected, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
 import { firable, trialAt } from "../inputEdit";
-import { emptyInputFile, notRunYet } from "../inputFile";
+import { emptyInputFile, isRealtime } from "../inputFile";
 import { useChartColors } from "../theme";
 
 /** Speed on a log scale: slider value v means 2^v simulated seconds per wall second. */
@@ -88,7 +89,7 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
   /** Record the next run (to the engine's recordings folder; see the Recordings page). */
   const [record, setRecord] = useState(false);
   const replay = session.replayEndMs !== null;
-  const activeInput = useActiveInput();
+  const realtime = useRealtime((s) => s.statuses);
   const [seekMs, setSeekMs] = useState(0);
   const [seeking, setSeeking] = useState(false);
   // The seek slider shows where the replay is, except while it's being dragged.
@@ -205,7 +206,9 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
     [...rows, "rate"].map((name) => [name, { ...defaultLineStyle(), color: colors.series, highlightColor: colors.highlight }]),
   );
   const pulses = firable(inputs);
-  const idle = notRunYet(inputs ?? emptyInputFile());
+  // Realtime sources on in the file: what the run will try to stream.
+  const wantsRealtime = (inputs?.sources ?? []).filter((x) => x.enabled && isRealtime(x));
+  const streaming = realtime.filter((x) => x.state === "streaming").length;
 
   return (
     <div className="flex flex-col gap-3">
@@ -413,7 +416,8 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
             {inputs && (
               <span className="pb-2 text-xs text-muted-foreground" data-testid="input-summary">
                 {inputs.sources.filter((x) => x.enabled).length} of {inputs.sources.length} source{inputs.sources.length === 1 ? "" : "s"} on
-                {idle.length > 0 && ` (${idle.map((x) => x.name).join(", ")}: realtime, not run yet)`}
+                {wantsRealtime.length > 0 &&
+                  `, ${wantsRealtime.length} realtime${running || realtime.length > 0 ? `: ${streaming} streaming` : ""}`}
               </span>
             )}
           </Row>
@@ -440,16 +444,28 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
 
       {network && client && !replay && <Modulators client={client} session={id} modulators={network.modulators} onError={setError} />}
 
-      {activeInput && activeInput.session === id && (
-        <Notice
-          action={
-            <Button size="sm" variant="outline" onClick={stopInput} data-testid="stop-input-run">
-              Stop
-            </Button>
-          }
-        >
-          {activeInput.kind === "microphone" ? "The microphone is streaming into this network." : "A designed signal is streaming into this network."}
+      {!replay && asFastAsPossible && wantsRealtime.length > 0 && (
+        <Notice tone="warning" data-testid="realtime-asap-note">
+          The run is as fast as possible, and realtime input (
+          {wantsRealtime.map((x) => x.name).join(", ")}) can't be had faster than it happens, so those sources won't start. Pick a speed to stream them; the
+          simulated sources run either way.
         </Notice>
+      )}
+      {!replay && realtime.length > 0 && (
+        <Panel data-testid="realtime-status">
+          <div className="flex flex-col gap-1 text-sm">
+            {realtime.map((x) => (
+              <div key={x.name} className="flex flex-wrap items-baseline gap-x-2" data-testid={`rt-run-${x.name}`}>
+                <span className="font-medium">{x.name}</span>
+                <span className="text-xs text-muted-foreground">{x.kind}</span>
+                <Badge variant={x.state === "error" || x.state === "refused" ? "destructive" : "secondary"} className="font-normal" data-testid={`rt-run-state-${x.name}`}>
+                  {x.state}
+                </Badge>
+                <span className="text-xs text-muted-foreground tabular-nums">{liveDetail(x)}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
       )}
       {error && (
         <Notice tone="error" onClose={() => setError(null)}>

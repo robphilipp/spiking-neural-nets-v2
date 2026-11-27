@@ -2,8 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Merged into the app's Info.plist by Tauri. macOS refuses microphone access without a reason. -->
+	<!-- Merged into the app's Info.plist by Tauri. macOS refuses microphone and camera access without a reason. -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Spikes can route your microphone into a network as a sensor (Inputs → Microphone).</string>
+	<string>Spikes can route your microphone into a network as a sensor (Inputs → Microphone source).</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Spikes can route your camera into a network as a sensor, as a brightness grid or frame differences (Inputs → Camera source).</string>
 </dict>
 </plist>
