@@ -64,6 +64,9 @@ export interface ProjectState {
   project: Project;
   /** The project's input files, by file name (each of `project.inputs`). */
   inputFiles: Record<string, InputFile>;
+  /** The data files input files refer to (`[[data]]`), by path in the project folder: read from the folder (desktop) or
+   *  opened in the browser. Read-only references: saving doesn't write them, and they don't count as changes. */
+  dataFiles: Record<string, Uint8Array>;
   /** The description as last saved (to show unsaved changes). */
   savedDescription: string | null;
   savedProject: string | null;
@@ -81,6 +84,7 @@ export const useProject = create<ProjectState>()(() => ({
   folder: null,
   project: newProject("untitled"),
   inputFiles: freshInputs(newProject("untitled")),
+  dataFiles: {},
   savedDescription: null,
   savedProject: null,
   savedInputs: null,
@@ -97,18 +101,21 @@ export function projectOpened({
   project,
   description,
   inputFiles,
+  dataFiles = {},
   saved,
 }: {
   folder: string;
   project: Project;
   description: string;
   inputFiles: Record<string, InputFile>;
+  dataFiles?: Record<string, Uint8Array>;
   saved: boolean;
 }) {
   useProject.setState((s) => ({
     folder,
     project,
     inputFiles,
+    dataFiles,
     savedDescription: description,
     savedProject: saved ? JSON.stringify(project) : null,
     savedInputs: saved ? JSON.stringify(inputFiles) : null,
@@ -132,6 +139,11 @@ export function inputFileChanged(name: string, file: InputFile) {
     project: s.project.inputs.includes(name) ? s.project : { ...s.project, inputs: [...s.project.inputs, name] },
     inputFiles: { ...s.inputFiles, [name]: file },
   }));
+}
+
+/** A data file's bytes (at `path` in the project folder). */
+export function dataFileLoaded(path: string, bytes: Uint8Array) {
+  useProject.setState((s) => ({ dataFiles: { ...s.dataFiles, [path]: bytes } }));
 }
 
 /** Runs use this input file (null: none). */
@@ -191,7 +203,7 @@ export function forgetRecent(folder: string) {
 
 export function newProjectStarted() {
   const project = newProject("untitled");
-  useProject.setState({ folder: null, project, inputFiles: freshInputs(project), savedDescription: null, savedProject: null, savedInputs: null });
+  useProject.setState({ folder: null, project, inputFiles: freshInputs(project), dataFiles: {}, savedDescription: null, savedProject: null, savedInputs: null });
 }
 
 export { DEFAULT_RUN };

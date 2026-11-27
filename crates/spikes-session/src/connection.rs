@@ -373,14 +373,26 @@ impl Connection {
                 .map(done)
                 .map_err(api_error),
             Request::AddInput { session, input } => {
-                let input = input_spec(input)?;
+                let input = input_spec(input, &[])?;
                 self.session(session)?.add_input(input).map(done).map_err(api_error)
             }
             Request::SetInputs {
                 session,
                 sources,
                 trials,
+                data,
             } => {
+                let files = data
+                    .into_iter()
+                    .map(|f| {
+                        spikes_signal::data::decode_base64(&f.base64)
+                            .map(|bytes| spikes_signal::DataFile {
+                                name: f.name.clone(),
+                                bytes,
+                            })
+                            .map_err(|e| error(ErrorCode::Invalid, format!("data file '{}': {e}", f.name)))
+                    })
+                    .collect::<Result<Vec<_>, ApiError>>()?;
                 let trials = trials
                     .into_iter()
                     .map(|t| {
@@ -397,7 +409,7 @@ impl Connection {
                     .map(|s| {
                         Ok(InputSource {
                             start: duration(s.start_ms)?,
-                            input: input_spec(s.input)
+                            input: input_spec(s.input, &files)
                                 .map_err(|e| error(ErrorCode::Invalid, format!("input '{}': {}", s.name, e.message)))?,
                             name: s.name,
                         })
@@ -760,7 +772,7 @@ fn ms_of(t: SimTime) -> f64 {
 }
 
 /// An API input as the engine runs it.
-fn input_spec(input: api::Input) -> Result<InputSpec, ApiError> {
+fn input_spec(input: api::Input, files: &[spikes_signal::DataFile]) -> Result<InputSpec, ApiError> {
     Ok(match input {
         api::Input::Poisson {
             targets,
@@ -796,6 +808,7 @@ fn input_spec(input: api::Input) -> Result<InputSpec, ApiError> {
             encoding,
             duration_ms,
         } => InputSpec::Signal {
+            data: used_data(&formula, files),
             channels,
             formula,
             sample: duration(sample_ms)?,
@@ -814,6 +827,18 @@ fn input_spec(input: api::Input) -> Result<InputSpec, ApiError> {
             duration: duration_ms.map(duration).transpose()?,
         },
     })
+}
+
+/// The data files a formula looks up (a malformed formula looks up none; it fails when checked).
+fn used_data(formula: &str, files: &[spikes_signal::DataFile]) -> Vec<spikes_signal::DataFile> {
+    let Ok(f) = spikes_signal::Formula::compile(formula) else {
+        return Vec::new();
+    };
+    files
+        .iter()
+        .filter(|file| f.data_uses().iter().any(|u| u.name == file.name))
+        .cloned()
+        .collect()
 }
 
 fn duration(ms: f64) -> Result<SimDuration, ApiError> {

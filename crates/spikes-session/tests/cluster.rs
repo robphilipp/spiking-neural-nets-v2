@@ -534,6 +534,7 @@ fn nemotode_with_inputs(engine: &Engine, nodes: Vec<String>) -> Vec<String> {
                         encoding: spikes_signal::SampleEncoding::Rate { max_hz: 60.0, mv: 12.0 },
                         key: 0,
                         duration: None,
+                        data: Vec::new(),
                     },
                 },
                 spikes_session::InputSource {

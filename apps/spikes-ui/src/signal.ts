@@ -8,6 +8,9 @@
 //   step(x)        1 for x ≥ 0, else 0
 //   pulse(t, period, width)   1 for the first `width` of every `period`, else 0
 //   clamp(x, lo, hi)
+//   data("name", t, c)   the data file `name` (CSV or WAV, see dataFile.ts) at time `t` ms, channel `c`, linearly
+//                        interpolated; 0 outside the file's samples and for a channel it doesn't have
+//   data("name", t)      channel 0
 //   rand()         uniform in [0, 1): a fresh value per sample and channel (seeded: see `noiseKey`)
 //   gauss()        standard normal, likewise
 //
@@ -22,9 +25,20 @@ export interface At {
   key: bigint;
 }
 
+import { type DataSets, lookup } from "./dataFile";
+
 const NO_NOISE: At = { sample: 0, key: 0n };
 
-export type Signal = (t: number, c: number, n: number, at?: At) => number;
+/** Which channel of a data file a `data(…)` call reads, as far as the formula says. */
+export type DataChannel = { kind: "zero" } | { kind: "c" } | { kind: "fixed"; index: number } | { kind: "computed" };
+
+/** A `data(…)` call in a formula: for checking that the files exist and have the channels. */
+export interface DataUse {
+  name: string;
+  channel: DataChannel;
+}
+
+export type Signal = ((t: number, c: number, n: number, at?: At) => number) & { dataUses: DataUse[] };
 
 export class SignalError extends Error {
   constructor(
@@ -93,9 +107,11 @@ const FUNCTIONS: Record<string, { arity: number; f: (...a: number[]) => number }
   clamp: { arity: 3, f: (x, lo, hi) => Math.min(Math.max(x, lo), hi) },
 };
 
-/** Compiles a formula. Throws a SignalError (with the position) for a malformed one. */
-export function compile(source: string): Signal {
+/** Compiles a formula; `data` are the files `data(…)` looks up (a missing one gives 0). Throws a SignalError (with
+ *  the position) for a malformed formula. */
+export function compile(source: string, data: DataSets = new Map()): Signal {
   let i = 0;
+  const dataUses: DataUse[] = [];
   /** Call sites of rand() and gauss(), numbered in order (so two calls are independent). */
   let sites = 0;
   const skip = () => {
@@ -175,6 +191,34 @@ export function compile(source: string): Signal {
               };
     }
   };
+  // data := 'data' '(' string ',' conditional (',' conditional)? ')'   (the name is in double quotes, no escapes)
+  const dataCall = (): Node => {
+    expect("(");
+    skip();
+    if (!eat('"')) return fail(`data takes the file's name in quotes, then t, and optionally c: data("name", t, c)`);
+    const close = source.indexOf('"', i);
+    if (close < 0) return fail("the data name needs a closing quote");
+    const name = source.slice(i, close);
+    i = close + 1;
+    expect(",");
+    const time = conditional();
+    let channel: Node | null = null;
+    let kind: DataChannel = { kind: "zero" };
+    if (eat(",")) {
+      const from = i;
+      channel = conditional();
+      const text = source.slice(from, i).trim();
+      kind = text === "c" ? { kind: "c" } : /^\d+$/.test(text) ? { kind: "fixed", index: Number(text) } : { kind: "computed" };
+    }
+    expect(")");
+    dataUses.push({ name, channel: kind });
+    const set = data.get(name);
+    return (t, c, n, at) => {
+      const tv = time(t, c, n, at);
+      const cv = channel ? channel(t, c, n, at) : 0;
+      return set ? lookup(set, tv, cv) : 0;
+    };
+  };
   // unary := '-' unary | power;  power := primary ('^' unary)?  — so -2^2 is -(2^2), and 2^-1 works.
   const unary = (): Node => {
     if (eat("-")) {
@@ -219,10 +263,11 @@ export function compile(source: string): Signal {
         ? (_, c, __, at) => uniform(at.key, c, at.sample, site, 0)
         : (_, c, __, at) => gauss(at.key, c, at.sample, site);
     }
+    if (word === "data") return dataCall();
     const fn = FUNCTIONS[word];
     if (!fn) {
       i -= word.length;
-      return fail(`unknown name '${word}' (use t, c, n, pi, or a function like sin, pulse, step, rand)`);
+      return fail(`unknown name '${word}' (use t, c, n, pi, or a function like sin, pulse, step, rand, data)`);
     }
     expect("(");
     const args: Node[] = [conditional()];
@@ -235,10 +280,11 @@ export function compile(source: string): Signal {
   const node = conditional();
   skip();
   if (i < source.length) fail(`unexpected '${source[i]}'`);
-  return (t, c, n, at = NO_NOISE) => {
+  const signal = (t: number, c: number, n: number, at: At = NO_NOISE) => {
     const v = node(t, c, n, at);
     return Number.isFinite(v) ? v : 0;
   };
+  return Object.assign(signal, { dataUses });
 }
 
 /** Samples a signal: `values[s * channels + c]` for samples `first … first + count − 1`, `dtMs` apart. `key`: the

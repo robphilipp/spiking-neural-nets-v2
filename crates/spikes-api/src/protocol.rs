@@ -246,6 +246,10 @@ pub enum Request {
         /// The run's trials, in order (none without a trial schedule).
         #[serde(default)]
         trials: Vec<Trial>,
+        /// The data files the sources' formulas look up with `data("name", t, c)` (CSV or WAV; see
+        /// `spikes_signal::data`). Parsed and checked here; each signal keeps the ones it uses.
+        #[serde(default)]
+        data: Vec<DataFile>,
     },
     /// The run's trials: as given with its inputs, or as recorded for a replay. Replies `trials`.
     GetTrials {
@@ -483,6 +487,17 @@ pub struct Trial {
     pub start_ms: f64,
     /// When it ends, ms from the run's start.
     pub end_ms: f64,
+}
+
+/// A data file of a run's inputs, for formulas' `data("name", t, c)`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DataFile {
+    /// The name formulas use.
+    pub name: String,
+    /// The file's bytes (a CSV or WAV file), base64.
+    pub base64: String,
 }
 
 /// A named source of a run's inputs.

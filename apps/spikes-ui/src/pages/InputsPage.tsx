@@ -14,10 +14,18 @@ import { TargetsView } from "../components/inputs/TargetsView";
 import { TrialsEditor } from "../components/inputs/TrialsEditor";
 import { useCanFire } from "../components/FireButton";
 import { addSource, newSource, sourceState, timeline, trialAt } from "../inputEdit";
-import { emptyInputFile, expandTrials, InputFileError, targetNeurons } from "../inputFile";
+import { DataPanel, checkData } from "../components/inputs/DataPanel";
+import { addDataRef, removeDataRef } from "../inputEdit";
+import { loadData } from "../inputData";
+import { pickDataFile } from "../files";
+import { emptyInputFile, expandTrials, fileFormula, InputFileError, targetNeurons } from "../inputFile";
+import { layoutKind } from "../channelLayout";
+import { sourceChannels } from "../sourceChannels";
+import { inTauri } from "../tauriClient";
 import { inputsChanged } from "../buildNetwork";
 import { useLive } from "../live";
 import {
+  dataFileLoaded,
   inputFileAdded,
   inputFileChanged,
   inputFileDeleted,
@@ -35,6 +43,8 @@ export function InputsPage() {
   const names = useProject((s) => s.project.inputs);
   const selected = useProject((s) => s.project.selectedInputs);
   const file = useProject((s) => (s.project.selectedInputs === null ? null : (s.inputFiles[s.project.selectedInputs] ?? emptyInputFile())));
+  const dataFiles = useProject((s) => s.dataFiles);
+  const folder = useProject((s) => s.folder);
   const { seed, durationS } = useProject((s) => s.project.run);
   const session = useSession();
   const { network, state } = session;
@@ -67,6 +77,13 @@ export function InputsPage() {
     [showStatus, file, expanded, simMs],
   );
 
+  const loaded = useMemo(() => loadData(file, dataFiles), [file, dataFiles]);
+  // The selected source's channel mapping, when it isn't the default (to colour the targets by channel).
+  const mapped = useMemo(() => {
+    if (!network || !source || layoutKind(source) === "order") return null;
+    const r = sourceChannels(source, network, loaded);
+    return "result" in r && r.result?.ok ? r.result.channels : null;
+  }, [network, source, loaded]);
   const targets = useMemo(() => {
     if (!network || !source) return null;
     try {
@@ -75,6 +92,19 @@ export function InputsPage() {
       return null;
     }
   }, [network, source]);
+  const openData = async (picked?: { path: string; bytes: Uint8Array }) => {
+    if (!file || selected === null) return;
+    let p = picked;
+    if (!p) {
+      if (folder === null) throw new Error("save the project to a folder first: data files are references to files in it");
+      p = (await pickDataFile(folder)) ?? undefined;
+      if (!p) return;
+    }
+    checkData(p.path, p.bytes);
+    setError(null);
+    dataFileLoaded(p.path, p.bytes);
+    edit(addDataRef(file, p.path).file);
+  };
   const channelNames = useMemo(() => (targets && network ? targets.map((i) => network.neurons[i]!.name) : null), [targets, network]);
 
   const attempt = (f: () => void) => {
@@ -104,6 +134,17 @@ export function InputsPage() {
         onDelete={() => selected !== null && (inputFileDeleted(selected), setIndex(0))}
         onDescription={(description) => file && edit({ ...file, description })}
       />
+      {file && (
+        <DataPanel
+          file={file}
+          loaded={loaded}
+          inTauri={inTauri()}
+          locked={locked}
+          onOpen={openData}
+          onRemove={(name) => edit(removeDataRef(file, name))}
+          onError={setError}
+        />
+      )}
       {locked && (
         <Notice data-testid="locked-note">
           A run is open, and a run is fully described by its input file and seed, so the file can't be edited now. Stop the run to edit; Fire sends a
@@ -138,13 +179,14 @@ export function InputsPage() {
               realtime={realtime}
               canFire={canFire}
               onError={setError}
+              data={loaded}
               onAdd={(kind) => {
                 edit(addSource(file, newSource(kind, file.sources.map((s) => s.name))));
                 setIndex(file.sources.length);
               }}
             />
             {source ? (
-              <SourceEditor file={file} index={current} onChange={(f) => attempt(() => edit(f))} onSelect={setIndex} network={network} locked={locked} trials={file.trials !== undefined} />
+              <SourceEditor file={file} index={current} onChange={(f) => attempt(() => edit(f))} onSelect={setIndex} network={network} locked={locked} trials={file.trials !== undefined} data={loaded} />
             ) : (
               <Panel>
                 <p className="text-sm text-muted-foreground">Add a source to start: each says what to drive (its targets), how and when.</p>
@@ -165,14 +207,23 @@ export function InputsPage() {
               <Heading>Channels</Heading>
               {source?.kind === "signal" ? (
                 <ChannelPreview formula={source.formula} name={source.name} seed={seed} names={channelNames} windowMs={Math.min(source.duration ?? 1000, 1000)} />
+              ) : source?.kind === "file" && loaded.sets.has(source.data) ? (
+                <ChannelPreview
+                  formula={fileFormula(source)}
+                  name={source.name}
+                  seed={seed}
+                  names={fileChannelNames(source.channels, loaded.sets.get(source.data)!.channels.length)}
+                  windowMs={Math.min(source.duration ?? 10000, loaded.sets.get(source.data)!.durationMs || 1000, 10000)}
+                  data={loaded.sets}
+                />
               ) : (
-                <p className="text-xs text-muted-foreground">Select a signal source to see its channels over time.</p>
+                <p className="text-xs text-muted-foreground">Select a signal or file source to see its channels over time.</p>
               )}
             </Panel>
             <Panel>
               <Heading>Targets</Heading>
               {network ? (
-                <TargetsView network={network} targets={targets} />
+                <TargetsView network={network} targets={targets} channels={mapped} />
               ) : (
                 <p className="text-sm text-muted-foreground" data-testid="targets-hint">
                   Build the network (on the Run page) to see the selected source's targets.
@@ -185,3 +236,7 @@ export function InputsPage() {
     </div>
   );
 }
+
+/** Names for a file source's channels in the preview (the first `limit` or all of the file's `count`). */
+const fileChannelNames = (limit: number | undefined, count: number): string[] =>
+  Array.from({ length: Math.min(limit ?? count, count) }, (_, i) => `channel ${i + 1}`);

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { parseInputFile, type RealtimeSource } from "../src/inputFile";
-import { bandLevels, cameraChannels, channelPlan, frameChanges, lumaGrid, previewChannels, speedText, speedVerdict } from "../src/realtimeChannels";
+import type { Network } from "@spikes/client";
+import { channelTargets, type ChannelSource } from "../src/channelLayout";
+import { bandLevels, cameraChannels, frameChanges, lumaGrid, previewChannels, speedText, speedVerdict } from "../src/realtimeChannels";
+
+/** What a microphone or camera sends with `n` target neurons in a line (order layout): its channels, or the error. */
+const channelPlan = (s: RealtimeSource, n: number): { channels: number } | { error: string } => {
+  const network = { neurons: Array.from({ length: n }, (_, i) => ({ index: i, name: `n${i}`, position: [i, 0, 0] })) } as unknown as Network;
+  const r = channelTargets(s as ChannelSource, network, [...Array(n).keys()]);
+  return r.ok ? { channels: r.channels.length } : { error: r.error };
+};
 
 const source = (body: string): RealtimeSource =>
   parseInputFile(`[[source]]\nname = "s"\nneurons = { prefix = "" }\nencoding = { kind = "rate", max_hz = 1, mv = 1 }\n${body}`).sources[0] as RealtimeSource;
@@ -95,9 +104,7 @@ describe("channels and targets", () => {
     expect(channelPlan(events, 32)).toEqual({ channels: 32 });
   });
 
-  it("a sensor has a channel per target neuron, and no source reaches nothing", () => {
-    expect(channelPlan(source('kind = "sensor"'), 7)).toEqual({ channels: 7 });
-    expect(channelPlan(source('kind = "sensor"'), 0)).toEqual({ error: "sensor has no target neurons" });
+  it("no source reaches nothing", () => {
     expect(channelPlan(source('kind = "camera"'), 0)).toEqual({ error: "camera has no target neurons" });
   });
 

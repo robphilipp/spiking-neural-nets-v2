@@ -7,6 +7,7 @@ import type { ApiError } from "./generated/ApiError";
 import type { BuildSettings } from "./generated/BuildSettings";
 import type { ClientMessage } from "./generated/ClientMessage";
 import type { Cluster } from "./generated/Cluster";
+import type { DataFile } from "./generated/DataFile";
 import type { Deployment } from "./generated/Deployment";
 import type { Input } from "./generated/Input";
 import type { InputSource } from "./generated/InputSource";
@@ -284,9 +285,10 @@ export abstract class ProtocolClient {
   }
 
   /** Gives the run its inputs (an input file's sources, trials expanded into them) and its trials: once per build,
-   *  before it runs; a reset applies them again. */
-  async setInputs(session: number, sources: InputSource[], trials: Trial[] = []): Promise<void> {
-    await this.request({ type: "setInputs", session, sources, trials });
+   *  before it runs; a reset applies them again. `data`: the files (CSV or WAV, base64) the formulas' `data(…)`
+   *  looks up. */
+  async setInputs(session: number, sources: InputSource[], trials: Trial[] = [], data: DataFile[] = []): Promise<void> {
+    await this.request({ type: "setInputs", session, sources, trials, data });
   }
 
   /** The run's trials: as given with its inputs, or as recorded for a replay. */

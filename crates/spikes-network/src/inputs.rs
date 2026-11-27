@@ -173,6 +173,8 @@ pub struct SignalInput {
     pub start: SimTime,
     /// No samples after this.
     pub until: SimTime,
+    /// The data files the formula looks up.
+    pub data: spikes_signal::DataSets,
     /// Each channel's encoder (filled on start).
     pub encoders: Vec<spikes_signal::Channel>,
     /// The next sample's index.
@@ -215,7 +217,7 @@ impl Actor<SimMsg, Event> for SignalInput {
             key: self.key,
         };
         for c in 0..self.channels.len() {
-            let v = self.formula.eval(t_ms, c as u32, n, at) as f32;
+            let v = self.formula.eval_with(t_ms, c as u32, n, at, &self.data) as f32;
             let mut events: Vec<(f64, f32)> = Vec::new();
             let rng = ctx.rng();
             self.encoders[c].encode(

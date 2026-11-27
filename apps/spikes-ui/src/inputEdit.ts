@@ -105,6 +105,8 @@ export function newSource(kind: SourceKind, taken: string[]): Source {
       return { ...base, kind, period: 100, mv: 12 };
     case "signal":
       return { ...base, kind, formula: "pulse(t, 500, 100)", sample: 1, encoding: { type: "rate", maxHz: 100, mv: 12 } };
+    case "file":
+      return { ...base, kind, data: "", gain: 1, sample: 1, encoding: { type: "rate", maxHz: 100, mv: 12 } };
     case "microphone":
       return { ...base, kind, encoding: { ...REALTIME_ENCODING }, ...REALTIME_DEFAULTS };
     case "camera":
@@ -337,4 +339,30 @@ export function trialAt(trials: Array<{ number: number; condition: string; start
   const t = trials[i]!;
   if (ms < t.startMs) return i === 0 ? `starts at ${(t.startMs / 1000).toFixed(1)} s` : `gap · next ${t.number}`;
   return `${t.number} of ${trials.length}${t.condition ? ` · ${t.condition}` : ""}`;
+}
+
+// ----- a file's data files (`[[data]]`) -----
+
+/** The name for a data file at `path`: its base name without the extension (quotes and backslashes out), made unique
+ *  among `taken`. */
+export function dataName(path: string, taken: string[]): string {
+  const base = (path.split(/[\\/]/).pop() ?? path).replace(/\.[^.]*$/, "").replace(/["\\]/g, "") || "data";
+  return uniqueName(base, taken);
+}
+
+/** The file with a data file at `path` (in the project folder) added, named after it; the name. A path that's
+ *  already listed is not added again (its name is returned). */
+export function addDataRef(file: InputFile, path: string): { file: InputFile; name: string } {
+  const refs = file.data ?? [];
+  const same = refs.find((d) => d.file === path);
+  if (same) return { file, name: same.name };
+  const name = dataName(path, refs.map((d) => d.name));
+  return { file: { ...file, data: [...refs, { name, file: path }] }, name };
+}
+
+/** The file without data file `name` (its `data` goes when none is left). */
+export function removeDataRef(file: InputFile, name: string): InputFile {
+  const refs = (file.data ?? []).filter((d) => d.name !== name);
+  const { data: _, ...rest } = file;
+  return refs.length ? { ...rest, data: refs } : rest;
 }

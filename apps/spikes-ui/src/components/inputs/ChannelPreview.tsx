@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { NEVER } from "rxjs";
 import { AxisLocation, Chart, ContinuousAxis, type Datum, defaultLineStyle, ScatterPlot, type SeriesLineStyle, seriesFrom, TimeSeriesDataSource } from "stream-charts";
 import { ZOOM, ZOOM_HELP, useChartSettings } from "../../chartSettings";
+import { type DataSets } from "../../dataFile";
 import { compile, noiseKey, sample, SignalError } from "../../signal";
 import { useChartColors } from "../../theme";
 import { useWidth } from "../../hooks/useWidth";
@@ -23,6 +24,7 @@ export function ChannelPreview({
   seed,
   names,
   windowMs,
+  data,
 }: {
   formula: string;
   name: string;
@@ -30,6 +32,8 @@ export function ChannelPreview({
   /** The target neurons' names (channel i is the i-th), or null without a built network. */
   names: string[] | null;
   windowMs: number;
+  /** The data files `data(…)` looks up. */
+  data?: DataSets;
 }) {
   const colors = useChartColors();
   const { zoomResets, resetZoom } = useChartSettings();
@@ -37,7 +41,7 @@ export function ChannelPreview({
   const channels = names ? names.length : UNKNOWN_CHANNELS;
   const result = useMemo(() => {
     try {
-      const signal = compile(formula);
+      const signal = compile(formula, data);
       if (channels === 0) return { empty: true as const };
       const shown = Math.min(channels, MAX_SHOWN);
       const dt = Math.max(1, windowMs / 200);
@@ -52,7 +56,7 @@ export function ChannelPreview({
     } catch (e) {
       return { error: e instanceof SignalError ? `${e.message} (at character ${e.position + 1})` : String(e) };
     }
-  }, [formula, name, seed, names, channels, windowMs]);
+  }, [formula, name, seed, names, channels, windowMs, data]);
 
   if ("error" in result) return <p className="text-xs text-destructive">The formula has a mistake: {result.error}</p>;
   if ("empty" in result) return <p className="text-xs text-muted-foreground">No neurons match this source's targets.</p>;

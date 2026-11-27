@@ -58,6 +58,7 @@ fn signal(name: &str, formula: &str, encoding: SampleEncoding) -> InputSource {
             encoding,
             key: 0,
             duration: None,
+            data: Vec::new(),
         },
     }
 }

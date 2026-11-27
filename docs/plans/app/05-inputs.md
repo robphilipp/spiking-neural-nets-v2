@@ -396,3 +396,83 @@ Each phase: unit tests (engine and TS), e2e tests through the view, docs.
 4. Formulas: **noise and data lookups** (decision 7, §3).
 5. Sets as targets: **yes** (decision 8).
 6. Realtime sources: **several at once** (decision 9).
+
+### I5b status: data lookups, file sources, position mapping (2026-11-27)
+
+- **`data("name", t, c)`** in formulas, in Rust (`spikes-signal`: `data.rs`, `Formula::eval_with(…, &DataSets)`;
+  `eval` keeps working with no data) and in `signal.ts` (`compile(source, data)`), the same results. `t` is the
+  formula's `t` (ms from the source's start); values are linearly interpolated between samples; **0 before the first
+  sample and after the last, for a channel the file doesn't have or one that isn't a whole number, and for an unknown
+  name**; `data("name", t)` is channel 0. Values are kept as 32-bit floats. Data files, in both languages (hand-written
+  parsers, no new dependencies): **CSV** (comma, semicolon or tab, from the first line; optional header row: a first row
+  with a non-number; `#` lines and blank lines skipped; first column time, in ms unless the header's first cell is
+  `t_s` or `time_s`; the other columns are channels; strictly ascending times, equal row widths, numbers only) and
+  **WAV** (RIFF/WAVE, PCM 8 unsigned, 16, 24, 32 bit and 32/64 bit float, extensible format too, any channels, time is
+  the sample index over the header's rate, integers scaled to [−1, 1)). Errors name the file, the line and the column.
+- **Engine**: `InputSpec::Signal` carries the data files its formula uses (`data: Vec<DataFile>`, raw bytes), so
+  Reset and saved runs keep them with no other bookkeeping (a saved run records the specs, as before; its format
+  changed, which the "no compatibility" rule allows). `Session::set_inputs` parses them and checks, with the source's
+  name in the error: a missing file name, a file that doesn't read, and too few channels (`data("x", t, c)` needs one per
+  channel of the source, `data("x", t, 3)` four). The signal actor hands its `DataSets` to `eval_with`. **API**:
+  `setInputs` has `data: [{ name, base64 }]` (default empty; TS `DataFile`; `client.setInputs(session, sources, trials,
+  data)`); only the files a signal uses are kept per signal. **Message size**: the server's WebSocket (axum/tungstenite
+  defaults) takes messages up to 64 MiB, so with base64's 4/3 about 48 MB of data per run; the UI refuses more than 40
+  MB of data files in one run (`MAX_DATA_BYTES`). The Tauri bridge passes the same JSON in-process; no limit found.
+- **Input file**: `[[data]]` (`name`, `file`: a path in the project folder, no `..`, no absolute paths, names unique and
+  without quotes), `kind = "file"` (`data`, `gain`, `sample` default 1 ms, `channels` limit, `encoding`, start,
+  duration, enabled, scope like other simulated sources). `engineSources` turns a file source into a signal with the
+  formula `data("name", t, c)` (times `* gain`), one channel per data channel (limited by `channels`). A source (file or
+  signal) naming data that isn't in `[[data]]` is a read error. A WAV is **point-sampled** at the sample interval
+  (1 ms by default, not the file's rate: no filtering, so a sound above 500 Hz aliases; lower the interval to follow it).
+- **Data in projects**: `useProject.dataFiles` (path → bytes) next to `inputFiles`. Desktop: read with the fs plugin
+  (`fs:allow-read-file` added) when the folder opens; a file that is missing stays out and the source says so. "Open a
+  data file…" (desktop) picks a file inside the project folder (outside is refused: they are references); in the
+  browser it keeps the uploaded bytes in memory under the file's name. The Projects page downloads them with the other
+  files. Saving never writes data files, and they don't count as unsaved changes (only the `[[data]]` list does, as part
+  of the input file). Build loads and checks them, gives the engine the ones sources use.
+- **Position mapping** (`channelLayout.ts`, pure, with the engine unchanged: it still gets `channels: number[][]`): for
+  microphone, camera, signal and file sources, `layout = "order"` (default) | `"name"` | `"grid"` | `"axis"`:
+  - `grid` (`plane` xy|xz|yz, default xy; `grid = "CxR"`, a camera's own, a signal's or file's setting, default `1xN`):
+    the targets' bounding box in the plane is cut into C×R cells; channel (col, row), row-major, y or z increasing with the
+    row, drives every target in its cell (a single-point extent goes to the first column or row). A signal's or file's
+    grid must have as many cells as it has channels.
+  - `axis` (`x|y|z`): the extent along the axis is cut into N equal slabs, slab k is channel k (N: a microphone's bands,
+    a signal's or file's channels; a camera's cells).
+  - `name`: without `pattern`, channel i is the i-th target in natural name order (digit runs as numbers, otherwise
+    case-sensitive text), independent of the description's order; with `pattern` (a **JavaScript** regular expression,
+    evaluated in the UI) one capture group is the channel, two are column and row of the grid; numbers count from `base`
+    (default 0; 1 for `input-11`); several neurons may share a channel; a non-matching or out-of-range neuron is ignored.
+  - A signal's channel count is `channels`, else the grid's cells, else its target count. A camera's `changes` mode: on
+    and off channels both map onto the same cells' neurons (under `order` they stay different neurons, as in I4).
+  - Warnings in place (the editor and the source list): channels with no neuron, neurons ignored by a name pattern;
+    errors (an invalid regular expression, no or more than two groups, two groups without a grid, a grid whose cells don't
+    match the channels, too few targets under `order`/`name`) stop the source: the read refuses a bad pattern, the editor
+    shows it, Build and the realtime manager refuse it. Under `grid`, `axis` and `name` there is no "needs N target
+    neurons" error except for `name` without a pattern (it takes one neuron per channel). The microphone has no `grid`.
+  - The realtime manager and the engine sources use it; the old `channelPlan` is replaced by `channelTargets`.
+  - **Preview**: the Inputs page's 3D targets view colours the selected source's targets by channel (hues from red to
+    violet, the first channel a neuron drives) with a legend "channel 0 … n−1", for every layout but `order`.
+- **UI**: data files panel (Open, Remove; name, path, channels, duration, rate or errors per file), a file source editor
+  (data picker, gain, sample interval, channel limit, encoding, what the file holds, errors in place for a missing or
+  unreadable file, the channels preview chart), `LayoutFields` under signal, file, microphone and camera, a signal's
+  `channels` setting, the formula help mentions `data()`.
+- **Decisions** where the plan was silent: a data name is the file's name without its extension; one `[[data]]` list per
+  input file; `sample` is 1 ms for every file source; values are f32; a signal with `data("x", t, c)` and `layout`
+  `order` gets one channel per target (all must exist in the file, or it is refused); the data bytes are not part of the
+  "rebuild needed" check (only the `[[data]]` list is).
+- **Examples**: `test-data/projects/ring/pulse.csv` and `pulse.inputs.toml` (a file source: three channels on in turn).
+- **Tests**: Rust `data.rs` (CSV, WAV, errors, interpolation, bounds, base64), formula `data()`, `parity.rs` (CSV and WAV
+  built in the test, written with the formulas to the fixture the TS test loads), `tests/data_inputs.rs` (a signal
+  follows the data in simulated time; errors name the source; repeats exactly across seeds and shards; Reset keeps the
+  data; a saved run with data continues exactly), `connection.rs` (`setInputs` with base64 data). TS: `signal.test.ts`
+  (parity with data, lookups, parsers), `channelLayout.test.ts` (natural order, grid cells, empty cells, slabs, name layout
+  with one and two groups, base, shared channels, ignored and out-of-range counts, invalid patterns, file round trips),
+  `inputData.test.ts` (`[[data]]` and file sources read and written, path rules, `engineSources` for files, loading,
+  what is sent). e2e `data-inputs.spec.ts`: a CSV opened in the browser, a file source, build and run: the targets spike
+  in the data's pattern; unreadable data; layouts name, grid (and a finer grid's warning), axis and an invalid pattern on
+  the line-sensor sheet, with the 3D channel colouring (screenshots `test-results/layout-name.png` and `layout-grid.png`).
+- **Not done**: **`recording` sources** (replaying a recorded run's sensor inputs through `setInputs`): the engine's
+  `replay_sensor_inputs` injects events once into a ready session, and it would need the recordings folder in the session,
+  an input kind that survives Reset and saved runs, and a start offset; not small, so left out. A WAV is not resampled or
+  filtered. Data files are not watched for changes on disk. A source's data can't be a recording of the run's own output.
+

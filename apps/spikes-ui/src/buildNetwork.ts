@@ -1,5 +1,6 @@
 import type { Network, ProtocolClient } from "@spikes/client";
-import { engineSources, expandTrials, type InputFile } from "./inputFile";
+import { loadData, requestData } from "./inputData";
+import { dataNamesOf, engineSources, expandTrials, type InputFile, InputFileError } from "./inputFile";
 import { built } from "./store";
 
 /** Builds the session's network (on `nodes`, or the engine alone when empty), gives the run the input file's
@@ -8,15 +9,20 @@ import { built } from "./store";
 export async function buildNetwork(
   client: ProtocolClient,
   id: number,
-  { shards, seed, nodes, inputs, inputsKey }: { shards: number; seed: number; nodes: string[]; inputs: InputFile | null; inputsKey: string },
+  { shards, seed, nodes, inputs, inputsKey, dataFiles = {} }: { shards: number; seed: number; nodes: string[]; inputs: InputFile | null; inputsKey: string; dataFiles?: Record<string, Uint8Array> },
 ): Promise<Network> {
   await client.build(id, { shards, seed, nodes });
   const net = await client.getNetwork(id);
   if (inputs) {
     // Trials are expanded here, with the run's seed (the same file and seed give the same trials).
     const { file, trials } = expandTrials(inputs, seed);
-    const sources = engineSources(file, net);
-    if (sources.length || trials.length) await client.setInputs(id, sources, trials);
+    const loaded = loadData(inputs, dataFiles);
+    for (const s of file.sources.filter((x) => x.enabled)) {
+      const bad = dataNamesOf(s).find((n) => loaded.errors.has(n));
+      if (bad) throw new InputFileError(`input '${s.name}': ${loaded.errors.get(bad)}`);
+    }
+    const sources = engineSources(file, net, loaded.sets);
+    if (sources.length || trials.length) await client.setInputs(id, sources, trials, requestData(file, dataFiles));
   }
   built(net, inputsKey);
   return net;

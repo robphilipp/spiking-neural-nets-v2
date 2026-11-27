@@ -2,7 +2,7 @@
 
 import { join } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
-import { exists, mkdir, readDir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, readDir, readFile, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { emptyInputFile, type InputFile, parseInputFile, serializeInputFile } from "./inputFile";
 import { MIGRATED_INPUTS, newProject, parseProject, type Project, ProjectError, serializeProject } from "./project";
 
@@ -23,6 +23,8 @@ export type ReadProject =
       /** Its input files, by name. */
       inputFiles: Record<string, InputFile>;
       /** Whether the folder has project.toml (without it, the project is made from the folder and its network). */
+      /** The data files its input files refer to, by path in the folder (those that are there). */
+      dataFiles: Record<string, Uint8Array>;
       saved: boolean;
     }
   /** No project.toml, and several network descriptions: which is the project's? */
@@ -58,8 +60,14 @@ export async function readProject(folder: string, network?: string): Promise<Rea
       if (!(await exists(inputPath))) throw new ProjectError(`${PROJECT_FILE} lists the input file ${name}, but it isn't in ${folder}`);
       inputFiles[name] = parseInputFile(await readTextFile(inputPath), name);
     }
+    // Data files are read-only references; one that isn't there is left out (a source using it says so).
+    const dataFiles: Record<string, Uint8Array> = {};
+    for (const ref of Object.values(inputFiles).flatMap((f) => f.data ?? [])) {
+      const dataPath = await join(folder, ref.file);
+      if (!(ref.file in dataFiles) && (await exists(dataPath))) dataFiles[ref.file] = await readFile(dataPath);
+    }
     // A project from before input files is unsaved until its background input is written out as one.
-    return { kind: "project", project, description: await readTextFile(path), inputFiles, saved: migrated === null };
+    return { kind: "project", project, description: await readTextFile(path), inputFiles, dataFiles, saved: migrated === null };
   }
   const project = newProject(folder.split(/[\\/]/).pop() || "untitled");
   const networks = await networksIn(folder);
@@ -68,10 +76,10 @@ export async function readProject(folder: string, network?: string): Promise<Rea
     network = networks[0];
   }
   const inputFiles = Object.fromEntries(project.inputs.map((f) => [f, emptyInputFile()]));
-  if (network === undefined) return { kind: "project", project, description: "", inputFiles, saved: false };
+  if (network === undefined) return { kind: "project", project, description: "", inputFiles, dataFiles: {}, saved: false };
   if (!networks.includes(network)) throw new ProjectError(`${network} isn't in ${folder}`);
   project.network = network;
-  return { kind: "project", project, description: await readTextFile(await join(folder, network)), inputFiles, saved: false };
+  return { kind: "project", project, description: await readTextFile(await join(folder, network)), inputFiles, dataFiles: {}, saved: false };
 }
 
 /** Writes a project's settings, network description and input files into its folder (creating the folder if
@@ -88,4 +96,16 @@ export async function writeProject(
   for (const name of project.inputs) {
     await writeTextFile(await join(folder, name), serializeInputFile(inputFiles[name] ?? emptyInputFile()));
   }
+}
+
+/** Asks for a data file inside the project folder; its path relative to the folder, and its bytes. Throws a
+ *  ProjectError for a file outside it. */
+export async function pickDataFile(folder: string): Promise<{ path: string; bytes: Uint8Array } | null> {
+  const picked = await open({ directory: false, multiple: false, defaultPath: folder, title: "Open a data file (CSV or WAV) from the project folder", filters: [{ name: "Data", extensions: ["csv", "tsv", "txt", "wav"] }] });
+  if (typeof picked !== "string") return null;
+  const root = folder.replace(/[\\/]+$/, "");
+  if (!picked.startsWith(root + "/") && !picked.startsWith(root + "\\")) {
+    throw new ProjectError(`${picked} isn't inside the project folder ${root}: copy it there first (data files are references into the folder)`);
+  }
+  return { path: picked.slice(root.length + 1).replace(/\\/g, "/"), bytes: await readFile(picked) };
 }

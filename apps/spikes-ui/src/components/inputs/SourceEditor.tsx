@@ -5,9 +5,12 @@ import { Choice, Field, Heading, Panel, Row, Toggle } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { changeSource, duplicateSource, moveSource, parseTimes, removeSource, timesText } from "../../inputEdit";
 import { type InputFile, InputFileError, isRealtime, type Random, type RandomField, type Source } from "../../inputFile";
+import { type LoadedData } from "../../inputData";
 import { compile, SignalError } from "../../signal";
 import { EncodingFields } from "./EncodingFields";
 import { ParsedField, type Setting, SettingField } from "./ParsedField";
+import { FileFields } from "./FileFields";
+import { LayoutFields } from "./LayoutFields";
 import { RealtimeFields } from "./RealtimeFields";
 import { TargetsField } from "./TargetsField";
 
@@ -17,6 +20,7 @@ const KINDS: Record<Source["kind"], string> = {
   poisson: "Poisson: random events at a rate, like background input",
   periodic: "Periodic: a stimulus every period",
   signal: "Signal: a formula over time and channel, encoded as input",
+  file: "File: a data file (CSV or WAV) played in simulated time, encoded as input",
   microphone: "Microphone: the audio spectrum in log-spaced bands, live",
   camera: "Camera: a luminance grid or frame differences, live",
   sensor: "Sensor: any program streaming samples to it by name, live",
@@ -43,6 +47,7 @@ export function SourceEditor({
   network,
   locked,
   trials,
+  data,
 }: {
   file: InputFile;
   index: number;
@@ -52,6 +57,8 @@ export function SourceEditor({
   network: Network | null;
   locked: boolean;
   trials: boolean;
+  /** The input file's data files, read. */
+  data: LoadedData;
 }) {
   const s = file.sources[index]!;
   const set = (change: Partial<Source>) => onChange(changeSource(file, index, change));
@@ -62,12 +69,14 @@ export function SourceEditor({
   const formulaError = useMemo(() => {
     if (s.kind !== "signal") return null;
     try {
-      compile(formula);
+      const c = compile(formula);
+      const missing = c.dataUses.find((u) => !data.sets.has(u.name));
+      if (missing) return `data("${missing.name}", …): ${data.errors.get(missing.name) ?? `there's no data file called '${missing.name}'`}`;
       return null;
     } catch (e) {
       return e instanceof SignalError ? `${e.message} (at character ${e.position + 1})` : String(e);
     }
-  }, [s.kind, formula]);
+  }, [s.kind, formula, data]);
   const realtime = isRealtime(s);
 
   return (
@@ -170,7 +179,7 @@ export function SourceEditor({
               value={s.formula}
               onChange={(e) => set({ formula: e.target.value })}
               error={formulaError !== null}
-              help={formulaError ?? "e.g. pulse(t, 200, 50) · sin(2*pi*t/500 + c) · floor(t/100) % 7 == c % 7 · t > 300 ? 1 : 0 · rand()"}
+              help={formulaError ?? "e.g. pulse(t, 200, 50) · sin(2*pi*t/500 + c) · floor(t/100) % 7 == c % 7 · t > 300 ? 1 : 0 · rand() · data(\"name\", t, c): a data file"}
               data-testid="formula"
               spellCheck={false}
               className="[&_input]:font-mono"
@@ -190,9 +199,26 @@ export function SourceEditor({
                 onChange={(sample) => set({ sample })}
               />
               <EncodingFields encoding={s.encoding} onChange={(encoding) => set({ encoding } as Partial<Source>)} />
+              <ParsedField<number | undefined>
+                label="Channels"
+                width={110}
+                value={s.channels}
+                format={(v) => (v === undefined ? "" : String(v))}
+                parse={(text) => {
+                  if (text.trim() === "") return undefined;
+                  const n = Number(text);
+                  if (!Number.isInteger(n) || n < 1) throw new InputFileError("channels must be a whole number from 1, or empty for one per target neuron");
+                  return n;
+                }}
+                onChange={(channels) => set({ channels } as Partial<Source>)}
+                placeholder="per target"
+                data-testid="signal-channels"
+              />
             </Row>
+            <LayoutFields s={s} set={set} network={network} data={data} />
           </>
         )}
+        {s.kind === "file" && <FileFields s={s} file={file} set={set} network={network} data={data} />}
         {realtime && <RealtimeFields s={s} set={set} network={network} />}
       </fieldset>
     </Panel>

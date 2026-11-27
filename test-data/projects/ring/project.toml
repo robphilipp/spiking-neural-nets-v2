@@ -1,6 +1,6 @@
 name = "ring"
 network = "network.boo"
-inputs = ["background.inputs.toml", "wave.inputs.toml", "trials.inputs.toml"]
+inputs = ["background.inputs.toml", "wave.inputs.toml", "trials.inputs.toml", "pulse.inputs.toml"]
 selected_inputs = "background.inputs.toml"
 
 [run]

@@ -1,0 +1,12 @@
+description = "Plays pulse.csv: three channels, each on for 200 ms in turn, into the first three neurons of column 1"
+
+[[data]]
+name = "pulse"
+file = "pulse.csv"
+
+[[source]]
+name = "pulse"
+kind = "file"
+data = "pulse"
+neurons = { prefix = "hidden-10" }
+encoding = { kind = "rate", max_hz = 200, mv = 15 }
