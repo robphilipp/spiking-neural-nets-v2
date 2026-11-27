@@ -1,7 +1,7 @@
 import { RotateCcw, ZoomOut } from "lucide-react";
 import { Choice, NumberField, Row, Toggle } from "@/components/kit";
 import { Button } from "@/components/ui/button";
-import { KEEP_CHOICES, useChartSettings, ZOOM_HELP } from "../chartSettings";
+import { KEEP_CHOICES, useCadence, useChartSettings, ZOOM_HELP } from "../chartSettings";
 
 /**
  * How the live charts take in and keep data (as in stream-charts' examples): buffering (how long a chart gathers
@@ -14,7 +14,6 @@ export function ChartControls() {
   const {
     bufferMs,
     updateMs,
-    cadence,
     keepMs,
     setBufferMs,
     setUpdateMs,
@@ -25,6 +24,8 @@ export function ChartControls() {
     frozen,
     setFrozen,
   } = useChartSettings();
+  const { available } = useCadence();
+  const wanted = useChartSettings((s) => s.cadence);
   return (
     <Row data-testid="chart-controls">
       <NumberField
@@ -60,10 +61,15 @@ export function ChartControls() {
       />
       <Toggle
         label="Cadence"
-        checked={cadence}
+        checked={wanted}
         onChange={setCadence}
+        disabled={!available}
         testId="cadence"
-        title="Move the time axes on every animation frame, so the charts scroll smoothly between updates (the membrane potential chart always does)"
+        title={
+          available
+            ? "Move the time axes on every animation frame, so the charts scroll smoothly between updates"
+            : "Cadence moves the axes by the wall clock, which is the simulated time only at speed ×1: it is off at any other speed"
+        }
       />
       <Toggle
         label="Freeze charts"

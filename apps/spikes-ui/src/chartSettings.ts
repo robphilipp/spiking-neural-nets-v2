@@ -4,7 +4,7 @@
 
 import { useMemo } from "react";
 import { create } from "zustand";
-import { recall, remember, useSession } from "./store";
+import { recall, remember, useProject, useSession } from "./store";
 
 export interface ChartSettings {
   /** How long a chart gathers incoming data before drawing it (its windowing time), wall ms. */
@@ -72,13 +72,24 @@ export const ZOOM = {
 export const ZOOM_HELP = "Drag a chart to pan; hold shift and scroll to zoom.";
 
 /**
+ * Whether the charts' time axes move on every display frame (cadence). Cadence projects the stream's time from the wall
+ * clock, which is the simulated time only at speed ×1: at any other speed (or as fast as possible) the axis would run
+ * ahead of or behind the data, so it's off there, whatever the setting says, and the setting can't be changed.
+ */
+export function useCadence(): { cadence: boolean; available: boolean } {
+  const wanted = useChartSettings((s) => s.cadence);
+  const available = useProject((s) => s.project.run.speed === 1);
+  return { cadence: wanted && available, available };
+}
+
+/**
  * A live chart's time axis when it mounts: the window that ends at the current simulated time. A chart remounts when
  * its zoom is reset, the time window or cadence changes, or the network is built anew (Build, Reset: time starts
  * over at 0); starting at [0, window] would show the start of a run that has ended, since no new data comes to
  * scroll it forward. (Charts key on {@link useChartKey}, so they remount whenever this changes.)
  */
 export function useTimeDomain(windowMs: number): [number, number] {
-  const cadence = useChartSettings((s) => s.cadence);
+  const { cadence } = useCadence();
   const zoomResets = useChartSettings((s) => s.zoomResets);
   const build = useSession((s) => s.build);
   return useMemo(() => {
@@ -90,7 +101,7 @@ export function useTimeDomain(windowMs: number): [number, number] {
 
 /** A live chart's React key: it remounts (taking up {@link useTimeDomain}'s axis) when any of these change. */
 export function useChartKey(windowMs: number): string {
-  const cadence = useChartSettings((s) => s.cadence);
+  const { cadence } = useCadence();
   const zoomResets = useChartSettings((s) => s.zoomResets);
   const build = useSession((s) => s.build);
   return `${windowMs}:${cadence}:${zoomResets}:${build}`;

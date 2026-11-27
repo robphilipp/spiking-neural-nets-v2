@@ -110,3 +110,26 @@ test("inspecting another neuron keeps the traces already shown", async ({ page }
   await expect.poll(async () => Object.keys(await membraneRows(page))).toEqual(["hidden-101", "hidden-201"]);
   expect((await membraneRows(page))["hidden-101"]).toBe(before);
 });
+
+test("cadence is off, and can't be changed, at any speed but ×1; the setting is kept", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click();
+  await page.getByLabel("Open an example").click();
+  await page.getByRole("option", { name: "ring", exact: true }).click();
+  await page.getByTestId("apply").click();
+  await expect(page.getByTestId("network-status")).toHaveText("Applied");
+  await page.getByTestId("nav-run").click();
+  await page.getByTestId("build").click();
+  await expect(page.getByTestId("state")).toHaveText("ready");
+  const cadence = page.getByTestId("cadence");
+  await expect(cadence).toBeEnabled();
+  await cadence.check();
+
+  await page.getByLabel("As fast as possible").check();
+  await expect(cadence).toBeDisabled();
+  await expect(cadence).toBeChecked(); // what was chosen is kept, though not in use
+  await page.getByLabel("As fast as possible").uncheck();
+  await expect(cadence).toBeEnabled();
+  await expect(cadence).toBeChecked();
+});

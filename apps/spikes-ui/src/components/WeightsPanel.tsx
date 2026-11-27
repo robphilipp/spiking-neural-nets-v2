@@ -11,7 +11,7 @@ import {
 } from "stream-charts";
 import { Heading, Panel, Stat } from "@/components/kit";
 import type { ChartColors } from "../theme";
-import { useChartSettings, useChartKey, useTimeDomain, ZOOM } from "../chartSettings";
+import { useCadence, useChartSettings, useChartKey, useTimeDomain, ZOOM } from "../chartSettings";
 import { useSession } from "../store";
 import { useBehavior } from "../useBehavior";
 import {
@@ -196,7 +196,8 @@ export function WeightsPanel(props: {
   const view = useWeights((s) => s.view);
   const error = useWeights((s) => s.error);
   const summary = useBehavior(view?.summary);
-  const { bufferMs, updateMs, cadence, zoomResets } = useChartSettings();
+  const { bufferMs, updateMs, zoomResets } = useChartSettings();
+  const { cadence } = useCadence();
 
   if (!network.synapseCount) return null;
   const listed = network.synapses.length === network.synapseCount;

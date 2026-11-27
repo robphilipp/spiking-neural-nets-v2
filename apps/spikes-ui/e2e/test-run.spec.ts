@@ -72,12 +72,10 @@ test("a test run counts the spikes of the sources' targets and leaves the sessio
   await expect(panel.getByTestId("test-run")).toHaveText("Run test");
   expect(await cell(page, "background", "test-spikes").innerText()).toBe(String(background));
 
-  // The real session is as it was: not built, no time, no new sessions.
-  // (The shared server may be closing sessions of earlier tests meanwhile: what matters is that the test run made no
-  // new session, and this one's summary is as it was.)
+  // The real session is as it was: not built, no time. (A test run uses an engine of its own, so it makes no session;
+  // but the server is shared with tests running at the same time, which open sessions of their own, so a new session in
+  // the list proves nothing: this session's summary being unchanged does.)
   const after = await client.listSessions();
-  const known = new Set(before.map((s) => s.id));
-  expect(after.filter((s) => !known.has(s.id)).map((s) => s.id)).toEqual([]);
   expect(after.find((s) => s.id === id)).toEqual(before.find((s) => s.id === id));
   await expect(page.getByTestId("test-stale")).toHaveCount(0);
 
