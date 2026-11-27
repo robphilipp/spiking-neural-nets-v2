@@ -18,7 +18,7 @@ test("the winner-takes-all example learns from the Inputs page's signal", async 
 
   // Inputs page: one input at a time, chosen pseudo-randomly every 300 ms, as Poisson spikes at 100 Hz.
   await page.getByTestId("nav-inputs").click();
-  await page.getByLabel("Target neurons starting with").fill("in-");
+  await page.getByLabel("Target neurons", { exact: true }).fill("in-");
   await page.getByLabel("Encoding").click();
   await page.getByRole("option", { name: "rate (Poisson)" }).click();
   await page.getByLabel("Hz at 1").fill("100");

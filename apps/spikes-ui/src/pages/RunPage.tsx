@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { ClusterPanel } from "../components/ClusterPanel";
+import { NeuronMatchField } from "../components/NeuronMatchField";
 import { Inspector } from "../components/Inspector";
 import { Modulators } from "../components/Modulators";
 import { Network3D } from "../components/Network3D";
@@ -27,6 +28,7 @@ import { stopInput, useActiveInput } from "../inputStreams";
 import { ChartControls } from "../components/ChartControls";
 import { useChartSettings, useChartKey, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectLive, useLive } from "../live";
+import { describeMatch, matchNeurons, type NeuronMatch } from "../neuronMatch";
 import { useBehavior } from "../useBehavior";
 import { backgroundChanged, built, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
 import { useChartColors } from "../theme";
@@ -64,8 +66,8 @@ export function RunPage() {
   const [picked, setPicked] = useState<Neuron[]>([]);
   const [show3d, setShow3d] = useState(true);
   const tooltips = useSettings((s) => s.tooltips);
-  const [stimulus, setStimulus] = useState({ prefix: "", mv: 10 });
-  const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12, prefix: "" });
+  const [stimulus, setStimulus] = useState<{ neurons: NeuronMatch; mv: number }>({ neurons: { mode: "prefix", pattern: "" }, mv: 10 });
+  const [backgroundDraft, setBackgroundDraft] = useState(background ?? { rateHz: 5, mv: 12, neurons: { mode: "prefix", pattern: "" } as NeuronMatch });
   const [windowMs, setWindowMs] = useState(20_000);
   const timeDomain = useTimeDomain(windowMs);
   const chartKey = useChartKey(windowMs);
@@ -383,15 +385,23 @@ export function RunPage() {
         )}
         {!replay && (
           <Row>
-            <Field label="Stimulate neurons starting with" width={240} value={stimulus.prefix} onChange={(e) => setStimulus({ ...stimulus, prefix: e.target.value })} />
+            <NeuronMatchField
+              label="Stimulate neurons"
+              width={270}
+              value={stimulus.neurons}
+              onChange={(neurons) => setStimulus({ ...stimulus, neurons })}
+              neurons={network?.neurons}
+              placeholder="all"
+              testId="stimulus-neurons"
+            />
             <NumberField label="mV" width={80} value={stimulus.mv} onChange={(mv) => setStimulus({ ...stimulus, mv })} />
             <Button
               variant="outline"
               disabled={!network}
               data-testid="stimulate"
               onClick={act(async () => {
-                const targets = network!.neurons.filter((n) => n.name.startsWith(stimulus.prefix)).map((n) => n.index);
-                if (!targets.length) throw new Error(`no neuron names start with '${stimulus.prefix}'`);
+                const targets = matchNeurons(network!.neurons, stimulus.neurons).map((n) => n.index);
+                if (!targets.length) throw new Error(`no neurons have ${describeMatch(stimulus.neurons)}`);
                 await client!.stimulate(id, targets, stimulus.mv);
               })}
             >
@@ -406,7 +416,15 @@ export function RunPage() {
               testId="background"
               title="Poisson input, applied when the network is built"
             />
-            <Field label="Neurons starting with" width={170} placeholder="all" value={backgroundDraft.prefix} onChange={(e) => setBackground({ ...backgroundDraft, prefix: e.target.value })} />
+            <NeuronMatchField
+              label="Background neurons"
+              width={270}
+              value={backgroundDraft.neurons}
+              onChange={(neurons) => setBackground({ ...backgroundDraft, neurons })}
+              neurons={network?.neurons}
+              placeholder="all"
+              testId="background-neurons"
+            />
             <NumberField label="Hz per neuron" width={120} min={0.001} value={backgroundDraft.rateHz} onChange={(rateHz) => setBackground({ ...backgroundDraft, rateHz })} />
             <NumberField label="mV" width={80} value={backgroundDraft.mv} onChange={(mv) => setBackground({ ...backgroundDraft, mv })} />
           </Row>

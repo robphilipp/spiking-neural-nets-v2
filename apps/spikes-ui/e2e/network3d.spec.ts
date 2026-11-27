@@ -9,7 +9,7 @@ test("the 3D view draws the network, flashes spikes, and selects a region for th
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
-  await page.getByLabel("Neurons starting with", { exact: true }).fill("hidden-1");
+  await page.getByLabel("Background neurons", { exact: true }).fill("hidden-1");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
   await page.getByLabel("mV", { exact: true }).nth(1).fill("10");
   await page.getByTestId("background").check();

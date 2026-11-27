@@ -22,7 +22,7 @@ test("open an example, build, stimulate and run it, and watch it live", async ({
   await page.getByTestId("nav-run").click();
   await page.getByTestId("build").click();
   await expect(page.getByText("25 neurons")).toBeVisible();
-  await page.getByLabel("Stimulate neurons starting with").fill("hidden-10");
+  await page.getByLabel("Stimulate neurons", { exact: true }).fill("hidden-10");
   await page.getByTestId("stimulate").click();
   await page.getByTestId("start").click();
   await expect(page.getByTestId("state")).toHaveText("running");
@@ -124,7 +124,7 @@ test("a quiet network explains itself; background input on its inputs brings it 
   await page.getByTestId("stop").click();
 
   // Background input on the input layer, then build and run again.
-  await page.getByLabel("Neurons starting with", { exact: true }).fill("input-");
+  await page.getByLabel("Background neurons", { exact: true }).fill("input-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
   await page.getByLabel("mV", { exact: true }).nth(1).fill("6");
   await page.getByTestId("background").check();

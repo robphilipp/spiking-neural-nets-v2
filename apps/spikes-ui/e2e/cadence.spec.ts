@@ -27,7 +27,7 @@ test("with cadence on, the charts stop scrolling when the run stops or pauses, a
   await page.getByRole("option", { name: "pinned-nodes", exact: true }).click();
   await page.getByTestId("apply").click();
   await page.getByTestId("nav-run").click();
-  await page.getByLabel("Neurons starting with", { exact: true }).fill("sensors-");
+  await page.getByLabel("Background neurons", { exact: true }).fill("sensors-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("50");
   await page.getByTestId("background").check();
   await page.getByTestId("build").click();

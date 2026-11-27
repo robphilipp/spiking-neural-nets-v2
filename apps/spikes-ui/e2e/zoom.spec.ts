@@ -51,7 +51,7 @@ test("every plot pans and zooms, and Reset zoom puts them back", async ({
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
   await page
-    .getByLabel("Neurons starting with", { exact: true })
+    .getByLabel("Background neurons", { exact: true })
     .fill("input-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("40");
   await page.getByTestId("background").check();

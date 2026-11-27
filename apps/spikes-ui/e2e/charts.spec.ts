@@ -25,7 +25,7 @@ test("changing the raster's neurons keeps what it showed; chart settings apply a
   await page.getByTestId("nav-run").click();
   await page.getByTestId("build").click();
   await expect(page.getByText("25 neurons")).toBeVisible();
-  await page.getByLabel("Stimulate neurons starting with").fill("hidden-10");
+  await page.getByLabel("Stimulate neurons", { exact: true }).fill("hidden-10");
   await page.getByTestId("stimulate").click();
   await page.getByTestId("start").click();
   await expect.poll(async () => total(await rasterRows(page)), { timeout: 10_000 }).toBe(25);
@@ -97,7 +97,7 @@ test("inspecting another neuron keeps the traces already shown", async ({ page }
   const picker = page.getByTestId("inspect-picker").getByRole("combobox");
   await picker.fill("hidden-101");
   await page.getByRole("option", { name: "hidden-101", exact: true }).click();
-  await page.getByLabel("Stimulate neurons starting with").fill("hidden-10");
+  await page.getByLabel("Stimulate neurons", { exact: true }).fill("hidden-10");
   await page.getByTestId("stimulate").click();
   await page.getByTestId("start").click();
   await expect.poll(async () => (await membraneRows(page))["hidden-101"] ?? 0, { timeout: 10_000 }).toBeGreaterThan(2);

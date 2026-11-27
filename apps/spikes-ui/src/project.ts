@@ -12,9 +12,11 @@
 //   [background]         # optional: Poisson input
 //   rate_hz = 5          # per neuron
 //   mv = 12
-//   neurons = "input-"   # only neurons whose names start with this (default: all)
+//   neurons = "input-"   # only these neurons: names starting with this (default: all)
+//   match = "regex"      # optional: `neurons` is a regular expression instead ("prefix", the default)
 
 import { parse, stringify } from "smol-toml";
+import type { NeuronMatch } from "./neuronMatch";
 
 export interface RunSettings {
   seed: number;
@@ -28,8 +30,8 @@ export interface RunSettings {
 export interface Background {
   rateHz: number;
   mv: number;
-  /** Only neurons whose names start with this; empty: all. */
-  prefix: string;
+  /** Which neurons (an empty pattern: all). */
+  neurons: NeuronMatch;
 }
 
 export interface Project {
@@ -49,6 +51,11 @@ export class ProjectError extends Error {}
 const number = (value: unknown, what: string, check: (n: number) => boolean): number => {
   if (typeof value !== "number" || !check(value)) throw new ProjectError(`project.toml: ${what} isn't valid (${String(value)})`);
   return value;
+};
+
+const matchMode = (value: unknown): "regex" => {
+  if (value === "regex") return "regex";
+  throw new ProjectError(`project.toml: background.match must be "prefix" or "regex" (got ${String(value)})`);
 };
 
 /** Reads `project.toml`. */
@@ -78,7 +85,10 @@ export function parseProject(text: string): Project {
       ? {
           rateHz: number(background.rate_hz, "background.rate_hz", (n) => n > 0),
           mv: number(background.mv, "background.mv", Number.isFinite),
-          prefix: typeof background.neurons === "string" ? background.neurons : "",
+          neurons: {
+            mode: background.match === undefined || background.match === "prefix" ? "prefix" : matchMode(background.match),
+            pattern: typeof background.neurons === "string" ? background.neurons : "",
+          },
         }
       : null,
   };
@@ -91,7 +101,8 @@ export function serializeProject(p: Project): string {
   const toml: Record<string, unknown> = { name: p.name, network: p.network, run };
   if (p.background) {
     const b: Record<string, unknown> = { rate_hz: p.background.rateHz, mv: p.background.mv };
-    if (p.background.prefix) b.neurons = p.background.prefix;
+    if (p.background.neurons.pattern) b.neurons = p.background.neurons.pattern;
+    if (p.background.neurons.mode === "regex") b.match = "regex";
     toml.background = b;
   }
   return stringify(toml) + "\n";

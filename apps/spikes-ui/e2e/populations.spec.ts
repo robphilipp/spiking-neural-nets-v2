@@ -9,7 +9,7 @@ test("a network of populations and connection rules builds and runs", async ({ p
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
   await page.getByTestId("nav-run").click();
-  await page.getByLabel("Neurons starting with", { exact: true }).fill("exc-");
+  await page.getByLabel("Background neurons", { exact: true }).fill("exc-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
   await page.getByTestId("background").check();
   await page.getByTestId("build").click();

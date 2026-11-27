@@ -28,6 +28,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { useChartColors } from "../theme";
 import { useChartSettings, ZOOM, ZOOM_HELP } from "../chartSettings";
+import { NeuronMatchField } from "../components/NeuronMatchField";
+import { compileMatch, type NeuronMatch } from "../neuronMatch";
 import { useSession } from "../store";
 
 const PALETTE = [
@@ -117,7 +119,7 @@ export function InputsPage() {
   const { zoomResets, resetZoom } = useChartSettings();
   const { client } = useConnection();
   const { id, network, state, replayEndMs } = useSession();
-  const [prefix, setPrefix] = useState("input-");
+  const [match, setMatch] = useState<NeuronMatch>({ mode: "prefix", pattern: "input-" });
   const [kind, setKind] = useState<EncodingKind>("rate");
   const [a, setA] = useState(200);
   const [b, setB] = useState(6);
@@ -130,8 +132,12 @@ export function InputsPage() {
   const active = activeInput?.kind ?? null;
 
   const targets: Neuron[] = useMemo(
-    () => (network?.neurons ?? []).filter((n) => n.name.startsWith(prefix)),
-    [network, prefix],
+    () => {
+      // (An invalid regular expression picks nothing: the field says why.)
+      const compiled = compileMatch(match);
+      return "error" in compiled ? [] : (network?.neurons ?? []).filter((n) => compiled.test(n.name));
+    },
+    [network, match],
   );
   const compiled = useMemo((): { signal: Signal } | { error: string } => {
     try {
@@ -228,13 +234,10 @@ export function InputsPage() {
       <Panel>
         <Heading>Signal</Heading>
         <Row>
-          <Field
-            label="Target neurons starting with"
-            width={230}
-            value={prefix}
-            onChange={(e) => setPrefix(e.target.value)}
-            help={`${channels} channel${channels === 1 ? "" : "s"}, one per neuron`}
-          />
+          <div className="grid gap-1">
+            <NeuronMatchField label="Target neurons" width={250} value={match} onChange={setMatch} testId="target-neurons" />
+            <p className="text-xs text-muted-foreground">{`${channels} channel${channels === 1 ? "" : "s"}, one per neuron`}</p>
+          </div>
           <Choice
             label="Encoding"
             width={160}

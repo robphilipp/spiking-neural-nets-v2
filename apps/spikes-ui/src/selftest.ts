@@ -20,7 +20,7 @@ export async function selftest(): Promise<void> {
     const folder = await join(await appDataDir(), "selftest-project");
     const project = {
       ...newProject("selftest"),
-      background: { rateHz: 5, mv: 12, prefix: "" },
+      background: { rateHz: 5, mv: 12, neurons: { mode: "prefix" as const, pattern: "" } },
     };
     await writeProject(
       folder,

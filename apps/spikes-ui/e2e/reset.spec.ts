@@ -10,7 +10,7 @@ test("Reset puts the network back as built, and the next run starts from time 0"
   await page.getByRole("option", { name: "wta-learning", exact: true }).click();
   await page.getByTestId("apply").click();
   await page.getByTestId("nav-run").click();
-  await page.getByLabel("Neurons starting with", { exact: true }).fill("in-");
+  await page.getByLabel("Background neurons", { exact: true }).fill("in-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("50");
   await page.getByTestId("background").check();
   await expect(page.getByTestId("reset")).toBeDisabled();

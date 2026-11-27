@@ -22,7 +22,7 @@ test("reward learning, seen end to end: dopamine turns marked synapses into lear
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
 
   await page.getByTestId("nav-run").click();
-  await page.getByLabel("Neurons starting with", { exact: true }).fill("in-");
+  await page.getByLabel("Background neurons", { exact: true }).fill("in-");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
   await page.getByLabel("mV", { exact: true }).nth(1).fill("6");
   await page.getByTestId("background").check();
@@ -76,7 +76,7 @@ test("background input changed after building asks for a rebuild; the dopamine b
   await expect(page.getByTestId("release-dopamine")).toBeInViewport();
 
   // Switching background input on after building: Build turns into "Rebuild to apply", with a hint.
-  await page.getByLabel("Neurons starting with", { exact: true }).fill("in-");
+  await page.getByLabel("Background neurons", { exact: true }).fill("in-");
   await page.getByTestId("background").check();
   await expect(page.getByTestId("build")).toHaveText(/Rebuild to apply/);
   await expect(page.getByTestId("rebuild-hint")).toBeVisible();
