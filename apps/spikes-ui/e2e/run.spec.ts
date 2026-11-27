@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { addBackground, addPulse } from "./helpers";
 
 /** An example network (the tests run from apps/spikes-ui). */
 const example = (name: string) => join(process.cwd(), "..", "..", "test-data", "networks", name);
@@ -18,12 +19,11 @@ test("open an example, build, stimulate and run it, and watch it live", async ({
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
 
-  // Run page: build, stimulate group 1, run at real time.
-  await page.getByTestId("nav-run").click();
+  // A pulse source for group 1 (on the Inputs page); on the Run page: build, fire it, run at real time.
+  await addPulse(page, { name: "stim", neurons: "hidden-10" });
   await page.getByTestId("build").click();
   await expect(page.getByText("25 neurons")).toBeVisible();
-  await page.getByLabel("Stimulate neurons", { exact: true }).fill("hidden-10");
-  await page.getByTestId("stimulate").click();
+  await page.getByTestId("fire-stim").click();
   await page.getByTestId("start").click();
   await expect(page.getByTestId("state")).toHaveText("running");
   await expect(page.getByTestId("raster").locator("canvas")).toBeVisible();
@@ -124,10 +124,7 @@ test("a quiet network explains itself; background input on its inputs brings it 
   await page.getByTestId("stop").click();
 
   // Background input on the input layer, then build and run again.
-  await page.getByTestId("background").check();
-  await page.getByLabel("Background neurons", { exact: true }).fill("input-");
-  await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
-  await page.getByLabel("mV", { exact: true }).nth(1).fill("6");
+  await addBackground(page, { neurons: "input-", hz: 20, mv: 6 });
   await page.getByTestId("build").click();
   await page.getByTestId("start").click();
   await expect(page.getByTestId("timing")).toContainText(/Spikes\s*[1-9][\d,]*\/s/, { timeout: 5000 });
@@ -144,9 +141,8 @@ test("number fields can be emptied and retyped", async ({ page }) => {
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
-  await page.getByTestId("nav-run").click();
-
-  await page.getByTestId("background").check();
+  await page.getByTestId("nav-inputs").click();
+  await page.getByTestId("add-poisson").click();
   const rate = page.getByLabel("Hz per neuron", { exact: true });
   await rate.click();
   await rate.press("ControlOrMeta+a");
@@ -158,11 +154,18 @@ test("number fields can be emptied and retyped", async ({ page }) => {
   await expect(rate).not.toHaveAttribute("aria-invalid");
 
   // Emptied and left: the last valid value comes back.
+  await rate.press("ControlOrMeta+a");
+  await rate.press("Backspace");
+  await expect(rate).toHaveValue("");
+  await page.getByLabel("Description").click();
+  await expect(rate).toHaveValue("0.5");
+
+  // The same on the Run page.
+  await page.getByTestId("nav-run").click();
   const shards = page.getByLabel("Shards", { exact: true });
   await shards.fill("3");
   await shards.fill("");
   await expect(shards).toHaveValue("");
-  await rate.click();
+  await page.getByLabel("Seed", { exact: true }).click();
   await expect(shards).toHaveValue("3");
-  await expect(rate).toHaveValue("0.5");
 });

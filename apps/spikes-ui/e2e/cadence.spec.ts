@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { addBackground } from "./helpers";
 
 const look = async (chart: Locator) => (await chart.screenshot({ animations: "disabled" })).toString("base64");
 
@@ -26,10 +27,7 @@ test("with cadence on, the charts stop scrolling when the run stops or pauses, a
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "pinned-nodes", exact: true }).click();
   await page.getByTestId("apply").click();
-  await page.getByTestId("nav-run").click();
-  await page.getByTestId("background").check();
-  await page.getByLabel("Background neurons", { exact: true }).fill("sensors-");
-  await page.getByLabel("Hz per neuron", { exact: true }).fill("50");
+  await addBackground(page, { neurons: "sensors-", hz: 50 });
   await page.getByTestId("build").click();
   await expect(page.getByText("220 neurons")).toBeVisible();
   await page.getByTestId("cadence").check();

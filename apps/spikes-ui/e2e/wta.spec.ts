@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { WebSocketClient } from "@spikes/client";
 
 // The settings given with the wta-learning example: they train out-1 to follow in-1 and out-2 in-2.
-test("the winner-takes-all example learns from the Inputs page's signal", async ({ page, baseURL }) => {
+test("the winner-takes-all example learns from a signal source", async ({ page, baseURL }) => {
   test.setTimeout(90_000);
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
@@ -11,22 +11,25 @@ test("the winner-takes-all example learns from the Inputs page's signal", async 
   await page.getByRole("option", { name: "wta-learning", exact: true }).click();
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
+
+  // Inputs page: a signal source: one input at a time, chosen pseudo-randomly every 300 ms, as Poisson spikes at 100 Hz,
+  // for the whole 60 s run (it's in the input file, so Build gives it to the run).
+  await page.getByTestId("nav-inputs").click();
+  await page.getByTestId("add-signal").click();
+  const editor = page.getByTestId("source-editor");
+  await page.getByLabel("Target neurons", { exact: true }).fill("in-");
+  await editor.getByLabel("Encoding").click();
+  await page.getByRole("option", { name: "rate (Poisson)" }).click();
+  await editor.getByLabel("Hz at 1").fill("100");
+  await editor.getByLabel("mV per event").fill("10");
+  await page.getByTestId("formula").fill("floor(abs(sin(floor(t/300) * 12.9898) * 43758.5453)) % n == c");
+  await page.getByLabel("Duration").fill("60 s");
+  await expect(page.getByTestId("preview").locator("canvas")).toBeVisible();
+
   await page.getByTestId("nav-run").click();
   await page.getByTestId("build").click();
   await expect(page.getByText("4 neurons")).toBeVisible();
   const session = Number(/session (\d+)/.exec(await page.getByTestId("session-picker").innerText())![1]);
-
-  // Inputs page: one input at a time, chosen pseudo-randomly every 300 ms, as Poisson spikes at 100 Hz.
-  await page.getByTestId("nav-inputs").click();
-  await page.getByLabel("Target neurons", { exact: true }).fill("in-");
-  await page.getByLabel("Encoding").click();
-  await page.getByRole("option", { name: "rate (Poisson)" }).click();
-  await page.getByLabel("Hz at 1").fill("100");
-  await page.getByLabel("mV per event").fill("10");
-  await page.getByTestId("formula").fill("floor(abs(sin(floor(t/300) * 12.9898) * 43758.5453)) % n == c");
-  await page.getByLabel("Seconds").fill("60");
-  await page.getByTestId("inject").click();
-  await expect(page.getByText(/Injected 60 s of the signal into 2 neurons/)).toBeVisible();
 
   // Run page: as fast as possible, for 60 s.
   await page.getByTestId("nav-run").click();

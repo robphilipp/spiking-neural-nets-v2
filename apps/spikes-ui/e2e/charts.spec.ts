@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { addPulse } from "./helpers";
 
 /** Spikes in the raster's data source, per row. */
 const rasterRows = (page: Page) =>
@@ -22,11 +23,10 @@ test("changing the raster's neurons keeps what it showed; chart settings apply a
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
 
   // A run in which each of the ring's 25 neurons spikes once.
-  await page.getByTestId("nav-run").click();
+  await addPulse(page, { name: "stim", neurons: "hidden-10" });
   await page.getByTestId("build").click();
   await expect(page.getByText("25 neurons")).toBeVisible();
-  await page.getByLabel("Stimulate neurons", { exact: true }).fill("hidden-10");
-  await page.getByTestId("stimulate").click();
+  await page.getByTestId("fire-stim").click();
   await page.getByTestId("start").click();
   await expect.poll(async () => total(await rasterRows(page)), { timeout: 10_000 }).toBe(25);
   await page.getByTestId("stop").click();
@@ -90,15 +90,14 @@ test("inspecting another neuron keeps the traces already shown", async ({ page }
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
-  await page.getByTestId("nav-run").click();
+  await addPulse(page, { name: "stim", neurons: "hidden-10" });
   await page.getByTestId("build").click();
   await expect(page.getByText("25 neurons")).toBeVisible();
 
   const picker = page.getByTestId("inspect-picker").getByRole("combobox");
   await picker.fill("hidden-101");
   await page.getByRole("option", { name: "hidden-101", exact: true }).click();
-  await page.getByLabel("Stimulate neurons", { exact: true }).fill("hidden-10");
-  await page.getByTestId("stimulate").click();
+  await page.getByTestId("fire-stim").click();
   await page.getByTestId("start").click();
   await expect.poll(async () => (await membraneRows(page))["hidden-101"] ?? 0, { timeout: 10_000 }).toBeGreaterThan(2);
   await page.getByTestId("stop").click();

@@ -4,6 +4,7 @@
 
 import type { Network, NetworkPreview, SourceError, State as SessionState } from "@spikes/client";
 import { create } from "zustand";
+import { addFile, deleteFile, duplicateFile, type FileSet, renameFile } from "./inputEdit";
 import { emptyInputFile, type InputFile } from "./inputFile";
 import { DEFAULT_RUN, newProject, type Project, type RunSettings } from "./project";
 import type { ThemeChoice } from "./theme";
@@ -144,6 +145,38 @@ export function selectedInputs(s: ProjectState): { name: string; file: InputFile
   return name === null ? null : { name, file: s.inputFiles[name] ?? emptyInputFile() };
 }
 
+const fileSetOf = (s: ProjectState): FileSet => ({ names: s.project.inputs, files: s.inputFiles, selected: s.project.selectedInputs });
+
+/** Applies a change to the project's input files (and which is selected) as one update. */
+function filesChanged(set: FileSet) {
+  useProject.setState((s) => ({ project: { ...s.project, inputs: set.names, selectedInputs: set.selected }, inputFiles: set.files }));
+}
+
+/** A new empty input file, selected; its name. */
+export function inputFileAdded(label?: string): string {
+  const { set, name } = addFile(fileSetOf(useProject.getState()), label);
+  filesChanged(set);
+  return name;
+}
+
+/** A copy of an input file, selected; its name. */
+export function inputFileDuplicated(name: string): string {
+  const { set, name: copy } = duplicateFile(fileSetOf(useProject.getState()), name);
+  filesChanged(set);
+  return copy;
+}
+
+/** An input file renamed (throws an InputFileError for an empty or taken name); its new file name. */
+export function inputFileRenamed(name: string, label: string): string {
+  const { set, name: next } = renameFile(fileSetOf(useProject.getState()), name, label);
+  filesChanged(set);
+  return next;
+}
+
+export function inputFileDeleted(name: string) {
+  filesChanged(deleteFile(fileSetOf(useProject.getState()), name));
+}
+
 export function projectRenamed(name: string) {
   useProject.setState((s) => ({ project: { ...s.project, name } }));
 }
@@ -177,6 +210,8 @@ export interface CurrentSession {
   network: Network | null;
   /** A replay: the recording's last event time; null for a live session. */
   replayEndMs: number | null;
+  /** The input file (name and contents, as JSON) the network was built with; null for a session opened as it was. */
+  builtInputs: string | null;
   /** Counts builds (and sessions opened): live views keep their data until this or the session changes (adding or
    *  pruning connections changes the network, but not this). */
   build: number;
@@ -194,6 +229,7 @@ const initialSession: CurrentSession = {
   simMs: 0,
   network: null,
   replayEndMs: null,
+  builtInputs: null,
   build: 0,
 };
 
@@ -226,9 +262,10 @@ export function simTime(simMs: number) {
   useSession.setState({ simMs });
 }
 
-/** A network was built (or reset to as built): its run starts at time 0. */
-export function built(network: Network) {
-  useSession.setState({ network, state: "ready", simMs: 0, build: ++builds });
+/** A network was built (or reset to as built): its run starts at time 0. `inputs`: the input file it was given (a
+ *  reset keeps what the build had). */
+export function built(network: Network, inputs?: string | null) {
+  useSession.setState((s) => ({ network, state: "ready", simMs: 0, build: ++builds, builtInputs: inputs === undefined ? s.builtInputs : inputs }));
 }
 
 /** Connections were added or pruned (the run state doesn't change). */

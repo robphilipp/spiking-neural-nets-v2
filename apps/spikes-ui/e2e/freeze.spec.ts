@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { addBackground } from "./helpers";
 
 const look = async (chart: Locator) => (await chart.screenshot({ animations: "disabled" })).toString("base64");
 const CHARTS = ["raster", "rate", "weight-trend"];
@@ -13,10 +14,7 @@ test("frozen charts hold still while the run goes on, and catch up when unfrozen
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "wta-learning", exact: true }).click();
   await page.getByTestId("apply").click();
-  await page.getByTestId("nav-run").click();
-  await page.getByTestId("background").check();
-  await page.getByLabel("Background neurons", { exact: true }).fill("in-");
-  await page.getByLabel("Hz per neuron", { exact: true }).fill("50");
+  await addBackground(page, { neurons: "in-", hz: 50 });
   await page.getByTestId("build").click();
   await expect(page.getByTestId("state")).toHaveText("ready");
   await page.getByLabel("Time window").click();

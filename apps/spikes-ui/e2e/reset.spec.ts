@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { WebSocketClient } from "@spikes/client";
+import { addBackground } from "./helpers";
 
 test("Reset puts the network back as built, and the next run starts from time 0", async ({ page, baseURL }) => {
   test.setTimeout(90_000);
@@ -9,10 +10,7 @@ test("Reset puts the network back as built, and the next run starts from time 0"
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "wta-learning", exact: true }).click();
   await page.getByTestId("apply").click();
-  await page.getByTestId("nav-run").click();
-  await page.getByTestId("background").check();
-  await page.getByLabel("Background neurons", { exact: true }).fill("in-");
-  await page.getByLabel("Hz per neuron", { exact: true }).fill("50");
+  await addBackground(page, { neurons: "in-", hz: 50 });
   await expect(page.getByTestId("reset")).toBeDisabled();
   await page.getByTestId("build").click();
   await expect(page.getByTestId("state")).toHaveText("ready");

@@ -132,7 +132,7 @@ export function formatTime(ms: number): string {
 }
 
 /** "uniform(1 s, 2 s)" or "normal(10, 2)" (times or plain numbers): a random value; otherwise null. */
-function parseRandom(value: unknown, time: boolean, what: string): Random | null {
+export function parseRandom(value: unknown, time: boolean, what: string): Random | null {
   if (typeof value !== "string") return null;
   const m = /^\s*(uniform|normal)\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)\s*$/.exec(value);
   if (!m) return null;
@@ -151,9 +151,9 @@ function parseRandom(value: unknown, time: boolean, what: string): Random | null
   return { normal: [a, b] };
 }
 
-const meanOf = (r: Random) => ("uniform" in r ? (r.uniform[0] + r.uniform[1]) / 2 : r.normal[0]);
+export const meanOf = (r: Random) => ("uniform" in r ? (r.uniform[0] + r.uniform[1]) / 2 : r.normal[0]);
 
-function formatRandom(r: Random, time: boolean): string {
+export function formatRandom(r: Random, time: boolean): string {
   const f = (x: number) => (time ? formatTime(x) : String(x));
   return "uniform" in r ? `uniform(${f(r.uniform[0])}, ${f(r.uniform[1])})` : `normal(${f(r.normal[0])}, ${f(r.normal[1])})`;
 }

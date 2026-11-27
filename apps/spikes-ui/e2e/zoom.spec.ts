@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { WebSocketClient } from "@spikes/client";
+import { addBackground } from "./helpers";
 
 /** The weight histogram's axis labels (it is SVG). */
 async function ticks(chart: Locator): Promise<string> {
@@ -49,12 +50,7 @@ test("every plot pans and zooms, and Reset zoom puts them back", async ({
     .click();
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
-  await page.getByTestId("nav-run").click();
-  await page.getByTestId("background").check();
-  await page
-    .getByLabel("Background neurons", { exact: true })
-    .fill("input-");
-  await page.getByLabel("Hz per neuron", { exact: true }).fill("40");
+  await addBackground(page, { neurons: "input-", hz: 40 });
   await page.getByTestId("build").click();
   await expect(page.getByText("69 neurons")).toBeVisible();
   await page.getByLabel("Run for (s)").fill("25");
@@ -133,6 +129,7 @@ test("every plot pans and zooms, and Reset zoom puts them back", async ({
 
   // And the Inputs page's preview.
   await page.getByTestId("nav-inputs").click();
+  await page.getByTestId("add-signal").click();
   const preview = page.getByTestId("preview");
   await expect(preview.locator("canvas").first()).toBeVisible();
   await page.waitForTimeout(300);

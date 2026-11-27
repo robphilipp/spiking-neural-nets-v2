@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { addBackground } from "./helpers";
 
 test("the weights panel follows learning across the whole network", async ({ page }) => {
   await page.goto("/");
@@ -8,10 +9,7 @@ test("the weights panel follows learning across the whole network", async ({ pag
   await page.getByRole("option", { name: "line-sensor-layers-wta", exact: true }).click();
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
-  await page.getByTestId("nav-run").click();
-  await page.getByTestId("background").check();
-  await page.getByLabel("Background neurons", { exact: true }).fill("input-");
-  await page.getByLabel("Hz per neuron", { exact: true }).fill("40");
+  await addBackground(page, { neurons: "input-", hz: 40 });
   await page.getByTestId("build").click();
   await expect(page.getByText("69 neurons")).toBeVisible();
 

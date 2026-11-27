@@ -22,7 +22,6 @@ test("an input file's trials run, show on the Run page, and reach the engine", a
   await page.getByTestId("nav-run").click();
   await expect(page.getByLabel("Input file")).toHaveText("trials");
   await expect(page.getByTestId("input-summary")).toHaveText("3 of 3 sources on");
-  await expect(page.getByTestId("background")).toBeChecked(); // the file has a background source
   await page.getByTestId("build").click();
   await expect(page.getByTestId("state")).toHaveText("ready");
   const trial = page.getByTestId("trial");

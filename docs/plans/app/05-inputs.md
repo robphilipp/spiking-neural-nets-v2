@@ -1,6 +1,6 @@
 # 05 Inputs: input files, simulated and realtime sources, the Inputs view
 
-Status: **reviewed**, 2026-11-27 (decisions below; the open questions answered). **I1 and I2 done** (2026-11-27). Replaces today's three ways of giving a network input (the Run page's
+Status: **reviewed**, 2026-11-27 (decisions below; the open questions answered). **I1, I2 and I3 done** (2026-11-27). Replaces today's three ways of giving a network input (the Run page's
 **Stimulate** and **Background input**, and the Inputs page's designed signal and microphone) with one model and
 one view.
 
@@ -291,6 +291,62 @@ Each phase: unit tests (engine and TS), e2e tests through the view, docs.
   trials, done at the end).
 - **Not done**: trial starts aren't marked on the charts (the charts have no markers yet; the Run page shows the
   current trial instead).
+
+### I3 status: done (2026-11-27)
+
+- **The Inputs page** (`pages/InputsPage.tsx`, parts in `components/inputs/`) replaces the old page; from top to bottom:
+  - **Input files**: a selector (the project's files, and "none"; the same `selected_inputs` the Run page uses, so
+    the file edited is the file runs get), a file name (renamed on Enter or leaving the field; a taken or empty name
+    says why), New, Duplicate, Delete (asks first) and the description. The pure rules (free names, copies,
+    renames that keep the selection, what is selected after a delete) are in `inputEdit.ts`.
+  - **Sources**: a list (kind, name, targets with the number of neurons they match in the built network, schedule,
+    "trial" when it runs in trials) with Add buttons for every kind, and the editor of the selected source: name,
+    enabled, scope (when the file has trials), targets (prefix or regex through `NeuronMatchField`; or one of the
+    built network's sets), start, duration, and by kind the pulse times and mV, Hz per neuron and mV, period and mV,
+    the signal's formula (errors in place, with the character), sample interval and encoding; realtime kinds show
+    their encoding and a note that they don't run yet. Move up and down, duplicate and remove are in the editor's
+    header. A source's start, duration, mV, Hz and period take the file's notation, so "500 ms", "1 s" and also
+    `uniform(500 ms, 1 s)` or `normal(10, 2)` (kept as the random settings of §2.1).
+  - **Trials**: on or off, count, length, gap (fixed or random), first trial, order (with 2 or more conditions) and
+    the conditions (a name and which trial sources are on in it). Off, trial sources become run sources, because a
+    file without `[trials]` can't have trial sources.
+  - **Preview**: a **timeline** (a row per source: bars for when it is on, ticks for pulses, the trials numbered above
+    and marked across the rows, the run's current time as a red line; to the run's duration if the project has one,
+    else to the end of what is scheduled; the trials are drawn with the run's seed, as `expandTrials` gives them to
+    the run); the selected signal's **channels** over time (the old page's chart; noise keyed as the engine keys it);
+    the selected source's **targets in 3D** (`Network3D` with the targets coloured), or "build the network to see the
+    selected source's targets".
+  - **Locked while a run is open** (running or paused): every editor is read-only (a `<fieldset disabled>`), with a
+    note. Then each source row shows its **state** (scheduled, on, done; "off", "manual" for a pulse source without
+    times, "not run yet" for realtime), the current **trial** and condition, and a **Fire** button on run-scope pulse
+    sources. Fire is enabled when the network is built with the file as it is now (the session remembers which file,
+    as JSON, `builtInputs`, so the Run page's rebuild hint and Fire agree). A trial-scope pulse source has no Fire:
+    the engine knows it only as one source per trial.
+  - **Realtime (until I4)**: the old page's microphone and "Stream live" (a designed signal streamed by the wall clock
+    through the sensor protocol) kept as a section at the bottom, from the old code (`RealtimePanel.tsx`,
+    `inputStreams.ts`). The old "Inject before running" is gone: a signal source in the file does that, in simulated
+    time and reproducibly.
+- **The Run page** keeps the **Input file** selector with its summary, the rebuild hint and the Trial stat; the
+  Stimulate and Background rows are replaced by a **Fire** button per run-scope pulse source of the file and an
+  **Edit inputs** button to the Inputs page. (The Background switch is a Poisson source named `background` on the
+  Inputs page now. `backgroundOf` and `withBackground` in `inputFile.ts` are no longer used by the app.)
+- **Decisions** where the plan was silent: the file being edited is the selected one (no separate "current file");
+  New makes `inputs-2` (and `-3`, …), Duplicate `<name>-copy`; a new source gets all neurons as targets (an empty
+  prefix) so it works as soon as it's added; adding a source selects it; a pulse source with no times is a manual-only
+  one (Fire); a signal's channel preview shows the first second of the source (its own `t`, from its start) and,
+  with no built network, assumes 4 channels; the timeline is made from the expanded file, so what it shows is what
+  Build gives the run.
+- **Tests**: vitest `inputEdit.test.ts` (file new, duplicate, rename, delete; sources: new, change with unique names
+  and condition renames, remove, duplicate, move; trials on and off; what can be fired; settings as typed;
+  schedule text; a source's state at a time, with trials; the timeline's layout, clipping, seeds and ticks;
+  "where the run is among its trials"); e2e `inputs-view.spec.ts` (files; a Poisson, a pulse and a signal source, the
+  timeline and channel preview, trials, build, run, locked editors, the sources' states, targets in 3D; Fire from the
+  Run page); the e2e suite that used the Run page's Background and Stimulate controls (19 files) now uses
+  `e2e/helpers.ts` (`addBackground`, `addPulse`) and the Fire buttons; `wta.spec.ts` and `inputs.spec.ts` use signal
+  sources instead of "Inject".
+- **Not done**: the test run (I5); position mapping of channels (I5); a random setting can't be edited for a
+  source's `at` times; `file` sources; the rate preview (event rate per channel, §4); realtime sources in the file
+  (I4). No marking of trials on the Run page's charts (as in I2).
 
 ## 6. Questions answered (2026-11-27)
 
