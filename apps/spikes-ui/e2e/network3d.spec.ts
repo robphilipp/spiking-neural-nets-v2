@@ -137,8 +137,28 @@ test("the 3D view keeps its rotation, position and zoom when leaving the page an
     });
   const fresh = await where();
 
-  // Orbit (drag), pan (right-drag) and zoom (scroll).
+  // Scrolling alone leaves the view as it is (it scrolls the page); shift-scroll zooms: neurons spread apart.
   const b = (await view.boundingBox())!;
+  const spread = (p: Array<{ x: number; y: number }>) => Math.hypot(p[0]!.x - p[2]!.x, p[0]!.y - p[2]!.y);
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+  await page.mouse.wheel(0, -300);
+  await page.waitForTimeout(200);
+  expect(await where()).toEqual(fresh);
+  await page.keyboard.down("Shift");
+  await page.mouse.wheel(0, -300);
+  await page.keyboard.up("Shift");
+  await page.waitForTimeout(200);
+  const zoomed = spread(await where());
+  expect(zoomed).toBeGreaterThan(spread(fresh) * 1.2);
+  // Ctrl-scroll (and a trackpad pinch, which arrives as one) zooms too: back out.
+  await page.keyboard.down("Control");
+  await page.mouse.wheel(0, 200);
+  await page.keyboard.up("Control");
+  await page.waitForTimeout(200);
+  expect(spread(await where())).toBeLessThan(zoomed * 0.8);
+  await expect(view.locator("..").getByText(/shift- or ctrl-scroll \(or pinch\) to zoom/)).toBeVisible();
+
+  // Orbit (drag), pan (right-drag) and zoom (shift-scroll).
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
   await page.mouse.down();
   await page.mouse.move(b.x + b.width / 2 + 120, b.y + b.height / 2 + 40, { steps: 8 });
@@ -146,7 +166,9 @@ test("the 3D view keeps its rotation, position and zoom when leaving the page an
   await page.mouse.down({ button: "right" });
   await page.mouse.move(b.x + b.width / 2 + 60, b.y + b.height / 2 + 80, { steps: 8 });
   await page.mouse.up({ button: "right" });
+  await page.keyboard.down("Shift");
   await page.mouse.wheel(0, -300);
+  await page.keyboard.up("Shift");
   await page.waitForTimeout(300);
   const moved = await where();
   expect(moved).not.toEqual(fresh);

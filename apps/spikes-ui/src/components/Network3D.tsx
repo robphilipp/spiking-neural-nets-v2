@@ -282,6 +282,25 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
     camera.position.copy(centre).add(new THREE.Vector3(0, -size * 0.2, size * 1.4));
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(centre);
+    // Zoom is shift + scroll (as on the charts) or ctrl + scroll, which is also how a trackpad pinch arrives; scrolling
+    // alone scrolls the page. OrbitControls' own wheel zoom is off; this moves the camera toward or away from the
+    // target. (With shift held, macOS turns a vertical scroll into a horizontal one: either delta counts.)
+    controls.enableZoom = false;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.shiftKey && !e.ctrlKey) return;
+      const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+      if (delta === 0) return;
+      e.preventDefault(); // (and ctrl + scroll doesn't zoom the page)
+      // A pinch comes as many small deltas: more zoom per unit than a scroll wheel's.
+      const per = e.ctrlKey ? 100 : 300;
+      const scale = Math.exp(Math.max(-1, Math.min(1, delta / per))); // > 1: away, < 1: closer
+      const offset = camera.position.clone().sub(controls.target).multiplyScalar(scale);
+      const distance = Math.min(Math.max(offset.length(), camera.near * 2), camera.far / 2);
+      camera.position.copy(controls.target).add(offset.setLength(distance));
+      controls.update();
+      save();
+    };
+    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
     // Where this view was left, if it was looking at a network of the same extent.
     const fit = fitOf(centre, size);
     const saved = viewKey ? savedViews.get(viewKey) : undefined;
@@ -402,6 +421,7 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
     return () => {
       cancelAnimationFrame(frame);
       save();
+      renderer.domElement.removeEventListener("wheel", onWheel);
       controls.dispose();
       neurons.dispose();
       lines.geometry.dispose();
@@ -749,7 +769,7 @@ export function Network3D({ network, frames, width, height, selected, sensors = 
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        {tooltips ? (queryState ? "Hover a neuron for its state, drag" : "Hover a neuron for details, drag") : "Drag"} to orbit, scroll to zoom,{" "}
+        {tooltips ? (queryState ? "Hover a neuron for its state, drag" : "Hover a neuron for details, drag") : "Drag"} to orbit, shift- or ctrl-scroll (or pinch) to zoom,{" "}
         {pickHint ?? "click a neuron to inspect it, shift-drag to select a region for the raster."}
         {sensors.length > 0 && " Green diamonds are sensors, with lines to the neurons they drive; they light up while their data flows."}
       </p>
