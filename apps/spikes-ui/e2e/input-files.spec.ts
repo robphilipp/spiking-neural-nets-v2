@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { WebSocketClient } from "@spikes/client";
 
-test("the Run page's background input is a source of the project's input file", async ({ page }) => {
+test("the Inputs page edits the project's input file; the Run page uses it", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
   await page.getByTestId("nav-network").click();
@@ -15,18 +15,22 @@ test("the Run page's background input is a source of the project's input file", 
   // A new project has one input file, selected, empty.
   await expect(page.getByLabel("Input file")).toHaveText("inputs");
   await expect(page.getByTestId("input-summary")).toHaveText("0 of 0 sources on");
-  // Background input off: its settings are hidden. On: they show, and it's a source of the file.
-  await expect(page.getByLabel("Background neurons", { exact: true })).toHaveCount(0);
-  await page.getByTestId("background").check();
-  await expect(page.getByTestId("input-summary")).toHaveText("1 of 1 source on");
-  await page.getByLabel("Background neurons", { exact: true }).fill("hidden-1");
+  // A Poisson source added on the Inputs page is a source of the file.
+  await page.getByTestId("edit-inputs").click();
+  await page.getByTestId("add-poisson").click();
+  await page.getByLabel("Name", { exact: true }).fill("background");
+  await page.getByLabel("Target neurons", { exact: true }).fill("hidden-1");
   await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
-  await page.screenshot({ path: "test-results/run-inputs.png", clip: { x: 180, y: 140, width: 1220, height: 330 } });
+  await page.getByTestId("nav-run").click();
+  await expect(page.getByTestId("input-summary")).toHaveText("1 of 1 source on");
+  await page.screenshot({ path: "test-results/run-inputs.png", clip: { x: 180, y: 60, width: 1220, height: 400 } });
   await page.getByTestId("build").click();
   await expect(page.getByTestId("state")).toHaveText("ready");
   await expect(page.getByTestId("rebuild-hint")).toHaveCount(0);
   // Changing the input file asks for a rebuild.
+  await page.getByTestId("nav-inputs").click();
   await page.getByLabel("Hz per neuron", { exact: true }).fill("30");
+  await page.getByTestId("nav-run").click();
   await expect(page.getByTestId("rebuild-hint")).toBeVisible();
 
   // The file, as the project saves it.

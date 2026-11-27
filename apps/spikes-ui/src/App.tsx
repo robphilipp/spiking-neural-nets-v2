@@ -111,7 +111,7 @@ export function App() {
               <ProjectsPage onOpened={() => setPage("network")} />
             )}
             {page === "network" && <NetworkPage onRun={() => setPage("run")} />}
-            {page === "run" && <RunPage />}
+            {page === "run" && <RunPage onInputs={() => setPage("inputs")} />}
             {page === "deployment" && <DeploymentPage />}
             {page === "inputs" && <InputsPage />}
             {page === "recordings" && (

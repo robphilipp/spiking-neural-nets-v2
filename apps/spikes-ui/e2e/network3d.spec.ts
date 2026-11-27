@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { addBackground } from "./helpers";
 
 test("the 3D view draws the network, flashes spikes, and selects a region for the raster", async ({ page }) => {
   await page.goto("/");
@@ -8,11 +9,7 @@ test("the 3D view draws the network, flashes spikes, and selects a region for th
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
-  await page.getByTestId("nav-run").click();
-  await page.getByTestId("background").check();
-  await page.getByLabel("Background neurons", { exact: true }).fill("hidden-1");
-  await page.getByLabel("Hz per neuron", { exact: true }).fill("20");
-  await page.getByLabel("mV", { exact: true }).nth(1).fill("10");
+  await addBackground(page, { neurons: "hidden-1", hz: 20, mv: 10 });
   await page.getByTestId("build").click();
   await expect(page.getByText("25 neurons")).toBeVisible();
 

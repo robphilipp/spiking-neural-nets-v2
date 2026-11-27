@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { addBackground } from "./helpers";
 
 async function open(page: Page, example: string, nodes: string) {
   await page.goto("/");
@@ -53,10 +54,7 @@ test("the Deployment page shows the hosts, how populations spread over shards, a
 test("on a cluster, the Deployment page lists every node, where each population runs, and the traffic", async ({ page }) => {
   test.setTimeout(120_000);
   await open(page, "pinned-nodes", "127.0.0.1:17091, edge=127.0.0.1:17092");
-  await page.getByTestId("nav-run").click();
-  await page.getByTestId("background").check();
-  await page.getByLabel("Background neurons", { exact: true }).fill("sensors-");
-  await page.getByLabel("Hz per neuron", { exact: true }).fill("50");
+  await addBackground(page, { neurons: "sensors-", hz: 50 });
   await page.getByTestId("build").click();
   await expect(page.getByText("220 neurons")).toBeVisible({ timeout: 20_000 });
   await page.getByLabel("As fast as possible").check();

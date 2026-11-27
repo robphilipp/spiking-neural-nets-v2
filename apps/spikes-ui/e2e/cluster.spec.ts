@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { WebSocketClient } from "@spikes/client";
+import { addBackground } from "./helpers";
 
 /** Builds the line-sensor network with background input; returns the spike count after a 1 s run. */
 async function runLineSensor(page: Page, baseURL: string, nodes: string): Promise<number> {
@@ -13,11 +14,8 @@ async function runLineSensor(page: Page, baseURL: string, nodes: string): Promis
   await page.getByRole("option", { name: "line-sensor-layers-wta", exact: true }).click();
   await page.getByTestId("apply").click();
   await expect(page.getByTestId("network-status")).toHaveText("Applied");
-  await page.getByTestId("nav-run").click();
+  await addBackground(page, { neurons: "input-", hz: 100 });
   await page.getByLabel("Shards").fill("2");
-  await page.getByTestId("background").check();
-  await page.getByLabel("Background neurons", { exact: true }).fill("input-");
-  await page.getByLabel("Hz per neuron", { exact: true }).fill("100");
   await page.getByTestId("build").click();
   await expect(page.getByText("69 neurons")).toBeVisible({ timeout: 20_000 });
   await page.getByLabel("As fast as possible").check();
