@@ -272,6 +272,140 @@ The language has no graded (non-spiking) neurons. For more graded-like behaviour
 be made more rate-like (lower thresholds, more membrane noise, weaker but more numerous inputs); a non-spiking
 neuron type would be a change to the language and engine.
 
+## What adding graded neurons would involve
+
+Not implemented: a list of what it would take. The engine is event-driven (neurons exchange discrete spike
+messages; between events each neuron's state is computed exactly, in closed form, with no clock ticks), and a graded
+neuron's output is continuous. Most of the work follows from turning a continuous signal into events.
+
+**1. Decisions to make first**
+
+- **Continuous output as events.** Most likely "send on change": a graded neuron sends its new level only when it
+  has moved by more than a step (say 0.1 mV), and at most so often. Sampling at a fixed rate would bring back the
+  clock ticks the engine avoids. The step trades accuracy for message volume.
+- **The transfer function**: how much a graded neuron releases at a given voltage (e.g. a sigmoid: slope,
+  half-activation voltage, maximum).
+- **The gap junction model**: true electrical coupling, current ∝ the voltage difference, both ways.
+- **Mixing kinds**: a graded neuron receiving a spike gets a graded bump; a spiking neuron receiving graded input
+  gets a sustained current.
+
+**2. Neuron model (`spikes-model`)**
+
+- A new kind of dynamics, `Graded`: continuous voltage, no threshold, refractory period or rise delay; output from
+  the transfer function.
+- New closed-form solutions for neurons driven by steady currents (today input is a series of instantaneous kicks;
+  with graded input it's a current, constant between updates: a leaky integrator then relaxes toward input × τ, and
+  resonators change too).
+- New threshold-crossing prediction for spiking neurons under steady current (`crossing.rs`), so they still fire at
+  the exact moment between events.
+- Self-scheduled updates for graded neurons, to emit "my level changed" while they relax without input (when will
+  the voltage next have moved one step?).
+- Graded synapses: a sustained current, weight × the sender's release level, maybe with its own time constant.
+  Stochastic release (per spike) wouldn't apply, or would need a rate-based version.
+- Gap junctions: current = conductance × (V_other − V_self) on both sides, so each side must know the other's
+  voltage.
+
+**3. Network and messaging (`spikes-network`, `tempo-runtime`)**
+
+- A new message kind carrying a level, alongside spikes, through the same routes and delays.
+- On each receiving neuron, a table of the latest level from each graded input (more memory per synapse).
+- Gap junctions need short delays to stay stable (coupling through delayed messages can oscillate when it's
+  strong), and short delays shrink the shards' lookahead, slowing multi-shard and cluster runs.
+- Message volume: a graded neuron near its active range could send far more messages than a spiking one: to be
+  benchmarked (like the weight-change flood in learning networks).
+
+**4. Learning and modulation**
+
+- STDP is defined on spike timing: graded synapses need another rule, or no learning at first.
+- Modulator release is per spike today: graded neurons would release in proportion to their activity over time.
+- Receptor gains would apply to graded currents as well as spikes.
+
+**5. Description language (`spikes-dna`)**
+
+- New keys: `dynamics=graded` and its settings (time constant, transfer function, update step), a way to mark a
+  synapse graded, and a real electrical synapse (gap junction conductance).
+- Schema entries and long help for each (a test requires it); validation. The editor's completions and hovers
+  follow from the schema.
+
+**6. Engine services (`spikes-session`, API, client)**
+
+- Neuron state and inspection: a level rather than a spike count.
+- Protocol types and the generated TypeScript types.
+- Snapshots and saved runs: the new state.
+- Recordings, replay and Parquet export: level changes as well as spikes.
+- Cluster: the new message kind through the inter-node codec; lockstep runs must stay exact.
+
+**7. Live views and UI**
+
+- Frames need a way to carry levels (today: spikes, and membrane traces for selected neurons).
+- Graded neurons never spike, so they'd be blank in the raster and rate chart: they need another display (e.g. a
+  heat map of levels).
+- The 3D view flashes neurons on spikes: graded ones would need colouring by voltage.
+- Small adjustments to the network preview, Deployment page and Inspector (its membrane chart already works).
+
+**8. Tests and documentation**
+
+- Model tests comparing the closed-form solutions with a fine-step numerical simulation.
+- Identical results across shard counts and on a cluster; save and restore giving the same run.
+- Benchmarks of message volume and live-view load.
+- End-to-end tests; docs; an updated nemotode (graded by default, AWA spiking, true gap junctions).
+
+**9. A phased order**
+
+1. Graded neurons and graded chemical synapses (send on change), with 3D colouring by voltage and inspection.
+2. True gap junctions (the delay and stability questions).
+3. Recordings, replay and cluster support.
+4. Learning and modulation for graded synapses.
+
+Phase 1 holds most of the hard modelling (the closed-form solutions, threshold crossings under steady current,
+self-scheduled updates); gap junctions are the riskiest for speed, because they need short delays.
+
+## Gap junctions as tonic spikes?
+
+Could a gap junction current be modelled with tonic spikes arriving at a receiving neuron that has no refractory
+period? Partly: it's a known way to approximate a continuous signal with spikes (rate coding), and it would reuse
+most of the engine. But it has costs, and on its own it covers only half of the current.
+
+**The current has two parts.** Into neuron B, I = g × (V_A − V_B), with g the junction's conductance:
+
+- **g × V_A** depends on the other neuron: tonic spikes could carry it. If A fires at a rate proportional to its
+  voltage, r = k × V_A, and each spike adds w mV to B, B's leaky membrane averages them into a drive of
+  w × r × τ ∝ V_A.
+- **−g × V_B** depends only on B: no spikes needed. It's extra leak on B: each junction shortens B's decay time
+  constant (1/τ_eff = 1/τ + g/C), a fixed setting worked out when the network is built.
+
+So tonic spikes in, plus extra leak, reproduce the coupling on average, each side doing the same for the other.
+
+**No refractory period on the receiver.** In this model, input arriving during the absolute refractory period is
+thrown away (an integrator is held at rest), while a real gap junction current keeps flowing. Either the receiver
+needs a refractory period of 0, or, better, the model keeps integrating input during the refractory period and only
+stops the neuron from firing.
+
+**The problems:**
+
+- **No neuron fires at a rate set by its voltage.** The bistable integrator's tonic rate is fixed. Sending these
+  spikes needs a new kind of output, with a firing interval of 1/(k × V): a small change to the model, but a change.
+- **Noise.** The receiver gets discrete kicks, not a smooth current. Smoothing needs small, frequent kicks:
+  representing 10 mV in 0.1 mV kicks with a 50 ms time constant takes about 2,000 spikes a second per junction. For
+  nemotode's 1,086 pairs, both ways, that's over 4 million messages a second, sent all the time, even when nothing
+  changes (send on change sends nothing while voltages hold).
+- **Lag.** A change in A's voltage only shows as a change of spike interval, so the coupling responds at least one
+  interval late; real gap junctions are nearly instantaneous.
+- **Negative voltages** can't be negative rates: below rest, A would need a baseline rate with an offset subtracted,
+  or a second, inhibitory spike train.
+- **These "spikes" aren't spikes.** They would flood the raster and rate chart, set off STDP, fire modulator
+  releases and fill recordings, so they'd need to be a separate kind, left out of all of those.
+
+**A better variant, using what exists.** The engine's spike message already carries an amplitude (the sender's
+spike potential, which the receiver multiplies by the weight). So rather than many identical spikes at a varying
+rate, a neuron could send a few "spikes" whose amplitude carries the value, whenever its voltage has moved by a step:
+send on change (above), reusing the existing message. It's far cheaper than tonic trains and exact up to the step.
+Neuromorphic chips such as Intel's Loihi 2 do this with "graded spikes" that carry a value.
+
+**In short**: tonic spikes, plus extra leak, plus input during the refractory period, would give a workable but
+noisy and slow approximation of gap junctions without new message types. Amplitude-carrying spikes sent on change
+give the same, more accurately and at a fraction of the traffic, for about the same model changes.
+
 ## Limits
 
 - **Spikes, not graded potentials.** Most C. elegans neurons signal with graded potentials; few spike (see Spikes
