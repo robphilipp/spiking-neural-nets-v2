@@ -1,6 +1,6 @@
 name = "ring-even-spaced"
 network = "network.boo"
-inputs = [ "periodic-hidden-103.inputs.toml", "periodic-hidden-103-copy.inputs.toml" ]
+inputs = [ "periodic-hidden-103.inputs.toml", "periodic-hidden-103-copy.inputs.toml", "periodic-hidden-105.inputs.toml", "periodic-hidden-102.inputs.toml" ]
 selected_inputs = "periodic-hidden-103.inputs.toml"
 
 [run]
