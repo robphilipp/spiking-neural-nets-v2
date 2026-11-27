@@ -345,7 +345,11 @@ impl Sensor {
                     dt_sim_s,
                     &mut || rng.random::<f64>(),
                     &mut |offset_s, mv| {
-                        let at = if offset_s > 0.0 { t.saturating_add(SimDuration::from_secs_f64(offset_s)) } else { t };
+                        let at = if offset_s > 0.0 {
+                            t.saturating_add(SimDuration::from_secs_f64(offset_s))
+                        } else {
+                            t
+                        };
                         for &n in targets {
                             inputs.push((n, at, mv));
                         }

@@ -218,9 +218,15 @@ impl Actor<SimMsg, Event> for SignalInput {
             let v = self.formula.eval(t_ms, c as u32, n, at) as f32;
             let mut events: Vec<(f64, f32)> = Vec::new();
             let rng = ctx.rng();
-            self.encoders[c].encode(self.encoding, v, dt_s, &mut || rng.random::<f64>(), &mut |offset, mv| {
-                events.push((offset, mv));
-            });
+            self.encoders[c].encode(
+                self.encoding,
+                v,
+                dt_s,
+                &mut || rng.random::<f64>(),
+                &mut |offset, mv| {
+                    events.push((offset, mv));
+                },
+            );
             for (offset, mv) in events {
                 let delay = self.delay.saturating_add(SimDuration::from_secs_f64(offset.max(0.0)));
                 for &target in &self.channels[c] {

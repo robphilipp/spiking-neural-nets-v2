@@ -29,8 +29,11 @@ fn main() {
     let mv: f64 = args.get(4).map_or(12.0, |s| s.parse().expect("mv"));
     let weights = args.get(5).map_or("view", String::as_str);
 
-    let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../test-data/examples/populations.boo"))
-        .expect("populations.boo");
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../test-data/examples/populations.boo"
+    ))
+    .expect("populations.boo");
     let engine = Engine::new();
     let session = engine.create("populations", &text).expect("parses");
     let network = session

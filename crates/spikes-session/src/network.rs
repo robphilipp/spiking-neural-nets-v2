@@ -202,7 +202,11 @@ impl NetworkInfo {
             synapse_count: net.synapse_count,
             modulators: description.modulators.iter().map(|m| m.name.clone()).collect(),
             learning_rules: net.learning_rules(),
-            sets: description.sets.iter().map(|s| (s.name.clone(), s.members.clone())).collect(),
+            sets: description
+                .sets
+                .iter()
+                .map(|s| (s.name.clone(), s.members.clone()))
+                .collect(),
             ids,
             indices,
         }

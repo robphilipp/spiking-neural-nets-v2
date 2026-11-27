@@ -119,7 +119,13 @@ mod tests {
         let mut ch = Channel::new(&mut u);
         let mut events = 0;
         for _ in 0..10_000 {
-            ch.encode(SampleEncoding::Rate { max_hz: 100.0, mv: 1.0 }, 0.5, 0.001, &mut u, &mut |_, _| events += 1);
+            ch.encode(
+                SampleEncoding::Rate { max_hz: 100.0, mv: 1.0 },
+                0.5,
+                0.001,
+                &mut u,
+                &mut |_, _| events += 1,
+            );
         }
         // 50 Hz for 10 s: 500 ± a few √500.
         assert!((430..570).contains(&events), "{events}");
@@ -131,7 +137,13 @@ mod tests {
         let mut ch = Channel::new(&mut u);
         let mut out = Vec::new();
         for v in [0.0, 0.25, 0.5, 0.2] {
-            ch.encode(SampleEncoding::Threshold { level: 0.2, mv: 3.0 }, v, 0.001, &mut u, &mut |_, mv| out.push(mv));
+            ch.encode(
+                SampleEncoding::Threshold { level: 0.2, mv: 3.0 },
+                v,
+                0.001,
+                &mut u,
+                &mut |_, mv| out.push(mv),
+            );
         }
         assert_eq!(out, vec![3.0, 3.0, -3.0]);
     }
@@ -142,7 +154,13 @@ mod tests {
         let mut ch = Channel::new(&mut u);
         let mut out = Vec::new();
         for v in [0.0, 2.0] {
-            ch.encode(SampleEncoding::Current { gain_mv: 1.5 }, v, 0.001, &mut u, &mut |dt, mv| out.push((dt, mv)));
+            ch.encode(
+                SampleEncoding::Current { gain_mv: 1.5 },
+                v,
+                0.001,
+                &mut u,
+                &mut |dt, mv| out.push((dt, mv)),
+            );
         }
         assert_eq!(out, vec![(0.0, 3.0)]);
     }

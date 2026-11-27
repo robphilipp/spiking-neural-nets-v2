@@ -260,7 +260,9 @@ pub fn write_trials(dir: impl AsRef<Path>, trials: &[TrialRow]) -> Result<()> {
         ],
         vec![
             Arc::new(UInt32Array::from_iter_values(trials.iter().map(|t| t.trial))),
-            Arc::new(StringArray::from_iter_values(trials.iter().map(|t| t.condition.as_str()))),
+            Arc::new(StringArray::from_iter_values(
+                trials.iter().map(|t| t.condition.as_str()),
+            )),
             Arc::new(UInt64Array::from_iter_values(trials.iter().map(|t| t.start_ns))),
             Arc::new(UInt64Array::from_iter_values(trials.iter().map(|t| t.end_ns))),
         ],

@@ -397,14 +397,16 @@ impl Connection {
                     .map(|s| {
                         Ok(InputSource {
                             start: duration(s.start_ms)?,
-                            input: input_spec(s.input).map_err(|e| {
-                                error(ErrorCode::Invalid, format!("input '{}': {}", s.name, e.message))
-                            })?,
+                            input: input_spec(s.input)
+                                .map_err(|e| error(ErrorCode::Invalid, format!("input '{}': {}", s.name, e.message)))?,
                             name: s.name,
                         })
                     })
                     .collect::<Result<Vec<_>, ApiError>>()?;
-                self.session(session)?.set_inputs(sources, trials).map(done).map_err(api_error)
+                self.session(session)?
+                    .set_inputs(sources, trials)
+                    .map(done)
+                    .map_err(api_error)
             }
             Request::GetTrials { session } => Ok(Response::Trials {
                 trials: self
@@ -419,9 +421,7 @@ impl Connection {
                     })
                     .collect(),
             }),
-            Request::Fire { session, source } => {
-                self.session(session)?.fire(&source).map(done).map_err(api_error)
-            }
+            Request::Fire { session, source } => self.session(session)?.fire(&source).map(done).map_err(api_error),
             Request::Connect {
                 session,
                 pre,

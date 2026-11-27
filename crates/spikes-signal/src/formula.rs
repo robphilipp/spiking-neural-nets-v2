@@ -400,7 +400,11 @@ impl Parser<'_> {
                 self.expect(")")?;
                 let site = self.sites;
                 self.sites += 1;
-                return Ok(if word == "rand" { Node::Rand(site) } else { Node::Gauss(site) });
+                return Ok(if word == "rand" {
+                    Node::Rand(site)
+                } else {
+                    Node::Gauss(site)
+                });
             }
             _ => {}
         }
@@ -498,7 +502,11 @@ mod tests {
         let f = Formula::compile("rand()").unwrap();
         let at = |sample, key| At { sample, key };
         let a = f.eval(0.0, 0, 2, at(5, 1));
-        assert_eq!(a, f.eval(99.0, 0, 2, at(5, 1)), "the same sample, channel and key: the same value");
+        assert_eq!(
+            a,
+            f.eval(99.0, 0, 2, at(5, 1)),
+            "the same sample, channel and key: the same value"
+        );
         assert_ne!(a, f.eval(0.0, 1, 2, at(5, 1)), "another channel");
         assert_ne!(a, f.eval(0.0, 0, 2, at(6, 1)), "another sample");
         assert_ne!(a, f.eval(0.0, 0, 2, at(5, 2)), "another key");

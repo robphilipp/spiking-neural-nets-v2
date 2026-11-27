@@ -29,8 +29,8 @@ pub use network::{GRID, NetworkInfo, NeuronInfo, SYNAPSE_LIST_LIMIT, SynapseInfo
 pub use preview::{Preview, preview};
 pub use sensors::{Encoding, OnPause, SampleBatch, Sensor, SensorInfo, SensorSpec, SensorStats, SpikeBatch};
 pub use session::{
-    BuildSettings, DEFAULT_MIN_DELAY, InputSource, InputSpec, NeuronSnapshot, RunSettings, Session, SessionNotice, Speed,
-    State, Trial,
+    BuildSettings, DEFAULT_MIN_DELAY, InputSource, InputSpec, NeuronSnapshot, RunSettings, Session, SessionNotice,
+    Speed, State, Trial,
 };
 pub use viewer::{FrameStats, Selection, ViewSettings, Viewer};
 

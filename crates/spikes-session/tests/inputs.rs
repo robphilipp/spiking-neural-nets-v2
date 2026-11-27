@@ -62,20 +62,27 @@ fn signal(name: &str, formula: &str, encoding: SampleEncoding) -> InputSource {
     }
 }
 
-const RATE: SampleEncoding = SampleEncoding::Rate { max_hz: 100.0, mv: 15.0 };
+const RATE: SampleEncoding = SampleEncoding::Rate {
+    max_hz: 100.0,
+    mv: 15.0,
+};
 
 #[test]
 fn a_signal_drives_its_channels_in_simulated_time() {
     // Channel c fires at c/7 of 100 Hz: rates rise across the channels.
     let s = built(1, 1);
-    s.set_inputs(vec![signal("ramp", "c / (n - 1)", RATE)], Vec::new()).unwrap();
+    s.set_inputs(vec![signal("ramp", "c / (n - 1)", RATE)], Vec::new())
+        .unwrap();
     run_for(&s, ms(5000));
     let counts = spikes(&s);
     assert_eq!(counts[0], 0, "rate 0");
     let expected = |c: u64| 500.0 * c as f64 / 7.0; // c/7 × 100 Hz × 5 s
     for c in 1..8u64 {
         let got = counts[c as usize] as f64;
-        assert!((got - expected(c)).abs() < 5.0 * expected(c).sqrt() + 5.0, "channel {c}: {got} spikes");
+        assert!(
+            (got - expected(c)).abs() < 5.0 * expected(c).sqrt() + 5.0,
+            "channel {c}: {got} spikes"
+        );
     }
 }
 
@@ -83,8 +90,15 @@ fn a_signal_drives_its_channels_in_simulated_time() {
 fn signals_repeat_exactly_with_a_seed_whatever_the_shards_and_differ_with_another() {
     let run = |seed: u64, shards: usize| {
         let s = built(seed, shards);
-        s.set_inputs(vec![signal("noise", "clamp(0.5 + 0.3 * gauss(), 0, 1) * (rand() < 0.8)", RATE)], Vec::new())
-            .unwrap();
+        s.set_inputs(
+            vec![signal(
+                "noise",
+                "clamp(0.5 + 0.3 * gauss(), 0, 1) * (rand() < 0.8)",
+                RATE,
+            )],
+            Vec::new(),
+        )
+        .unwrap();
         run_for(&s, ms(2000));
         spikes(&s)
     };
@@ -97,45 +111,58 @@ fn signals_repeat_exactly_with_a_seed_whatever_the_shards_and_differ_with_anothe
 #[test]
 fn pulses_arrive_at_their_times_and_sources_start_when_scheduled() {
     let s = built(1, 1);
-    s.set_inputs(vec![
-        InputSource {
-            name: "taps".into(),
-            start: ms(100),
-            input: InputSpec::Pulses {
-                targets: vec![0, 1],
-                times: vec![ms(0), ms(50), ms(400)],
-                mv: 15.0,
+    s.set_inputs(
+        vec![
+            InputSource {
+                name: "taps".into(),
+                start: ms(100),
+                input: InputSpec::Pulses {
+                    targets: vec![0, 1],
+                    times: vec![ms(0), ms(50), ms(400)],
+                    mv: 15.0,
+                },
             },
-        },
-        InputSource {
-            name: "late".into(),
-            start: ms(1000),
-            input: InputSpec::Periodic {
-                targets: vec![2],
-                period: ms(100),
-                mv: 15.0,
-                duration: Some(ms(450)),
+            InputSource {
+                name: "late".into(),
+                start: ms(1000),
+                input: InputSpec::Periodic {
+                    targets: vec![2],
+                    period: ms(100),
+                    mv: 15.0,
+                    duration: Some(ms(450)),
+                },
             },
-        },
-    ], Vec::new())
+        ],
+        Vec::new(),
+    )
     .unwrap();
     run_for(&s, ms(450));
-    assert_eq!(&spikes(&s)[..3], &[2, 2, 0], "pulses at 100 and 150 ms so far; the periodic input not yet");
+    assert_eq!(
+        &spikes(&s)[..3],
+        &[2, 2, 0],
+        "pulses at 100 and 150 ms so far; the periodic input not yet"
+    );
     run_for(&s, ms(1550));
-    assert_eq!(&spikes(&s)[..3], &[3, 3, 5], "and at 500 ms; then 1000, 1100, …, 1400 ms");
+    assert_eq!(
+        &spikes(&s)[..3],
+        &[3, 3, 5],
+        "and at 500 ms; then 1000, 1100, …, 1400 ms"
+    );
 }
 
 #[test]
 fn inputs_are_given_once_per_build_checked_first_and_repeated_by_a_reset() {
     let s = built(5, 2);
-    let bad = vec![
-        signal("ok", "1", RATE),
-        signal("broken", "sin(t", RATE),
-    ];
+    let bad = vec![signal("ok", "1", RATE), signal("broken", "sin(t", RATE)];
     let err = s.set_inputs(bad, Vec::new()).unwrap_err().to_string();
     assert!(err.contains("input 'broken'") && err.contains("expected ')'"), "{err}");
     let twice = vec![signal("a", "1", RATE), signal("a", "0", RATE)];
-    assert!(s.set_inputs(twice, Vec::new()).unwrap_err().to_string().contains("two sources are named 'a'"));
+    assert!(
+        s.set_inputs(twice, Vec::new())
+            .unwrap_err()
+            .to_string()
+            .contains("two sources are named 'a'")
+    );
 
     // Nothing started from the failed attempts: the run is as built.
     let set = vec![signal("wave", "0.5 + 0.5 * sin(t / 50 + c)", RATE)];
@@ -167,18 +194,21 @@ fn inputs_are_given_once_per_build_checked_first_and_repeated_by_a_reset() {
 #[test]
 fn a_pulse_source_fires_by_hand() {
     let s = built(1, 1);
-    s.set_inputs(vec![
-        InputSource {
-            name: "tap".into(),
-            start: SimDuration::ZERO,
-            input: InputSpec::Pulses {
-                targets: vec![4],
-                times: Vec::new(),
-                mv: 15.0,
+    s.set_inputs(
+        vec![
+            InputSource {
+                name: "tap".into(),
+                start: SimDuration::ZERO,
+                input: InputSpec::Pulses {
+                    targets: vec![4],
+                    times: Vec::new(),
+                    mv: 15.0,
+                },
             },
-        },
-        signal("quiet", "0", RATE),
-    ], Vec::new())
+            signal("quiet", "0", RATE),
+        ],
+        Vec::new(),
+    )
     .unwrap();
     s.fire("tap").unwrap();
     run_for(&s, ms(100));
@@ -203,7 +233,10 @@ fn a_saved_run_with_a_signal_continues_exactly() {
     resumed.load_saved(&bytes, 3).unwrap();
     run_for(&resumed, ms(800));
     assert_eq!(spikes(&resumed), spikes(&whole));
-    assert_eq!(neurons(&resumed).iter().map(|n| n.spikes).sum::<u64>(), spikes(&whole).iter().sum::<u64>());
+    assert_eq!(
+        neurons(&resumed).iter().map(|n| n.spikes).sum::<u64>(),
+        spikes(&whole).iter().sum::<u64>()
+    );
 }
 
 #[test]
@@ -215,10 +248,24 @@ fn trials_are_kept_with_the_inputs_recorded_and_replayed() {
         start: ms(start),
         end: ms(end),
     };
-    let trials = vec![trial(1, "tail", 0, 400), trial(2, "head", 600, 1000), trial(3, "tail", 1300, 1700)];
+    let trials = vec![
+        trial(1, "tail", 0, 400),
+        trial(2, "head", 600, 1000),
+        trial(3, "tail", 1300, 1700),
+    ];
     let out_of_order = vec![trial(1, "", 500, 900), trial(2, "", 0, 400)];
-    assert!(s.set_inputs(Vec::new(), out_of_order).unwrap_err().to_string().contains("in order"));
-    assert!(s.set_inputs(Vec::new(), vec![trial(1, "", 500, 100)]).unwrap_err().to_string().contains("ends before"));
+    assert!(
+        s.set_inputs(Vec::new(), out_of_order)
+            .unwrap_err()
+            .to_string()
+            .contains("in order")
+    );
+    assert!(
+        s.set_inputs(Vec::new(), vec![trial(1, "", 500, 100)])
+            .unwrap_err()
+            .to_string()
+            .contains("ends before")
+    );
     s.set_inputs(vec![signal("wave", "0.5", RATE)], trials.clone()).unwrap();
     assert_eq!(s.trials(), trials);
     s.reset().unwrap();

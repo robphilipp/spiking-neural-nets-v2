@@ -626,7 +626,10 @@ impl Session {
     pub fn set_inputs(&self, sources: Vec<InputSource>, trials: Vec<Trial>) -> Result<(), SessionError> {
         for (i, t) in trials.iter().enumerate() {
             if t.end < t.start {
-                return Err(SessionError::Invalid(format!("trial {} ends before it starts", t.number)));
+                return Err(SessionError::Invalid(format!(
+                    "trial {} ends before it starts",
+                    t.number
+                )));
             }
             if i > 0 && t.start < trials[i - 1].start {
                 return Err(SessionError::Invalid("trials must be in order of their start".into()));
@@ -653,7 +656,10 @@ impl Session {
         let mut sources = sources;
         for source in &mut sources {
             if !names.insert(source.name.clone()) {
-                return Err(SessionError::Invalid(format!("two sources are named '{}'", source.name)));
+                return Err(SessionError::Invalid(format!(
+                    "two sources are named '{}'",
+                    source.name
+                )));
             }
             if let InputSpec::Signal { key, .. } = &mut source.input {
                 *key = spikes_signal::noise::key(seed, &source.name);
@@ -2204,11 +2210,8 @@ const SAVED_MAGIC: &[u8; 8] = b"SPKSAVE1";
 /// Spawns a synthetic input that starts at `start`.
 fn spawn_input(rt: &mut Runtime, network: &NetworkInfo, input: InputSpec, start: SimTime) -> Result<(), SessionError> {
     input.validate(network)?;
-    let resolve = |list: &[u32]| -> Vec<NeuronRef> {
-        list.iter()
-            .filter_map(|&i| network.id(i).map(NeuronRef::new))
-            .collect()
-    };
+    let resolve =
+        |list: &[u32]| -> Vec<NeuronRef> { list.iter().filter_map(|&i| network.id(i).map(NeuronRef::new)).collect() };
     let targets = resolve(&input.targets());
     let delay = spikes_network::INPUT_DELAY;
     match input {

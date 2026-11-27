@@ -15,8 +15,9 @@ pub fn mix(mut z: u64) -> u64 {
 
 /// FNV-1a over a name's UTF-8 bytes.
 pub fn fnv1a(name: &str) -> u64 {
-    name.bytes()
-        .fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3))
+    name.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 /// A source's noise key: the run's seed and the source's name.

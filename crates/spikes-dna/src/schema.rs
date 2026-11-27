@@ -227,14 +227,22 @@ pub static RECORDS: &[RecordSchema] = &[
                 Value::Bool,
             )
             .default("false"),
-            key("threshold", "Firing threshold.", MV).default("10 mV").only(INTEGRATORS_AND_RESONATORS),
+            key("threshold", "Firing threshold.", MV)
+                .default("10 mV")
+                .only(INTEGRATORS_AND_RESONATORS),
             key("tonic_on_threshold", "The threshold that starts tonic firing.", MV)
                 .default("15 mV")
                 .only(&["bistable_integrator"]),
-            key("tonic_off_threshold", "The threshold below which tonic firing stops.", MV)
-                .default("10 mV")
+            key(
+                "tonic_off_threshold",
+                "The threshold below which tonic firing stops.",
+                MV,
+            )
+            .default("10 mV")
+            .only(&["bistable_integrator"]),
+            key("tonic_rate", "The tonic firing rate.", HZ)
+                .default("10 Hz")
                 .only(&["bistable_integrator"]),
-            key("tonic_rate", "The tonic firing rate.", HZ).default("10 Hz").only(&["bistable_integrator"]),
             key(
                 "refractory_period",
                 "Absolute refractory period after a spike: input is lost and the potential held at rest.",
@@ -251,7 +259,12 @@ pub static RECORDS: &[RecordSchema] = &[
             key("resting_potential", "Minimum (resting) membrane potential.", MV).default("0 mV"),
             key("decay_time", "Membrane potential decay time constant.", MS).default("250 ms"),
             key("rise_time", "How long a crossing input takes to make the spike.", MS).default("2 ms"),
-            key("membrane_noise", "Membrane noise: a Wiener process of this magnitude per √ms.", MV).default("0.1 mV"),
+            key(
+                "membrane_noise",
+                "Membrane noise: a Wiener process of this magnitude per √ms.",
+                MV,
+            )
+            .default("0.1 mV"),
             key(
                 "spike_potential",
                 "Spike amplitude sent along outgoing connections (scaled by each synapse's weight).",
@@ -267,14 +280,21 @@ pub static RECORDS: &[RecordSchema] = &[
             key(
                 "intrinsic_plasticity",
                 "Intrinsic plasticity: the threshold shifts with each spike.",
-                Value::Record { record: "intrinsicPlasticity" },
+                Value::Record {
+                    record: "intrinsicPlasticity",
+                },
             ),
             key(
                 "homeostasis",
                 "Homeostatic intrinsic plasticity: steer the firing rate toward a target.",
                 Value::Record { record: "homeostasis" },
             ),
-            key("resonance", "Resonator settings.", Value::Record { record: "resonance" }).only(RESONATORS),
+            key(
+                "resonance",
+                "Resonator settings.",
+                Value::Record { record: "resonance" },
+            )
+            .only(RESONATORS),
             key(
                 "receptors",
                 "Neuromodulator receptors: how modulators change this neuron.",
@@ -283,7 +303,9 @@ pub static RECORDS: &[RecordSchema] = &[
             key(
                 "releases",
                 "A modulator this neuron releases when it spikes.",
-                Value::Record { record: "modulatorRelease" },
+                Value::Record {
+                    record: "modulatorRelease",
+                },
             ),
         ],
     },
@@ -294,7 +316,11 @@ pub static RECORDS: &[RecordSchema] = &[
         extends: Some(("neuronSettings", &[])),
         keys: &[
             key("name", "Its name, for `type=`.", Value::Name).required(),
-            key("extends", "Another neuron type whose settings this one starts from.", Value::Reference { to: "neuronType" }),
+            key(
+                "extends",
+                "Another neuron type whose settings this one starts from.",
+                Value::Reference { to: "neuronType" },
+            ),
         ],
     },
     RecordSchema {
@@ -306,7 +332,11 @@ pub static RECORDS: &[RecordSchema] = &[
             key("name", "Its name; connections and sets refer to it.", Value::Name).required(),
             key("type", "Its neuron type.", Value::Reference { to: "neuronType" }),
             key("position", "Where its soma is.", Value::Point).required(),
-            key("node", "The machine it runs on (default: placed automatically).", Value::Reference { to: "node" }),
+            key(
+                "node",
+                "The machine it runs on (default: placed automatically).",
+                Value::Reference { to: "node" },
+            ),
         ],
     },
     RecordSchema {
@@ -323,18 +353,32 @@ pub static RECORDS: &[RecordSchema] = &[
             )
             .required(),
             key("type", "Its neuron type.", Value::Reference { to: "neuronType" }),
-            key("count", "How many neurons (for `random`, `line`, `ring`).", Value::Number),
+            key(
+                "count",
+                "How many neurons (for `random`, `line`, `ring`).",
+                Value::Number,
+            ),
             key(
                 "positions",
                 "These points, in order; or `[(name=…, at=…), …]` to name the neurons too.",
                 Value::Points,
             ),
-            key("random", "At random in a box or a ball.", Value::Record { record: "randomPlacement" }),
+            key(
+                "random",
+                "At random in a box or a ball.",
+                Value::Record {
+                    record: "randomPlacement",
+                },
+            ),
             key("grid", "On a regular grid.", Value::Record { record: "grid" }),
             key("line", "Evenly along a line.", Value::Record { record: "line" }),
             key("ring", "Evenly around a circle.", Value::Record { record: "ring" }),
             key("seed", "Seed for random positions.", Value::Number).default("1"),
-            key("node", "The machine it runs on (default: placed automatically).", Value::Reference { to: "node" }),
+            key(
+                "node",
+                "The machine it runs on (default: placed automatically).",
+                Value::Reference { to: "node" },
+            ),
         ],
     },
     RecordSchema {
@@ -384,7 +428,12 @@ pub static RECORDS: &[RecordSchema] = &[
         extends: None,
         keys: &[
             key("origin", "The first neuron's position.", Value::Point).default("[0, 0, 0]"),
-            key("spacing", "Distance between neighbours along x, y and z: `[dx, dy, dz]`.", Value::Point).required(),
+            key(
+                "spacing",
+                "Distance between neighbours along x, y and z: `[dx, dy, dz]`.",
+                Value::Point,
+            )
+            .required(),
             key("shape", "How many along x, y and z: `[nx, ny, nz]`.", Value::Point).required(),
         ],
     },
@@ -406,7 +455,14 @@ pub static RECORDS: &[RecordSchema] = &[
         keys: &[
             key("center", "The circle's center.", Value::Point).default("[0, 0, 0]"),
             key("radius", "Its radius.", UM).required(),
-            key("axis", "The axis it goes around.", Value::Choice { values: &["x", "y", "z"] }).default("z"),
+            key(
+                "axis",
+                "The axis it goes around.",
+                Value::Choice {
+                    values: &["x", "y", "z"],
+                },
+            )
+            .default("z"),
             key("start_angle", "Where the first neuron is.", ANGLE).default("0"),
         ],
     },
@@ -431,7 +487,12 @@ pub static RECORDS: &[RecordSchema] = &[
         kind_key: None,
         extends: None,
         keys: &[
-            key("step", "Offset b₀ in each spike's increment, amplitude·e^(−(b + b₀)).", MV).default("0 mV"),
+            key(
+                "step",
+                "Offset b₀ in each spike's increment, amplitude·e^(−(b + b₀)).",
+                MV,
+            )
+            .default("0 mV"),
             key("amplitude", "Excitability gained per spike (0: off).", MV).default("0 mV"),
             key("decay_time", "Decay time constant between spikes.", MS).default("10 min"),
         ],
@@ -444,7 +505,11 @@ pub static RECORDS: &[RecordSchema] = &[
         keys: &[
             key("frequency", "Resonant frequency.", HZ).required(),
             key("damping_time", "Damping time constant of the oscillation.", MS).required(),
-            key("limit_cycle", "Bistable resonator: radius of the tonic limit cycle.", MV),
+            key(
+                "limit_cycle",
+                "Bistable resonator: radius of the tonic limit cycle.",
+                MV,
+            ),
             key(
                 "separatrix",
                 "Bistable resonator: separatrix radius; pulses that leave the state inside it stop tonic firing.",
@@ -459,7 +524,12 @@ pub static RECORDS: &[RecordSchema] = &[
         extends: None,
         keys: &[
             key("target_rate", "Target firing rate.", HZ).required(),
-            key("strength", "mV of threshold shift per Hz of error per second.", Value::Number).required(),
+            key(
+                "strength",
+                "mV of threshold shift per Hz of error per second.",
+                Value::Number,
+            )
+            .required(),
             key("window", "Window over which the rate is estimated.", MS).default("1 s"),
             key("min_shift", "Lowest threshold shift.", MV),
             key("max_shift", "Highest threshold shift.", MV),
@@ -505,12 +575,22 @@ pub static RECORDS: &[RecordSchema] = &[
         kind_key: None,
         extends: None,
         keys: &[
-            key("weight", "Initial weight: a number, `uniform(low, high)` or `normal(mean, sd)`.", Value::Weight),
-            key("equilibrium", "The weight decay relaxes toward (default: the initial weight).", Value::Weight),
+            key(
+                "weight",
+                "Initial weight: a number, `uniform(low, high)` or `normal(mean, sd)`.",
+                Value::Weight,
+            ),
+            key(
+                "equilibrium",
+                "The weight decay relaxes toward (default: the initial weight).",
+                Value::Weight,
+            ),
             key(
                 "sign",
                 "`excitatory` or `inhibitory` (default: from the sending neuron's `inhibitory`).",
-                Value::Choice { values: &["excitatory", "inhibitory"] },
+                Value::Choice {
+                    values: &["excitatory", "inhibitory"],
+                },
             ),
             key(
                 "delay",
@@ -518,16 +598,37 @@ pub static RECORDS: &[RecordSchema] = &[
                 MS,
             )
             .default("0.5 ms"),
-            key("learning", "A learning rule (default: none).", Value::Reference { to: "learning" }),
-            key("stickiness", "A stickiness function (default: none).", Value::Reference { to: "stickiness" }),
-            key("decay", "Weight decay toward the equilibrium (default: none).", Value::Record { record: "decay" }),
-            key("limits", "Weight bounds (default: unbounded).", Value::Record { record: "limits" }),
+            key(
+                "learning",
+                "A learning rule (default: none).",
+                Value::Reference { to: "learning" },
+            ),
+            key(
+                "stickiness",
+                "A stickiness function (default: none).",
+                Value::Reference { to: "stickiness" },
+            ),
+            key(
+                "decay",
+                "Weight decay toward the equilibrium (default: none).",
+                Value::Record { record: "decay" },
+            ),
+            key(
+                "limits",
+                "Weight bounds (default: unbounded).",
+                Value::Record { record: "limits" },
+            ),
             key(
                 "release",
                 "Stochastic transmitter release (default: none; `release=()` for the standard model).",
                 Value::Record { record: "release" },
             ),
-            key("weight_noise", "Noise added to the weight at each signal.", Value::Number).default("0"),
+            key(
+                "weight_noise",
+                "Noise added to the weight at each signal.",
+                Value::Number,
+            )
+            .default("0"),
         ],
     },
     RecordSchema {
@@ -537,7 +638,11 @@ pub static RECORDS: &[RecordSchema] = &[
         extends: Some(("synapseSettings", &[])),
         keys: &[
             key("name", "Its name, for `type=`.", Value::Name).required(),
-            key("extends", "Another synapse type whose settings this one starts from.", Value::Reference { to: "synapseType" }),
+            key(
+                "extends",
+                "Another synapse type whose settings this one starts from.",
+                Value::Reference { to: "synapseType" },
+            ),
         ],
     },
     RecordSchema {
@@ -578,7 +683,12 @@ pub static RECORDS: &[RecordSchema] = &[
         kind_key: None,
         extends: Some(("synapseSettings", &[])),
         keys: &[
-            key("from", "Sending neurons: populations, sets, names, id ranges, or a list of them.", Value::Ids).required(),
+            key(
+                "from",
+                "Sending neurons: populations, sets, names, id ranges, or a list of them.",
+                Value::Ids,
+            )
+            .required(),
             key("to", "Receiving neurons.", Value::Ids).required(),
             key(
                 "pattern",
@@ -611,14 +721,26 @@ pub static RECORDS: &[RecordSchema] = &[
             key("depression", "Depression amplitude (post before pre).", Value::Number)
                 .only(EXPONENTIAL_RULES)
                 .required(),
-            key("depression_time", "Depression time constant.", MS).only(EXPONENTIAL_RULES).required(),
-            key("potentiation", "Potentiation amplitude (pre before post).", Value::Number)
+            key("depression_time", "Depression time constant.", MS)
                 .only(EXPONENTIAL_RULES)
                 .required(),
-            key("potentiation_time", "Potentiation time constant.", MS).only(EXPONENTIAL_RULES).required(),
-            key("baseline", "Baseline.", Value::Number).only(&["stdp_alpha"]).required(),
+            key(
+                "potentiation",
+                "Potentiation amplitude (pre before post).",
+                Value::Number,
+            )
+            .only(EXPONENTIAL_RULES)
+            .required(),
+            key("potentiation_time", "Potentiation time constant.", MS)
+                .only(EXPONENTIAL_RULES)
+                .required(),
+            key("baseline", "Baseline.", Value::Number)
+                .only(&["stdp_alpha"])
+                .required(),
             key("time", "Alpha time constant.", MS).only(&["stdp_alpha"]).required(),
-            key("rate", "Learning rate.", Value::Number).only(&["stdp_alpha"]).required(),
+            key("rate", "Learning rate.", Value::Number)
+                .only(&["stdp_alpha"])
+                .required(),
         ],
     },
     RecordSchema {
@@ -637,7 +759,12 @@ pub static RECORDS: &[RecordSchema] = &[
         kind_key: None,
         extends: None,
         keys: &[
-            key("name", "Its name, for receptors' and releases' `modulator`.", Value::Name).required(),
+            key(
+                "name",
+                "Its name, for receptors' and releases' `modulator`.",
+                Value::Name,
+            )
+            .required(),
             key("clearance_time", "Clearance time constant.", MS).required(),
             key("reach", "How far a release reaches (default: everywhere).", UM),
             key("speed", "Spreading speed (default: instantaneous).", q("speed", "m/s")),

@@ -473,8 +473,16 @@ With several receptors, gains multiply and direct effects add. A gain never goes
 
 **Ignored:** on the engine alone.",
     ),
-    ("namedPosition", "name", r"This neuron's name, instead of `<population>-<i>`. Must be unique."),
-    ("namedPosition", "at", r"Where this neuron is, written like any position: `[x, y, z]` in µm."),
+    (
+        "namedPosition",
+        "name",
+        r"This neuron's name, instead of `<population>-<i>`. Must be unique.",
+    ),
+    (
+        "namedPosition",
+        "at",
+        r"Where this neuron is, written like any position: `[x, y, z]` in µm.",
+    ),
     (
         "randomPlacement",
         "box",
@@ -485,7 +493,11 @@ With several receptors, gains multiply and direct effects add. A gain never goes
         "ball",
         r"A ball: `center` and `radius`. Neurons are spread evenly through its volume.",
     ),
-    ("box", "corner", r"The box's lowest corner: the smallest x, y and z, in µm."),
+    (
+        "box",
+        "corner",
+        r"The box's lowest corner: the smallest x, y and z, in µm.",
+    ),
     (
         "box",
         "size",
@@ -501,7 +513,11 @@ With several receptors, gains multiply and direct effects add. A gain never goes
 
 **Values:** must be positive.",
     ),
-    ("grid", "origin", r"Where the first neuron of the grid is (default `[0, 0, 0]`)."),
+    (
+        "grid",
+        "origin",
+        r"Where the first neuron of the grid is (default `[0, 0, 0]`).",
+    ),
     (
         "grid",
         "spacing",
@@ -1266,7 +1282,9 @@ mod tests {
         }
         for (rec, key, _) in DETAILS {
             assert!(
-                RECORDS.iter().any(|r| r.name == *rec && r.keys.iter().any(|k| k.key == *key)),
+                RECORDS
+                    .iter()
+                    .any(|r| r.name == *rec && r.keys.iter().any(|k| k.key == *key)),
                 "details for {rec}.{key}, which isn't a key"
             );
         }

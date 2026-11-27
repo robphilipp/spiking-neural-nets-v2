@@ -542,7 +542,14 @@ mod tests {
 
     #[test]
     fn a_frame_sends_each_synapses_latest_weight_in_order() {
-        let changes = vec![(2, 0, 0.1), (1, 5, 0.2), (2, 0, 0.3), (1, 1, 0.4), (1, 5, 0.5), (2, 0, 0.6)];
+        let changes = vec![
+            (2, 0, 0.1),
+            (1, 5, 0.2),
+            (2, 0, 0.3),
+            (1, 1, 0.4),
+            (1, 5, 0.5),
+            (2, 0, 0.6),
+        ];
         assert_eq!(latest(changes), vec![((1, 1), 0.4), ((1, 5), 0.5), ((2, 0), 0.6)]);
         assert!(latest(Vec::new()).is_empty());
     }
