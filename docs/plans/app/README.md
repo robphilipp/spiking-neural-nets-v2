@@ -41,6 +41,7 @@ Arrow/Parquet files are the durable one.
 | [02-protocol.md](02-protocol.md) | Requests, responses, notices, the binary frame format, bandwidth budget and level of detail |
 | [03-ui.md](03-ui.md) | Screens, what is ported from v1, state, visualization techniques, the TS client |
 | [04-phases.md](04-phases.md) | Milestones with deliverables and acceptance criteria |
+| [05-inputs.md](05-inputs.md) | Input files in projects, simulated and realtime sources, the Inputs view (proposed) |
 
 ## Key decisions (proposed)
 
