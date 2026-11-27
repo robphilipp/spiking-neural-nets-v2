@@ -8,7 +8,8 @@
 import type { Encoding, Network, SensorInfo, SensorSpec, Sensor } from "@spikes/client";
 import { type InputFile, InputFileError, isRealtime, type RealtimeSource, targetNeurons } from "./inputFile";
 import type { Capture, OpenCapture } from "./capture";
-import { channelPlan, speedVerdict } from "./realtimeChannels";
+import { channelTargets } from "./channelLayout";
+import { speedVerdict } from "./realtimeChannels";
 
 export type RealtimeState =
   /** Opening the device, or connected and waiting for the first samples. */
@@ -192,9 +193,12 @@ export class RealtimeManager {
     } catch (e) {
       return this.fail(entry, e instanceof InputFileError ? e.message : String(e));
     }
-    const plan = channelPlan(s, targets.length);
-    if ("error" in plan) return this.fail(entry, plan.error);
-    const { channels } = plan;
+    // A sensor has one channel per target neuron; a microphone or camera maps its channels by its layout.
+    const plan = s.kind === "sensor" ? null : channelTargets(s, ctx.network!, targets);
+    if (targets.length === 0) return this.fail(entry, `${s.kind} has no target neurons`);
+    if (plan && !plan.ok) return this.fail(entry, plan.error);
+    const mapped = plan ? plan.channels : targets.map((n) => [n]);
+    const channels = mapped.length;
     entry.status.channels = channels;
     this.emit();
     const client = ctx.client!;
@@ -203,7 +207,7 @@ export class RealtimeManager {
       if (entry.cancelled) return entry.capture?.stop();
       const spec: SensorSpec = {
         name: s.name,
-        targets: targets.slice(0, channels).map((n) => [n]),
+        targets: mapped,
         encoding: s.encoding as Encoding,
         ...(s.kind === "camera" ? { ingressDelayMs: CAMERA_INGRESS_MS } : {}),
         bufferWhilePaused: s.onPause === "buffer",

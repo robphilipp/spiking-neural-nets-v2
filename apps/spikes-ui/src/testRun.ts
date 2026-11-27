@@ -1,8 +1,9 @@
 // Test runs (app plan 05, I5): the pure parts. Which groups of neurons to count, the inputs a test run gets, and what
 // the engine's per-bin counts become: rates, and the response aligned to the trials, averaged per condition.
 
-import type { InputSource, Network, TestGroup, TestRunResult } from "@spikes/client";
-import { engineSources, expandTrials, isRealtime, SIMULATED, targetNeurons, type InputFile, type Trial } from "./inputFile";
+import type { DataFile, InputSource, Network, TestGroup, TestRunResult } from "@spikes/client";
+import { loadData, requestData } from "./inputData";
+import { dataNamesOf, engineSources, expandTrials, InputFileError, isRealtime, SIMULATED, targetNeurons, type InputFile, type Trial } from "./inputFile";
 import { describeMatch, matchNeurons, type NeuronMatch } from "./neuronMatch";
 
 /** A test run's default length without trials, ms. */
@@ -78,11 +79,23 @@ export function resolveGroups(selection: GroupSelection, file: InputFile, networ
 
 /** What a test run gets as inputs: the file as Build gives it to a run (trials expanded with the seed), without the
  *  realtime sources (named in `skipped`: they aren't reproducible). */
-export function testInputs(file: InputFile, seed: number, network: Network): { sources: InputSource[]; trials: Trial[]; skipped: string[] } {
+export function testInputs(
+  file: InputFile,
+  seed: number,
+  network: Network,
+  dataFiles: Record<string, Uint8Array> = {},
+): { sources: InputSource[]; trials: Trial[]; data: DataFile[]; skipped: string[] } {
   const expanded = expandTrials(file, seed);
+  // The data files are read and checked as Build does (a source that needs one that can't be read says so).
+  const loaded = loadData(file, dataFiles);
+  for (const s of expanded.file.sources.filter((x) => x.enabled)) {
+    const bad = dataNamesOf(s).find((n) => loaded.errors.has(n));
+    if (bad) throw new InputFileError(`input '${s.name}': ${loaded.errors.get(bad)}`);
+  }
   return {
-    sources: engineSources(expanded.file, network),
+    sources: engineSources(expanded.file, network, loaded.sets),
     trials: expanded.trials,
+    data: requestData(expanded.file, dataFiles),
     skipped: file.sources.filter((s) => s.enabled && isRealtime(s)).map((s) => s.name),
   };
 }

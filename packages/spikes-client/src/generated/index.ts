@@ -4,6 +4,7 @@ export type * from "./ClientMessage";
 export type * from "./Cluster";
 export type * from "./ClusterLink";
 export type * from "./ClusterNode";
+export type * from "./DataFile";
 export type * from "./DeployedGroup";
 export type * from "./DeployedNode";
 export type * from "./Deployment";

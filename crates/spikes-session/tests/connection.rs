@@ -341,3 +341,35 @@ fn a_run_saved_through_the_protocol_opens_as_a_new_session() {
     };
     assert_eq!(serde_json::to_value(e.code).unwrap(), "notFound");
 }
+
+#[test]
+fn inputs_carry_their_data_files_as_base64() {
+    let mut c = Client::new(&Path::new(env!("CARGO_TARGET_TMPDIR")).join("connection-data"));
+    let Response::Session { session } = c.ok(json!({"type": "createSession", "name": "ring", "description": ring()}))
+    else {
+        panic!()
+    };
+    let s = session.id;
+    c.ok(json!({"type": "build", "session": s, "settings": {"shards": 1}}));
+    let source = json!({"name": "odour", "input": {
+        "type": "signal", "channels": [[0], [1]], "formula": "data(\"d\", t, c)", "sampleMs": 1.0,
+        "encoding": {"type": "current", "gainMv": 1.0}, "durationMs": null
+    }});
+    // "t,a,b\n0,1,2\n10,3,4\n"
+    let file = json!({"name": "d", "base64": "dCxhLGIKMCwxLDIKMTAsMyw0Cg=="});
+    let Outcome::Error(e) = c.call(json!({"type": "setInputs", "session": s, "sources": [source]})) else {
+        panic!("the data file is missing")
+    };
+    assert!(
+        e.message.contains("input 'odour': no data file named 'd'"),
+        "{}",
+        e.message
+    );
+    let bad = json!({"name": "d", "base64": "t$"});
+    let Outcome::Error(e) = c.call(json!({"type": "setInputs", "session": s, "sources": [source], "data": [bad]}))
+    else {
+        panic!()
+    };
+    assert!(e.message.contains("data file 'd'"), "{}", e.message);
+    c.ok(json!({"type": "setInputs", "session": s, "sources": [source], "data": [file]}));
+}

@@ -172,6 +172,9 @@ pub enum InputSpec {
         key: u64,
         /// How long; `None` for ever.
         duration: Option<SimDuration>,
+        /// The data files the formula's `data(…)` looks up (those it uses). Part of the spec, so a reset and a
+        /// saved run keep them.
+        data: Vec<spikes_signal::DataFile>,
     },
 }
 
@@ -198,17 +201,55 @@ impl InputSpec {
             Self::Periodic { period, .. } if period.is_zero() => {
                 Err(SessionError::Invalid("the period must be positive".into()))
             }
-            Self::Signal { formula, sample, .. } => {
+            Self::Signal {
+                formula,
+                sample,
+                channels,
+                data,
+                ..
+            } => {
                 if sample.is_zero() {
                     return Err(SessionError::Invalid("the sample interval must be positive".into()));
                 }
-                spikes_signal::Formula::compile(formula)
-                    .map(|_| ())
-                    .map_err(|e| SessionError::Invalid(format!("formula: {e}")))
+                let compiled = spikes_signal::Formula::compile(formula)
+                    .map_err(|e| SessionError::Invalid(format!("formula: {e}")))?;
+                check_data(&compiled, data, channels.len())
             }
             _ => Ok(()),
         }
     }
+}
+
+/// Checks that every data file a formula looks up is given, can be read, and has the channels the formula reads
+/// (`data("x", t, c)` needs one per channel of the source; `data("x", t)` one; `data("x", t, 3)` four).
+fn check_data(
+    formula: &spikes_signal::Formula,
+    files: &[spikes_signal::DataFile],
+    channels: usize,
+) -> Result<(), SessionError> {
+    use spikes_signal::DataChannel;
+    let invalid = |m: String| SessionError::Invalid(m);
+    let sets = spikes_signal::DataSets::load(files).map_err(|e| invalid(e.to_string()))?;
+    for u in formula.data_uses() {
+        let set = sets
+            .get(&u.name)
+            .ok_or_else(|| invalid(format!("no data file named '{}'", u.name)))?;
+        let needed = match u.channel {
+            DataChannel::Zero => 1,
+            DataChannel::C => channels,
+            DataChannel::Fixed(k) => k as usize + 1,
+            DataChannel::Computed => 0,
+        };
+        if set.channel_count() < needed {
+            return Err(invalid(format!(
+                "data file '{}' has {} channel{}, the source needs {needed}",
+                u.name,
+                set.channel_count(),
+                if set.channel_count() == 1 { "" } else { "s" }
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A trial of a run's input protocol (app plan 05 §2.1): the UI expands an input file's trials into its sources'
@@ -2290,9 +2331,11 @@ fn spawn_input(rt: &mut Runtime, network: &NetworkInfo, input: InputSpec, start:
             encoding,
             key,
             duration,
+            data,
         } => {
             let formula = spikes_signal::Formula::compile(&formula)
                 .map_err(|e| SessionError::Invalid(format!("formula: {e}")))?;
+            let data = spikes_signal::DataSets::load(&data).map_err(|e| SessionError::Invalid(e.to_string()))?;
             rt.spawn(SignalInput {
                 channels: channels.iter().map(|c| resolve(c)).collect(),
                 formula,
@@ -2302,6 +2345,7 @@ fn spawn_input(rt: &mut Runtime, network: &NetworkInfo, input: InputSpec, start:
                 delay,
                 start,
                 until: duration.map_or(SimTime::MAX, |d| start.saturating_add(d)),
+                data,
                 encoders: Vec::new(),
                 next: 0,
             });

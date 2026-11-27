@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
 import { WebSocketClient } from "@spikes/client";
 
+const PULSE_CSV = readFileSync(fileURLToPath(new URL("../../../test-data/projects/ring/pulse.csv", import.meta.url)));
 const TRIALS = fileURLToPath(new URL("../../../test-data/projects/ring/trials.inputs.toml", import.meta.url));
 
 async function openExample(page: Page, name: string) {
@@ -146,4 +148,35 @@ test("a test run with trials marks them and averages each condition", async ({ p
   expect(Number(await cell(page, "tap 3", "test-spikes").innerText())).toBeGreaterThan(0);
   await expect(panel.getByTestId("test-incomplete")).toHaveCount(0);
   await panel.screenshot({ path: "test-results/test-run-trials.png" });
+});
+
+test("a test run plays a data file: the source's targets spike in the data's pattern", async ({ page }) => {
+  test.setTimeout(90_000);
+  await openExample(page, "ring");
+  await page.getByTestId("nav-inputs").click();
+  const panel = page.getByTestId("test-panel");
+  // A CSV opened in the browser, played by a file source into the first column's neurons (three channels, each on for
+  // 200 ms in turn: the source's data goes to the throwaway with the test).
+  await page.getByTestId("data-file-input").setInputFiles({ name: "pulse.csv", mimeType: "text/csv", buffer: PULSE_CSV });
+  await expect(page.getByTestId("data-info-pulse")).toContainText("3 channels");
+  await page.getByTestId("add-file").click();
+  const editor = page.getByTestId("source-editor");
+  await page.getByLabel("Name", { exact: true }).fill("odour");
+  await page.getByLabel("Target neurons", { exact: true }).fill("hidden-10");
+  await page.getByTestId("file-data").click();
+  await page.getByRole("option", { name: "pulse", exact: true }).click();
+  await editor.getByLabel("Hz at 1").fill("300");
+  await editor.getByLabel("mV per event").fill("15");
+
+  // 0.5 s: only the first channel has played; 1.5 s: all three have.
+  await panel.getByTestId("test-duration").fill("0.5");
+  await panel.getByTestId("test-run").click();
+  await expect(panel.getByTestId("test-summary")).toContainText("0.50 s simulated", { timeout: 30_000 });
+  const early = Number(await cell(page, "odour", "test-spikes").innerText());
+  expect(early).toBeGreaterThan(3);
+  await panel.getByTestId("test-duration").fill("1.5");
+  await panel.getByTestId("test-run").click();
+  await expect(panel.getByTestId("test-summary")).toContainText("1.50 s simulated", { timeout: 30_000 });
+  const later = Number(await cell(page, "odour", "test-spikes").innerText());
+  expect(later).toBeGreaterThan(2 * early); // three channels played, not one
 });

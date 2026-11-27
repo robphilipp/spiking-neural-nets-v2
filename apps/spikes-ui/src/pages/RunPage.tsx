@@ -225,7 +225,7 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
               setBuilding(true);
               try {
                 const nodes = replay ? [] : nodesSetting.split(",").map((n) => n.trim()).filter(Boolean);
-                await buildNetwork(client!, id, { shards, seed, nodes, inputs: replay ? null : inputs, inputsKey: inputsKey(inputsName, inputs) });
+                await buildNetwork(client!, id, { shards, seed, nodes, inputs: replay ? null : inputs, inputsKey: inputsKey(inputsName, inputs), dataFiles: useProject.getState().dataFiles });
                 setBuiltNodes(nodes);
               } finally {
                 setBuilding(false);

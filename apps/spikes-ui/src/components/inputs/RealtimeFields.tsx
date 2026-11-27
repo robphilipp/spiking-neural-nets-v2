@@ -1,7 +1,8 @@
 import type { Network } from "@spikes/client";
 import { Choice, NumberField, Notice, Row } from "@/components/kit";
-import { InputFileError, type OnPause, type RealtimeSource, type Source, type SpeedRule, formatGrid, parseGrid, targetNeurons } from "../../inputFile";
-import { channelPlan } from "../../realtimeChannels";
+import { InputFileError, type OnPause, type RealtimeSource, type Source, type SpeedRule, formatGrid, parseGrid } from "../../inputFile";
+import { sourceChannels } from "../../sourceChannels";
+import { LayoutFields } from "./LayoutFields";
 import { EncodingFields } from "./EncodingFields";
 import { ParsedField } from "./ParsedField";
 import { RealtimePreview } from "./RealtimePreview";
@@ -13,15 +14,6 @@ import { RealtimePreview } from "./RealtimePreview";
  * capture. Edits go to `set`.
  */
 export function RealtimeFields({ s, set, network }: { s: RealtimeSource; set: (change: Partial<Source>) => void; network: Network | null }) {
-  const targets = (() => {
-    if (!network) return null;
-    try {
-      return targetNeurons(s.targets, network).length;
-    } catch {
-      return null;
-    }
-  })();
-  const plan = targets === null ? null : channelPlan(s, targets);
   return (
     <>
       <Row>
@@ -97,13 +89,8 @@ export function RealtimeFields({ s, set, network }: { s: RealtimeSource; set: (c
           testId="speed-rule"
         />
       </Row>
-      {plan && (
-        <p className={"error" in plan ? "text-xs text-destructive" : "text-xs text-muted-foreground"} data-testid="channel-plan">
-          {"error" in plan
-            ? `${plan.error}: narrow the targets or lower the grid. The source won't start.`
-            : `${plan.channels} channel${plan.channels === 1 ? "" : "s"} for ${targets} target neuron${targets === 1 ? "" : "s"}${plan.channels < (targets ?? 0) ? ` (the other ${(targets ?? 0) - plan.channels} get nothing)` : ""}`}
-        </p>
-      )}
+      {s.kind !== "sensor" && <LayoutFields s={s} set={set} network={network} data={null} />}
+      {s.kind === "sensor" && network && <SensorPlan s={s} network={network} />}
       {s.kind === "sensor" ? (
         <Notice data-testid="sensor-note">
           A program streams into this source: it finds the sensor named <code>{s.name}</code> once the run is going (the engine's <code>listSensors</code>, or{" "}
@@ -113,5 +100,17 @@ export function RealtimeFields({ s, set, network }: { s: RealtimeSource; set: (c
         <RealtimePreview source={s} network={network} />
       )}
     </>
+  );
+}
+
+/** A sensor has one channel per target neuron. */
+function SensorPlan({ s, network }: { s: RealtimeSource; network: Network }) {
+  const r = sourceChannels(s, network, null);
+  if (!("targets" in r)) return null;
+  const n = r.targets.length;
+  return (
+    <p className={n === 0 ? "text-xs text-destructive" : "text-xs text-muted-foreground"} data-testid="channel-plan">
+      {n === 0 ? "sensor has no target neurons. The source won't start." : `${n} channel${n === 1 ? "" : "s"} for ${n} target neuron${n === 1 ? "" : "s"}`}
+    </p>
   );
 }

@@ -6,12 +6,14 @@ import { Heading, Panel } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { scheduleText, type SourceState } from "../../inputEdit";
 import { describeTargets, type InputFile, isRealtime, type Source, type SourceKind, targetNeurons } from "../../inputFile";
-import { channelPlan } from "../../realtimeChannels";
+import { hasChannels } from "../../channelLayout";
+import { type LoadedData } from "../../inputData";
+import { mappingWarning, sourceChannels } from "../../sourceChannels";
 import type { RealtimeStatus } from "../../realtimeManager";
 import { FireButton } from "../FireButton";
 import { useMemo } from "react";
 
-const ADD: SourceKind[] = ["pulse", "poisson", "periodic", "signal"];
+const ADD: SourceKind[] = ["pulse", "poisson", "periodic", "signal", "file"];
 /** A realtime source's live badge. */
 const LIVE_TONE: Record<RealtimeStatus["state"], string> = {
   starting: "bg-warning text-black",
@@ -67,6 +69,7 @@ export function SourceList({
   realtime,
   canFire,
   onError,
+  data,
 }: {
   file: InputFile;
   selected: number;
@@ -80,8 +83,14 @@ export function SourceList({
   realtime: Record<string, RealtimeStatus>;
   canFire: boolean;
   onError: (message: string) => void;
+  /** The input file's data files, read (a file source's channels are the file's). */
+  data: LoadedData;
 }) {
   const matches = useMemo(() => file.sources.map((s) => matchOf(s, network)), [file.sources, network]);
+  const plans = useMemo(
+    () => file.sources.map((s) => (network && hasChannels(s) ? sourceChannels(s, network, data) : null)),
+    [file.sources, network, data],
+  );
   return (
     <Panel data-testid="source-list">
       <Heading>Sources</Heading>
@@ -91,7 +100,11 @@ export function SourceList({
           const match = matches[i];
           const live = realtime[s.name];
           // What a realtime source sends, or why it can't: known once the network says how many neurons it drives.
-          const plan = isRealtime(s) && match && "count" in match ? channelPlan(s, match.count) : null;
+          const found = plans[i];
+          const mapping = found && "result" in found ? found.result : null;
+          const warn = mapping?.ok ? mappingWarning(mapping) : null;
+          const shown = mapping && (isRealtime(s) || s.kind === "file" || ("layout" in s && s.layout));
+          const sensor = s.kind === "sensor" && match && "count" in match ? match.count : null;
           return (
             <div
               key={i}
@@ -123,9 +136,20 @@ export function SourceList({
                   {" · "}
                   {isRealtime(s) ? "live, while the run goes" : scheduleText(s)}
                 </div>
-                {plan && (
-                  <div className={cn("mt-0.5 text-xs", "error" in plan ? "text-destructive" : "text-muted-foreground")} data-testid={`source-channels-${s.name}`}>
-                    {"error" in plan ? plan.error : `${plan.channels} channel${plan.channels === 1 ? "" : "s"}`}
+                {shown && mapping && (
+                  <div className={cn("mt-0.5 text-xs", !mapping.ok ? "text-destructive" : "text-muted-foreground")} data-testid={`source-channels-${s.name}`}>
+                    {mapping.ok ? `${mapping.channels.length} channel${mapping.channels.length === 1 ? "" : "s"}` : mapping.error}
+                    {warn && (
+                      <span className="text-warning" data-testid={`source-mapping-${s.name}`}>
+                        {" "}
+                        · {warn}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {sensor !== null && (
+                  <div className={cn("mt-0.5 text-xs", sensor === 0 ? "text-destructive" : "text-muted-foreground")} data-testid={`source-channels-${s.name}`}>
+                    {sensor === 0 ? "sensor has no target neurons" : `${sensor} channel${sensor === 1 ? "" : "s"}`}
                   </div>
                 )}
                 {live && (

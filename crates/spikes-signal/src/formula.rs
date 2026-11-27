@@ -9,6 +9,9 @@
 //! step(x)        1 for x ≥ 0, else 0
 //! pulse(t, period, width)   1 for the first `width` of every `period`, else 0
 //! clamp(x, lo, hi)
+//! data("name", t, c)   the data file `name` (CSV or WAV, see `data`) at time `t` ms, channel `c`, linearly
+//!                      interpolated; 0 outside the file's samples and for a channel it doesn't have
+//! data("name", t)      channel 0
 //! rand()         uniform in [0, 1): a fresh value per sample and channel (seeded: see `noise`)
 //! gauss()        standard normal, likewise
 //! ```
@@ -18,6 +21,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::data::DataSets;
 use crate::noise;
 
 /// A malformed formula: what's wrong, and where (a character offset).
@@ -151,6 +155,29 @@ enum Node {
     Rand(u32),
     /// `gauss()`, with its call site.
     Gauss(u32),
+    /// `data("name", t, c)`: the data file's name, the time, and the channel (channel 0 if omitted).
+    Data(String, Box<Node>, Option<Box<Node>>),
+}
+
+/// Which channel of a data file a `data(…)` call reads, as far as the formula says.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DataChannel {
+    /// No channel argument: channel 0.
+    Zero,
+    /// The formula's own channel `c`.
+    C,
+    /// A whole number written in the formula.
+    Fixed(u32),
+    /// Anything else (computed).
+    Computed,
+}
+
+/// A `data(…)` call in a formula: for checking, when the inputs are given to a run, that the files exist and have
+/// the channels.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataUse {
+    pub name: String,
+    pub channel: DataChannel,
 }
 
 /// Where a formula is evaluated: which sample, and the noise stream's key (see [`noise::key`]).
@@ -167,6 +194,7 @@ pub struct At {
 pub struct Formula {
     source: String,
     node: Node,
+    uses: Vec<DataUse>,
 }
 
 impl Formula {
@@ -180,6 +208,7 @@ impl Formula {
             text: source,
             i: 0,
             sites: 0,
+            uses: Vec::new(),
         };
         let node = p.conditional()?;
         p.skip();
@@ -189,6 +218,7 @@ impl Formula {
         Ok(Self {
             source: source.to_string(),
             node,
+            uses: p.uses,
         })
     }
 
@@ -197,15 +227,26 @@ impl Formula {
         &self.source
     }
 
-    /// The value at time `t` (ms), for channel `c` of `n`, at `at`. Not finite: 0.
+    /// The value at time `t` (ms), for channel `c` of `n`, at `at`, with no data files (`data(…)` is 0). Not finite:
+    /// 0.
     pub fn eval(&self, t: f64, c: u32, n: u32, at: At) -> f64 {
-        let v = eval(&self.node, t, c, n, at);
+        self.eval_with(t, c, n, at, &DataSets::default())
+    }
+
+    /// Like [`Self::eval`], with the data files `data(…)` looks up.
+    pub fn eval_with(&self, t: f64, c: u32, n: u32, at: At, data: &DataSets) -> f64 {
+        let v = eval(&self.node, t, c, n, at, data);
         if v.is_finite() { v } else { 0.0 }
+    }
+
+    /// The `data(…)` calls the formula makes.
+    pub fn data_uses(&self) -> &[DataUse] {
+        &self.uses
     }
 }
 
-fn eval(node: &Node, t: f64, c: u32, n: u32, at: At) -> f64 {
-    let e = |x: &Node| eval(x, t, c, n, at);
+fn eval(node: &Node, t: f64, c: u32, n: u32, at: At, data: &DataSets) -> f64 {
+    let e = |x: &Node| eval(x, t, c, n, at, data);
     match node {
         Node::Number(v) => *v,
         Node::T => t,
@@ -246,6 +287,17 @@ fn eval(node: &Node, t: f64, c: u32, n: u32, at: At) -> f64 {
         }
         Node::Rand(site) => noise::uniform(at.key, c, at.sample, *site, 0),
         Node::Gauss(site) => noise::gauss(at.key, c, at.sample, *site),
+        Node::Data(name, time, channel) => {
+            let time = e(time);
+            // A channel that isn't a whole number in range is no channel: 0.
+            let channel = channel.as_ref().map_or(0.0, |x| e(x));
+            match data.get(name) {
+                Some(set) if channel >= 0.0 && channel.fract() == 0.0 && channel < 4.0e9 => {
+                    set.at(time, channel as usize)
+                }
+                _ => 0.0,
+            }
+        }
     }
 }
 
@@ -254,6 +306,7 @@ struct Parser<'a> {
     text: &'a str,
     i: usize,
     sites: u32,
+    uses: Vec<DataUse>,
 }
 
 impl Parser<'_> {
@@ -408,10 +461,13 @@ impl Parser<'_> {
             }
             _ => {}
         }
+        if word == "data" {
+            return self.data_call();
+        }
         let Some((func, arity)) = Func::named(word) else {
             self.i = start;
             return Err(self.fail(&format!(
-                "unknown name '{word}' (use t, c, n, pi, or a function like sin, pulse, step, rand)"
+                "unknown name '{word}' (use t, c, n, pi, or a function like sin, pulse, step, rand, data)"
             )));
         };
         self.expect("(")?;
@@ -427,6 +483,48 @@ impl Parser<'_> {
             )));
         }
         Ok(Node::Call(func, args))
+    }
+}
+
+impl Parser<'_> {
+    // data := 'data' '(' string ',' conditional (',' conditional)? ')'   (the name is in double quotes, no escapes)
+    fn data_call(&mut self) -> Result<Node, FormulaError> {
+        self.expect("(")?;
+        self.skip();
+        if !self.eat("\"") {
+            return Err(
+                self.fail("data takes the file's name in quotes, then t, and optionally c: data(\"name\", t, c)")
+            );
+        }
+        let start = self.i;
+        let Some(len) = self.text[start..].find('"') else {
+            return Err(self.fail("the data name needs a closing quote"));
+        };
+        let name = self.text[start..start + len].to_string();
+        self.i = start + len + 1;
+        self.expect(",")?;
+        let time = self.conditional()?;
+        let (channel, kind) = if self.eat(",") {
+            let from = self.i;
+            let node = self.conditional()?;
+            let text = self.text[from..self.i].trim();
+            let kind = if text == "c" {
+                DataChannel::C
+            } else if !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()) {
+                text.parse().map_or(DataChannel::Computed, DataChannel::Fixed)
+            } else {
+                DataChannel::Computed
+            };
+            (Some(Box::new(node)), kind)
+        } else {
+            (None, DataChannel::Zero)
+        };
+        self.expect(")")?;
+        self.uses.push(DataUse {
+            name: name.clone(),
+            channel: kind,
+        });
+        Ok(Node::Data(name, Box::new(time), channel))
     }
 }
 
@@ -513,5 +611,53 @@ mod tests {
         assert!((0.0..1.0).contains(&a));
         let two = Formula::compile("rand() - rand()").unwrap();
         assert_ne!(two.eval(0.0, 0, 1, at(0, 1)), 0.0, "two calls are independent");
+    }
+
+    #[test]
+    fn data_lookups_and_the_calls_a_formula_makes() {
+        use crate::data::{DataFile, DataSets};
+        let sets = DataSets::load(&[DataFile {
+            name: "d".into(),
+            bytes: b"t,a,b\n0,0,10\n100,1,20\n".to_vec(),
+        }])
+        .unwrap();
+        let at = |src: &str, t: f64, c: u32| Formula::compile(src).unwrap().eval_with(t, c, 2, At::default(), &sets);
+        assert_eq!(at("data(\"d\", t, c)", 50.0, 0), 0.5);
+        assert_eq!(at("data(\"d\", t, c)", 50.0, 1), 15.0);
+        assert_eq!(at("data(\"d\", t)", 50.0, 1), 0.5, "channel 0 without c");
+        assert_eq!(at("data(\"d\", t, c)", 150.0, 0), 0.0, "after the last sample");
+        assert_eq!(at("data(\"d\", t, c)", 50.0, 2), 0.0, "no such channel");
+        assert_eq!(at("data(\"d\", t, 1.5)", 50.0, 0), 0.0, "not a whole channel");
+        assert_eq!(at("data(\"nope\", t)", 50.0, 0), 0.0, "no such file");
+        assert_eq!(at("2 * data(\"d\", t * 2 - 10, c + 1)", 30.0, 0), 30.0);
+        let f =
+            Formula::compile("data(\"a\", t) + data(\"b\", t, c) + data(\"c\", t, 3) + data(\"d\", t, c + 1)").unwrap();
+        let uses: Vec<(&str, DataChannel)> = f
+            .data_uses()
+            .iter()
+            .map(|u| (u.name.as_str(), u.channel.clone()))
+            .collect();
+        assert_eq!(
+            uses,
+            [
+                ("a", DataChannel::Zero),
+                ("b", DataChannel::C),
+                ("c", DataChannel::Fixed(3)),
+                ("d", DataChannel::Computed)
+            ]
+        );
+        assert!(
+            Formula::compile("data(t, 1)")
+                .unwrap_err()
+                .message
+                .starts_with("data takes the file's name")
+        );
+        assert!(
+            Formula::compile("data(\"x, 1)")
+                .unwrap_err()
+                .message
+                .contains("closing quote")
+        );
+        assert!(Formula::compile("data(\"x\")").is_err());
     }
 }

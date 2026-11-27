@@ -81,31 +81,6 @@ export const cellsOf = (grid: Grid) => grid.cols * grid.rows;
 /** How many channels a camera sends: one per cell, or two (on, off) for frame differences. */
 export const cameraChannels = (grid: Grid, mode: CameraMode) => cellsOf(grid) * (mode === "changes" ? 2 : 1);
 
-export type ChannelPlan = { channels: number } | { error: string };
-
-/**
- * How many channels a realtime source sends when it has `targets` target neurons (channel i drives the i-th target
- * in network order). A microphone sends one band per target (at most `bands`), a sensor one channel per target. A
- * camera sends a fixed number, so it needs at least that many targets (more is fine: the extra neurons get nothing).
- */
-export function channelPlan(s: RealtimeSource, targets: number): ChannelPlan {
-  if (targets === 0) return { error: `${s.kind} has no target neurons` };
-  switch (s.kind) {
-    case "microphone":
-      return { channels: Math.min(targets, s.bands ?? targets) };
-    case "sensor":
-      return { channels: targets };
-    case "camera": {
-      const need = cameraChannels(s.grid, s.mode);
-      if (targets < need) {
-        const what = `camera ${s.grid.cols}x${s.grid.rows}${s.mode === "changes" ? " changes (on and off)" : ""}`;
-        return { error: `${what} needs ${need} target neurons, has ${targets}` };
-      }
-      return { channels: need };
-    }
-  }
-}
-
 /** The channels a source shows in a preview with no network to say how many neurons it drives. */
 export function previewChannels(s: RealtimeSource): number {
   switch (s.kind) {

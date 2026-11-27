@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Notice } from "@/components/kit";
 import { Button } from "@/components/ui/button";
 import { type Capture, openCapture } from "../../capture";
-import { type RealtimeSource, targetNeurons } from "../../inputFile";
-import { cellsOf, channelPlan, previewChannels } from "../../realtimeChannels";
+import type { RealtimeSource } from "../../inputFile";
+import { sourceChannels } from "../../sourceChannels";
+import { cellsOf, previewChannels } from "../../realtimeChannels";
 
 /** The pixel size of a camera preview's side (the grid is scaled to fit). */
 const SIZE = 192;
@@ -43,12 +44,9 @@ export function RealtimePreview({ source, network }: { source: Exclude<RealtimeS
   // Channels as the run would send them: by the targets in the built network, else as many as the settings say.
   const channels = useMemo(() => {
     if (network) {
-      try {
-        const plan = channelPlan(source, targetNeurons(source.targets, network).length);
-        if ("channels" in plan) return plan.channels;
-      } catch {
-        // an unknown set or bad pattern: the settings alone decide
-      }
+      const r = sourceChannels(source, network, null);
+      if ("result" in r && r.result?.ok) return r.result.channels.length;
+      // an unknown set, a bad pattern or too few neurons: the settings alone decide
     }
     return previewChannels(source);
   }, [source, network]);

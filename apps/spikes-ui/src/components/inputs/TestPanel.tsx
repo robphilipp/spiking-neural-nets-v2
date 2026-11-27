@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { useConnection } from "../../connection";
 import type { InputFile, Trial } from "../../inputFile";
 import type { NeuronMatch } from "../../neuronMatch";
-import { useSession } from "../../store";
+import { useProject, useSession } from "../../store";
 import { type Outcome, useTest } from "../../testStore";
 import {
   conditionNames,
@@ -106,10 +106,10 @@ export function TestPanel({ file, selected, seed }: { file: InputFile | null; se
     setError(null);
     setRunning(true);
     try {
-      const inputs = testInputs(file, seed, network);
+      const inputs = testInputs(file, seed, network, useProject.getState().dataFiles);
       const { groups, problems } = resolveGroups(selection, file, network);
       if (problems.length) throw new Error(problems.join("; "));
-      const result = await client.testRun(id, { sources: inputs.sources, trials: inputs.trials, durationMs, binMs, groups, seed });
+      const result = await client.testRun(id, { sources: inputs.sources, trials: inputs.trials, data: inputs.data, durationMs, binMs, groups, seed });
       useTest.setState({ outcome: { key, result, trials: inputs.trials, size: network.neurons.length } });
     } catch (e) {
       setError(message(e));
