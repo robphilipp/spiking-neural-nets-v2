@@ -37,7 +37,7 @@ test("save a run, then continue it from the Recordings page", async ({ page }) =
   await expect(page.getByTestId("state")).toHaveText("ready");
   await expect(page.getByText("3 neurons")).toBeVisible();
   const simulated = async () => Number((await page.getByTestId("timing").textContent())!.match(/Simulated time\s*([\d.]+) s/)![1]);
-  await expect.poll(simulated, { timeout: 5000 }).toBeCloseTo(savedAt, 2);
+  await expect.poll(simulated, { timeout: 5000 }).toBeCloseTo(savedAt, 1); // shown to 0.1 s
   await page.getByTestId("start").click();
   await expect(page.getByTestId("timing")).toContainText(/Spikes\s*[1-9][\d,]*\/s/, { timeout: 5000 });
   await page.getByTestId("stop").click();

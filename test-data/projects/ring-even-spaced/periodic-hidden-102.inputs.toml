@@ -1,0 +1,7 @@
+[[source]]
+name = "periodic"
+kind = "periodic"
+neurons = { prefix = "hidden-102" }
+duration = "500 ms"
+period = "100 ms"
+mv = 5

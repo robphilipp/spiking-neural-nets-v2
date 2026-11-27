@@ -170,6 +170,8 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
   }, [live, selection]);
   const raster = useBehavior(live?.raster);
   const stats = useBehavior(live?.stats);
+  /** The timing panel's figures: five times a second, so they can be read. */
+  const shown = useBehavior(live?.stats, 200);
   useEffect(() => {
     if (stats) simTime(stats.simMs);
   }, [stats]);
@@ -489,14 +491,14 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
 
       <Panel>
         <div className="flex flex-wrap gap-x-8 gap-y-2" data-testid="timing">
-          <Stat label="Simulated time" value={`${((stats?.simMs ?? session.simMs) / 1000).toFixed(3)} s`} />
-          {trials.length > 0 && <Stat label="Trial" value={trialAt(trials, stats?.simMs ?? session.simMs)} testId="trial" />}
-          <Stat label="Speed" value={!stats || stats.speed === 0 ? "—" : Number.isFinite(stats.speed) ? `×${stats.speed.toPrecision(3)}` : "max"} />
-          <Stat label="Behind the clock" value={`${(stats?.lagMs ?? 0).toFixed(1)} ms`} warn={(stats?.lagMs ?? 0) > 20} />
-          <Stat label="Frames" value={`${stats?.framesPerS ?? 0}/s`} />
-          <Stat label="Spikes" value={`${(stats?.spikesPerS ?? 0).toLocaleString()}/s`} />
-          <Stat label="Detail" value={stats ? (["exact", "counts", "cells"][stats.lod] ?? "?") : "—"} warn={!!stats && stats.lod !== Lod.Exact} />
-          <Stat label="Dropped" value={`${stats?.droppedFrames ?? 0} frames · ${stats?.droppedEvents ?? 0} events`} warn={!!stats && stats.droppedFrames + stats.droppedEvents > 0} />
+          <Stat label="Simulated time" value={`${((shown?.simMs ?? session.simMs) / 1000).toFixed(1)} s`} />
+          {trials.length > 0 && <Stat label="Trial" value={trialAt(trials, shown?.simMs ?? session.simMs)} testId="trial" />}
+          <Stat label="Speed" value={!shown || shown.speed === 0 ? "—" : Number.isFinite(shown.speed) ? `×${shown.speed.toPrecision(3)}` : "max"} />
+          <Stat label="Behind the clock" value={`${(shown?.lagMs ?? 0).toFixed(1)} ms`} warn={(shown?.lagMs ?? 0) > 20} />
+          <Stat label="Frames" value={`${shown?.framesPerS ?? 0}/s`} />
+          <Stat label="Spikes" value={`${(shown?.spikesPerS ?? 0).toLocaleString()}/s`} />
+          <Stat label="Detail" value={shown ? (["exact", "counts", "cells"][shown.lod] ?? "?") : "—"} warn={!!shown && shown.lod !== Lod.Exact} />
+          <Stat label="Dropped" value={`${shown?.droppedFrames ?? 0} frames · ${shown?.droppedEvents ?? 0} events`} warn={!!shown && shown.droppedFrames + shown.droppedEvents > 0} />
         </div>
       </Panel>
 

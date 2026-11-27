@@ -210,7 +210,7 @@ export function InputsPage() {
           {showStatus && expanded.trials.length > 0 && (
             <Panel>
               <div className="flex flex-wrap gap-x-8" data-testid="inputs-run">
-                <Stat label="Simulated time" value={`${(simMs / 1000).toFixed(3)} s`} />
+                <Stat label="Simulated time" value={`${(simMs / 1000).toFixed(1)} s`} />
                 <Stat label="Trial" value={trialAt(expanded.trials, simMs)} testId="inputs-trial" />
               </div>
             </Panel>

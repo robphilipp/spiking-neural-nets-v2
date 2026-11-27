@@ -229,3 +229,32 @@ fn frames_keep_coming_after_stop_and_rebuild() {
         while viewer.try_recv().is_some() {}
     }
 }
+
+#[test]
+fn behind_the_clock_keeps_the_runs_lag_once_it_has_ended() {
+    // A run's clock keeps going after its simulation stops: a frame made later used to report the time since the
+    // end as lag. A viewer attached well after the end gets a frame at once; it shows the lag the run had.
+    tempo_testkit::with_timeout(Duration::from_secs(60), "behind_the_clock", || {
+        let engine = Engine::new();
+        let session = ring(&engine);
+        session
+            .start(RunSettings {
+                speed: Speed::Factor(1.0),
+                duration: Some(SimDuration::from_millis(100)),
+                record: None,
+            })
+            .unwrap();
+        assert!(session.wait_for_run(Duration::from_secs(10)));
+        std::thread::sleep(Duration::from_millis(400));
+        let viewer = session.attach(ViewSettings {
+            frame: Duration::from_millis(5),
+            ..ViewSettings::default()
+        });
+        let frame = decode(&viewer.recv_timeout(Duration::from_secs(2)).expect("a frame")).unwrap();
+        assert!(
+            frame.header.lag_ms < 100.0,
+            "lag {} ms: it counts the time since the run ended",
+            frame.header.lag_ms
+        );
+    })
+}

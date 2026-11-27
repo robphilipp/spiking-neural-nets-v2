@@ -7,7 +7,7 @@
 //! gets); the simulation never waits. Viewers survive rebuilds: the hub just switches to the new runtime's events.
 
 use std::collections::{BTreeMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -148,6 +148,11 @@ pub(crate) struct Hub {
     /// The latest simulation time the session reported (ns): the clock's progress doesn't cover a run that ends
     /// as fast as possible after its last event, or steps taken while not running.
     known_ns: AtomicU64,
+    /// Whether a run is going: "behind the clock" is measured only then. Once a run ends its clock keeps going while
+    /// the simulation doesn't, so a frame made after the end would show the time since the end as lag.
+    running: AtomicBool,
+    /// The lag of the latest frame made while running (f32 bits, ms): what frames show once the run has ended.
+    lag_bits: AtomicU32,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -163,6 +168,8 @@ impl Hub {
             source: Mutex::new(None),
             next_id: AtomicU64::new(0),
             known_ns: AtomicU64::new(0),
+            running: AtomicBool::new(false),
+            lag_bits: AtomicU32::new(0f32.to_bits()),
             stats: FrameStatsCell::default(),
         });
         let weak = Arc::downgrade(&hub);
@@ -189,6 +196,7 @@ impl Hub {
             slot.last_t1 = u64::MAX;
         }
         self.known_ns.store(0, Ordering::Relaxed);
+        self.lag_bits.store(0f32.to_bits(), Ordering::Relaxed);
         *source = Some(Source {
             stream: rt.subscribe(SUBSCRIPTION_BATCHES),
             clock: rt.clock(),
@@ -206,6 +214,28 @@ impl Hub {
             encoding: Duration::from_nanos(s.encode_ns.load(Ordering::Relaxed)),
             slowest_frame: Duration::from_nanos(s.max_encode_ns.load(Ordering::Relaxed)),
         }
+    }
+
+    /// A run started: frames measure how far it is behind the clock.
+    pub(crate) fn run_started(&self) {
+        self.running.store(true, Ordering::Release);
+    }
+
+    /// The run's simulation stopped (by itself or stopped): frames keep the lag it had while it went.
+    pub(crate) fn run_ended(&self) {
+        self.running.store(false, Ordering::Release);
+    }
+
+    /// How far the simulation (at `sim` ns) is behind `clock`, ms: measured while a run goes, else as it last was.
+    fn lag_ms(&self, clock: &ClockHandle, sim: u64) -> f32 {
+        if !self.running.load(Ordering::Acquire) {
+            return f32::from_bits(self.lag_bits.load(Ordering::Relaxed));
+        }
+        let lag = clock.horizon().map_or(0.0, |h: SimTime| {
+            h.since_start().as_nanos().saturating_sub(sim) as f32 / 1e6
+        });
+        self.lag_bits.store(lag.to_bits(), Ordering::Relaxed);
+        lag
     }
 
     /// Records that simulation time has reached `t`.
@@ -332,9 +362,11 @@ fn aggregate(hub: &Weak<Hub>) {
             slot.deadline = now + slot.settings.frame;
             let t = Instant::now();
             let known = hub.known_ns.load(Ordering::Relaxed);
+            let sim = source.clock.sim_time().since_start().as_nanos().max(known);
+            let lag_ms = hub.lag_ms(&source.clock, sim);
             // A bug in one frame must not end the session's frames for good: drop that frame and go on.
             let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                emit(hub.session, slot, source, dropped_events, known)
+                emit(hub.session, slot, source, dropped_events, known, lag_ms)
             }))
             .unwrap_or_else(|_| {
                 eprintln!("spikes: a frame for session {} failed; it was dropped", hub.session);
@@ -400,7 +432,7 @@ fn latest(mut changes: Vec<(u32, u32, f32)>) -> Vec<((u32, u32), f32)> {
 }
 
 /// Encodes and sends a slot's frame; returns whether there was one.
-fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, known_ns: u64) -> bool {
+fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, known_ns: u64, lag_ms: f32) -> bool {
     let clock = &source.clock;
     let sim = clock.sim_time().since_start().as_nanos().max(known_ns);
     if slot.pending.is_empty() && sim == slot.last_t1 {
@@ -443,9 +475,6 @@ fn emit(session: u32, slot: &mut Slot, source: &Source, dropped_events: u32, kno
         None => f32::INFINITY,
         Some(f) => (1.0 / f) as f32,
     };
-    let lag_ms = clock.horizon().map_or(0.0, |h: SimTime| {
-        h.since_start().as_nanos().saturating_sub(sim) as f32 / 1e6
-    });
     let header = FrameHeader {
         session,
         seq: slot.seq,

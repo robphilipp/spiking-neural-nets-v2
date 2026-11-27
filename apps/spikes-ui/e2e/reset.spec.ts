@@ -33,7 +33,7 @@ test("Reset puts the network back as built, and the next run starts from time 0"
   for (const id of ["raster", "rate", "weight-trend"]) await expect.poll(() => domain(id), { message: id }).toBe("20000,40000");
 
   await page.getByTestId("reset").click();
-  await expect(page.getByTestId("timing")).toContainText(/Simulated time\s*0\.000 s/);
+  await expect(page.getByTestId("timing")).toContainText(/Simulated time\s*0\.0 s/);
   // The charts start over at time 0, axes and all.
   for (const id of ["raster", "rate", "weight-trend"]) await expect.poll(() => domain(id), { message: id }).toBe("0,20000");
   expect(await weights()).toEqual(built);

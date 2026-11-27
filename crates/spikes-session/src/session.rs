@@ -1064,6 +1064,7 @@ impl Session {
         };
         drop(inner);
 
+        self.shared.hub.run_started();
         let session = self.clone();
         std::thread::Builder::new()
             .name(format!("session-{}", self.shared.id.0))
@@ -1084,6 +1085,8 @@ impl Session {
         let mut outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             rt.run_until_unless_stopped(end, stop_token)
         }));
+        // The simulation has stopped (its clock hasn't): frames from now on keep the lag the run had.
+        self.shared.hub.run_ended();
         // A cluster's run ends everywhere at once. The coordinator waits until every node has sent the events it
         // emitted (they precede its end report), so views and recordings are complete; a node sends them.
         let (member, cluster) = {
