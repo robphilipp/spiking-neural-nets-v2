@@ -331,6 +331,8 @@ export interface CurrentSession {
   replayEndMs: number | null;
   /** The input file (name and contents, as JSON) the network was built with; null for a session opened as it was. */
   builtInputs: string | null;
+  /** The node agents the network was built on (none: this engine alone). */
+  builtNodes: string[];
   /** Counts builds (and sessions opened): live views keep their data until this or the session changes (adding or
    *  pruning connections changes the network, but not this). */
   build: number;
@@ -349,6 +351,7 @@ const initialSession: CurrentSession = {
   network: null,
   replayEndMs: null,
   builtInputs: null,
+  builtNodes: [],
   build: 0,
 };
 
@@ -383,8 +386,15 @@ export function simTime(simMs: number) {
 
 /** A network was built (or reset to as built): its run starts at time 0. `inputs`: the input file it was given (a
  *  reset keeps what the build had). */
-export function built(network: Network, inputs?: string | null) {
-  useSession.setState((s) => ({ network, state: "ready", simMs: 0, build: ++builds, builtInputs: inputs === undefined ? s.builtInputs : inputs }));
+export function built(network: Network, inputs?: string | null, nodes?: string[]) {
+  useSession.setState((s) => ({
+    network,
+    state: "ready",
+    simMs: 0,
+    build: ++builds,
+    builtInputs: inputs === undefined ? s.builtInputs : inputs,
+    builtNodes: nodes === undefined ? s.builtNodes : nodes,
+  }));
 }
 
 /** Connections were added or pruned (the run state doesn't change). */

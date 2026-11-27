@@ -11,6 +11,7 @@ test("open an example, build, stimulate and run it, and watch it live", async ({
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click(); // the app opens on the Project page
 
   // Network page: open the ring example and apply it.
   await page.getByLabel("Open an example").click();
@@ -40,6 +41,7 @@ test("open an example, build, stimulate and run it, and watch it live", async ({
 test("parse errors are shown in the editor", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click(); // the app opens on the Project page
   await page.locator(".monaco-editor").click();
   await page.keyboard.type("(neurons=[(name=a, threshold=1 parsec, position=[0, 0, 0])])");
   await page.getByTestId("apply").click();
@@ -50,6 +52,7 @@ test("parse errors are shown in the editor", async ({ page }) => {
 test("the editor suggests keys and explains them", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click(); // the app opens on the Project page
   await page.locator(".monaco-editor").click();
   await page.keyboard.type("(neurons=[(name=a, dynamics=bistable_integrator, thresh");
   await page.keyboard.press("Control+Space");
@@ -99,6 +102,7 @@ test("open a .boo file and download it again (browser projects)", async ({ page 
   await expect(page.getByTestId("connection")).toHaveText("connected");
   await page.getByTestId("nav-projects").click();
   await page.getByTestId("file-input").setInputFiles(example("ring.boo"));
+  await page.getByTestId("open-project-edit").click(); // opened: edit it (not run)
   await expect(page.locator(".monaco-editor")).toContainText("hidden-101"); // switched to the editor
   await page.getByTestId("nav-projects").click();
   await expect(page.getByLabel("Project name")).toHaveValue("ring");
@@ -137,6 +141,7 @@ test("a quiet network explains itself; background input on its inputs brings it 
 test("number fields can be emptied and retyped", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click(); // the app opens on the Project page
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();

@@ -3,7 +3,11 @@ import { useRef, useState } from "react";
 import { Field, Heading, Notice, Panel } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
+import { OpenProjectDialog } from "../components/OpenProjectDialog";
+import { useConnection } from "../connection";
 import { inFolderPath, pickFolder, pickInputFile, readProject } from "../files";
+import { applyAndBuild, NetworkErrors } from "../launch";
 import { saveProjectTo, useUnsaved } from "../saveProject";
 import { emptyInputFile, parseInputFile, serializeInputFile } from "../inputFile";
 import { serializeProject } from "../project";
@@ -30,8 +34,9 @@ function download(name: string, content: string | Uint8Array) {
   URL.revokeObjectURL(url);
 }
 
-/** Projects: a folder with project.toml and the network (desktop), or files in and out (browser). */
-export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
+/** Projects: a folder with project.toml and the network (desktop), or files in and out (browser). Once one is opened,
+ *  it asks whether to run it (`onRun`, once it's built) or edit its network (`onEdit`). */
+export function ProjectsPage({ onRun, onEdit }: { onRun: () => void; onEdit: () => void }) {
   const { folder, project, inputFiles, dataFiles, savedDescription, recent } = useProject();
   const description = useSession((s) => s.description);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
@@ -39,6 +44,44 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
   const inputUpload = useRef<HTMLInputElement>(null);
   const desktop = inTauri();
   const unsaved = useUnsaved();
+  const { client } = useConnection();
+  const loose = useProject((s) => s.loose);
+  // The project was just opened: run it or edit it?
+  const [asking, setAsking] = useState(false);
+  const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const ask = () => {
+    setLaunchError(null);
+    setAsking(true);
+  };
+  const run = async (inputs: string | null) => {
+    if (!client) return setLaunchError("Not connected to the engine: check the connection (Settings), then try again.");
+    if (inputs !== null) inputsSelected(inputs);
+    setLaunchError(null);
+    setLaunching(true);
+    try {
+      await applyAndBuild(client);
+      setAsking(false);
+      onRun();
+    } catch (e) {
+      const text = e instanceof Error ? e.message : String(e);
+      if (e instanceof NetworkErrors) {
+        // The errors are marked in the editor.
+        setAsking(false);
+        toast.error("Not run", { description: text, duration: 10_000 });
+        onEdit();
+      } else if (useSession.getState().network !== null) {
+        // Built, but the input file couldn't be given to it: the Run page says what's wrong with it.
+        setAsking(false);
+        toast.error("Built, but the inputs weren't given to the run", { description: text, duration: 10_000 });
+        onRun();
+      } else {
+        setLaunchError(text);
+      }
+    } finally {
+      setLaunching(false);
+    }
+  };
 
   const attempt = (f: () => Promise<void>) => async () => {
     setMessage(null);
@@ -71,11 +114,12 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
       });
     }
     if (!text) {
-      // Nothing to show on the Network page: say so here.
-      setMessage({ ok: true, text: `${dir} has no project.toml or .boo file: a new project there, with an empty network (Save writes them).` });
+      // No network to run: straight to the editor (Save writes the files).
+      toast.info(`${dir} has no project.toml or .boo file`, { description: "A new project there, with an empty network: Save writes them." });
+      onEdit();
       return;
     }
-    onOpened();
+    ask();
   };
 
   const save = async (dir: string) => {
@@ -113,6 +157,7 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
                 forget();
                 newProjectStarted();
                 setDescription({ name: "untitled", description: "" });
+                onEdit(); // a new project starts with writing its network
               }}
             >
               <FilePlus data-icon="inline-start" />
@@ -126,7 +171,7 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
               })}
             >
               <FolderOpen data-icon="inline-start" />
-              Open folder…
+              Open project…
             </Button>
             <Button
               disabled={!unsaved && folder !== null}
@@ -169,7 +214,7 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
                   forget();
                   projectRenamed(name);
                   setDescription({ name, description: text });
-                  onOpened();
+                  ask();
                 });
                 e.target.value = "";
               }}
@@ -279,6 +324,21 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
           </ul>
         </Panel>
       )}
+      <OpenProjectDialog
+        open={asking}
+        project={project.name}
+        names={project.inputs}
+        loose={loose}
+        selected={project.selectedInputs}
+        busy={launching}
+        error={launchError}
+        onRun={(inputs) => void run(inputs)}
+        onEdit={() => {
+          setAsking(false);
+          onEdit();
+        }}
+        onClose={() => setAsking(false)}
+      />
     </div>
   );
 }

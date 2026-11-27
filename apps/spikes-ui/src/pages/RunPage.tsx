@@ -84,7 +84,7 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
   const [building, setBuilding] = useState(false);
   const nodesSetting = useSettings((s) => s.nodes);
   /** The node agents the network was last built on (empty: the engine alone). */
-  const [builtNodes, setBuiltNodes] = useState<string[]>([]);
+  const builtNodes = useSession((s) => s.builtNodes);
   const [lockstep, setLockstep] = useState(true);
   /** Record the next run (to the engine's recordings folder; see the Recordings page). */
   const [record, setRecord] = useState(false);
@@ -229,7 +229,6 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
               try {
                 const nodes = replay ? [] : nodesSetting.split(",").map((n) => n.trim()).filter(Boolean);
                 await buildNetwork(client!, id, { shards, seed, nodes, inputs: replay ? null : inputs, inputsKey: inputsKey(inputsName, inputs), dataFiles: useProject.getState().dataFiles });
-                setBuiltNodes(nodes);
               } finally {
                 setBuilding(false);
               }

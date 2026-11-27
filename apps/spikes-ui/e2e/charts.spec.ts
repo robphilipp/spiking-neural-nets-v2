@@ -17,6 +17,7 @@ test("changing the raster's neurons keeps what it showed; chart settings apply a
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click(); // the app opens on the Project page
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();
@@ -86,6 +87,7 @@ const membraneRows = (page: Page) =>
 test("inspecting another neuron keeps the traces already shown", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("connection")).toHaveText("connected");
+  await page.getByTestId("nav-network").click(); // the app opens on the Project page
   await page.getByLabel("Open an example").click();
   await page.getByRole("option", { name: "ring", exact: true }).click();
   await page.getByTestId("apply").click();

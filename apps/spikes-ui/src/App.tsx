@@ -41,15 +41,15 @@ type Page =
 const PAGES: Array<{ id: Page; label: string; icon: ReactNode }> = [
   { id: "projects", label: "Project", icon: <FolderOpen /> },
   { id: "network", label: "Network", icon: <Code2 /> },
-  { id: "run", label: "Run", icon: <PlayCircle /> },
-  { id: "deployment", label: "Deployment", icon: <Server /> },
   { id: "inputs", label: "Inputs", icon: <Radio /> },
+  { id: "run", label: "Run", icon: <PlayCircle /> },
   { id: "recordings", label: "Recordings", icon: <History /> },
+  { id: "deployment", label: "Deployment", icon: <Server /> },
   { id: "settings", label: "Settings", icon: <Settings /> },
 ];
 
 export function App() {
-  const [page, setPage] = useState<Page>("network");
+  const [page, setPage] = useState<Page>("projects");
   const { status } = useConnection();
   const engineError = useEngineError();
   useRealtimeHost(); // realtime sources stream while the run goes, whatever page is showing
@@ -110,7 +110,7 @@ export function App() {
               </Notice>
             )}
             {page === "projects" && (
-              <ProjectsPage onOpened={() => setPage("network")} />
+              <ProjectsPage onRun={() => setPage("run")} onEdit={() => setPage("network")} />
             )}
             {page === "network" && <NetworkPage onRun={() => setPage("run")} />}
             {page === "run" && <RunPage onInputs={() => setPage("inputs")} />}

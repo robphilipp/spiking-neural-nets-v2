@@ -24,7 +24,7 @@ export async function buildNetwork(
     const sources = engineSources(file, net, loaded.sets);
     if (sources.length || trials.length) await client.setInputs(id, sources, trials, requestData(file, dataFiles));
   }
-  built(net, inputsKey);
+  built(net, inputsKey, nodes);
   return net;
 }
 

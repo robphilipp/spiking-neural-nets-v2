@@ -107,6 +107,7 @@ test("opening another network clears the Network page's preview and the Run page
   // Open a .boo file (as a project): its text in the editor, no preview of the old network, nothing built.
   await page.getByTestId("nav-projects").click();
   await page.getByTestId("file-input").setInputFiles(join(process.cwd(), "..", "..", "test-data", "networks", "ring.boo"));
+  await page.getByTestId("open-project-edit").click(); // opened: edit it (not run)
   await expect(page.locator(".monaco-editor")).toContainText("hidden-101");
   await expect(page.getByTestId("network-view-status")).toHaveText("Update to see the network as written");
   await expect(page.getByTestId("network-view-panel").getByTestId("network-3d")).toHaveCount(0);
