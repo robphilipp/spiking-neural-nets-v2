@@ -6,6 +6,8 @@ use std::path::Path;
 fn every_v1_network_migrates_and_parses() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/old");
     let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/migrated");
+    // (A fresh checkout has no such folder yet.)
+    std::fs::create_dir_all(&out).unwrap();
     let mut failures = Vec::new();
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
         .unwrap()

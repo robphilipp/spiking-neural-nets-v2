@@ -34,6 +34,7 @@ fn noisy(name: &str) -> InputSource {
             },
             key: 0,
             duration: None,
+            data: Vec::new(),
         },
     }
 }
