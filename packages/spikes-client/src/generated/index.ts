@@ -32,4 +32,5 @@ export type * from "./SourceError";
 export type * from "./State";
 export type * from "./Synapse";
 export type * from "./SynapseState";
+export type * from "./Trial";
 export type * from "./View";

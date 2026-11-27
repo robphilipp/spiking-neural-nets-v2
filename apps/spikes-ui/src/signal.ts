@@ -61,14 +61,14 @@ export function noiseKey(seed: number | bigint, source: string): bigint {
   return mix(((BigInt(seed) + GOLDEN) & MASK) ^ fnv1a(source));
 }
 
-function uniform(key: bigint, channel: number, sample: number, site: number, part: number): number {
+export function uniform(key: bigint, channel: number, sample: number, site: number, part: number): number {
   let z = mix(key ^ ((BigInt(channel) * GOLDEN) & MASK));
   z = mix(z ^ ((BigInt(sample) * 0xd6e8feb86659fd93n) & MASK));
   z = mix(z ^ ((((BigInt(site) << 32n) | BigInt(part)) * 0xa0761d6478bd642fn) & MASK));
   return Number(z >> 11n) * 2 ** -53;
 }
 
-function gauss(key: bigint, channel: number, sample: number, site: number): number {
+export function gauss(key: bigint, channel: number, sample: number, site: number): number {
   const u1 = 1 - uniform(key, channel, sample, site, 0);
   const u2 = uniform(key, channel, sample, site, 1);
   return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);

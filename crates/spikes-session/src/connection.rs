@@ -376,7 +376,22 @@ impl Connection {
                 let input = input_spec(input)?;
                 self.session(session)?.add_input(input).map(done).map_err(api_error)
             }
-            Request::SetInputs { session, sources } => {
+            Request::SetInputs {
+                session,
+                sources,
+                trials,
+            } => {
+                let trials = trials
+                    .into_iter()
+                    .map(|t| {
+                        Ok(crate::Trial {
+                            number: t.number,
+                            condition: t.condition,
+                            start: duration(t.start_ms)?,
+                            end: duration(t.end_ms)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ApiError>>()?;
                 let sources = sources
                     .into_iter()
                     .map(|s| {
@@ -389,8 +404,21 @@ impl Connection {
                         })
                     })
                     .collect::<Result<Vec<_>, ApiError>>()?;
-                self.session(session)?.set_inputs(sources).map(done).map_err(api_error)
+                self.session(session)?.set_inputs(sources, trials).map(done).map_err(api_error)
             }
+            Request::GetTrials { session } => Ok(Response::Trials {
+                trials: self
+                    .session(session)?
+                    .trials()
+                    .into_iter()
+                    .map(|t| api::Trial {
+                        number: t.number,
+                        condition: t.condition,
+                        start_ms: t.start.as_millis_f64(),
+                        end_ms: t.end.as_millis_f64(),
+                    })
+                    .collect(),
+            }),
             Request::Fire { session, source } => {
                 self.session(session)?.fire(&source).map(done).map_err(api_error)
             }

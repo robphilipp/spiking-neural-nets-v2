@@ -30,7 +30,7 @@ pub use preview::{Preview, preview};
 pub use sensors::{Encoding, OnPause, SampleBatch, Sensor, SensorInfo, SensorSpec, SensorStats, SpikeBatch};
 pub use session::{
     BuildSettings, DEFAULT_MIN_DELAY, InputSource, InputSpec, NeuronSnapshot, RunSettings, Session, SessionNotice, Speed,
-    State,
+    State, Trial,
 };
 pub use viewer::{FrameStats, Selection, ViewSettings, Viewer};
 

@@ -68,7 +68,7 @@ const RATE: SampleEncoding = SampleEncoding::Rate { max_hz: 100.0, mv: 15.0 };
 fn a_signal_drives_its_channels_in_simulated_time() {
     // Channel c fires at c/7 of 100 Hz: rates rise across the channels.
     let s = built(1, 1);
-    s.set_inputs(vec![signal("ramp", "c / (n - 1)", RATE)]).unwrap();
+    s.set_inputs(vec![signal("ramp", "c / (n - 1)", RATE)], Vec::new()).unwrap();
     run_for(&s, ms(5000));
     let counts = spikes(&s);
     assert_eq!(counts[0], 0, "rate 0");
@@ -83,7 +83,7 @@ fn a_signal_drives_its_channels_in_simulated_time() {
 fn signals_repeat_exactly_with_a_seed_whatever_the_shards_and_differ_with_another() {
     let run = |seed: u64, shards: usize| {
         let s = built(seed, shards);
-        s.set_inputs(vec![signal("noise", "clamp(0.5 + 0.3 * gauss(), 0, 1) * (rand() < 0.8)", RATE)])
+        s.set_inputs(vec![signal("noise", "clamp(0.5 + 0.3 * gauss(), 0, 1) * (rand() < 0.8)", RATE)], Vec::new())
             .unwrap();
         run_for(&s, ms(2000));
         spikes(&s)
@@ -117,7 +117,7 @@ fn pulses_arrive_at_their_times_and_sources_start_when_scheduled() {
                 duration: Some(ms(450)),
             },
         },
-    ])
+    ], Vec::new())
     .unwrap();
     run_for(&s, ms(450));
     assert_eq!(&spikes(&s)[..3], &[2, 2, 0], "pulses at 100 and 150 ms so far; the periodic input not yet");
@@ -132,16 +132,16 @@ fn inputs_are_given_once_per_build_checked_first_and_repeated_by_a_reset() {
         signal("ok", "1", RATE),
         signal("broken", "sin(t", RATE),
     ];
-    let err = s.set_inputs(bad).unwrap_err().to_string();
+    let err = s.set_inputs(bad, Vec::new()).unwrap_err().to_string();
     assert!(err.contains("input 'broken'") && err.contains("expected ')'"), "{err}");
     let twice = vec![signal("a", "1", RATE), signal("a", "0", RATE)];
-    assert!(s.set_inputs(twice).unwrap_err().to_string().contains("two sources are named 'a'"));
+    assert!(s.set_inputs(twice, Vec::new()).unwrap_err().to_string().contains("two sources are named 'a'"));
 
     // Nothing started from the failed attempts: the run is as built.
     let set = vec![signal("wave", "0.5 + 0.5 * sin(t / 50 + c)", RATE)];
-    s.set_inputs(set.clone()).unwrap();
+    s.set_inputs(set.clone(), Vec::new()).unwrap();
     assert!(
-        matches!(s.set_inputs(set), Err(SessionError::Invalid(m)) if m.contains("already has its inputs")),
+        matches!(s.set_inputs(set, Vec::new()), Err(SessionError::Invalid(m)) if m.contains("already has its inputs")),
         "once per build"
     );
     run_for(&s, ms(1000));
@@ -178,7 +178,7 @@ fn a_pulse_source_fires_by_hand() {
             },
         },
         signal("quiet", "0", RATE),
-    ])
+    ], Vec::new())
     .unwrap();
     s.fire("tap").unwrap();
     run_for(&s, ms(100));
@@ -192,11 +192,11 @@ fn a_saved_run_with_a_signal_continues_exactly() {
     let neurons = |s: &Session| -> Vec<NeuronSnapshot> { (0..8).map(|i| s.query_neuron(i).unwrap()).collect() };
     let set = vec![signal("wave", "0.5 + 0.5 * sin(t / 40 + c) * (rand() < 0.9)", RATE)];
     let whole = built(2, 2);
-    whole.set_inputs(set.clone()).unwrap();
+    whole.set_inputs(set.clone(), Vec::new()).unwrap();
     run_for(&whole, ms(1500));
 
     let part = built(2, 2);
-    part.set_inputs(set).unwrap();
+    part.set_inputs(set, Vec::new()).unwrap();
     run_for(&part, ms(700));
     let bytes = part.save().unwrap();
     let resumed = Engine::new().create("resumed", NET).unwrap();
@@ -204,4 +204,37 @@ fn a_saved_run_with_a_signal_continues_exactly() {
     run_for(&resumed, ms(800));
     assert_eq!(spikes(&resumed), spikes(&whole));
     assert_eq!(neurons(&resumed).iter().map(|n| n.spikes).sum::<u64>(), spikes(&whole).iter().sum::<u64>());
+}
+
+#[test]
+fn trials_are_kept_with_the_inputs_recorded_and_replayed() {
+    let s = built(1, 1);
+    let trial = |number: u32, condition: &str, start: u64, end: u64| spikes_session::Trial {
+        number,
+        condition: condition.into(),
+        start: ms(start),
+        end: ms(end),
+    };
+    let trials = vec![trial(1, "tail", 0, 400), trial(2, "head", 600, 1000), trial(3, "tail", 1300, 1700)];
+    let out_of_order = vec![trial(1, "", 500, 900), trial(2, "", 0, 400)];
+    assert!(s.set_inputs(Vec::new(), out_of_order).unwrap_err().to_string().contains("in order"));
+    assert!(s.set_inputs(Vec::new(), vec![trial(1, "", 500, 100)]).unwrap_err().to_string().contains("ends before"));
+    s.set_inputs(vec![signal("wave", "0.5", RATE)], trials.clone()).unwrap();
+    assert_eq!(s.trials(), trials);
+    s.reset().unwrap();
+    assert_eq!(s.trials(), trials, "a reset keeps them");
+
+    let dir = std::env::temp_dir().join(format!("spikes-trials-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    s.start(RunSettings {
+        speed: Speed::AsFastAsPossible,
+        duration: Some(ms(1800)),
+        record: Some(dir.clone()),
+    })
+    .unwrap();
+    assert!(s.wait_for_run(Duration::from_secs(30)));
+    assert!(dir.join("trials.arrow").exists());
+    let replay = Engine::new().open_recording(&dir).unwrap();
+    assert_eq!(replay.trials(), trials, "a replay has the recorded trials");
+    let _ = std::fs::remove_dir_all(&dir);
 }

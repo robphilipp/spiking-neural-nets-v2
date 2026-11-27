@@ -232,6 +232,41 @@ fn write_neurons(dir: &Path, network: &Network, description: &NetworkDescription
     Ok(n as u64)
 }
 
+/// One trial of a run's input protocol (a row of `trials.arrow`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrialRow {
+    /// Its number, from 1.
+    pub trial: u32,
+    /// Its condition (empty without conditions).
+    pub condition: String,
+    /// When it starts and ends (simulation time, ns).
+    pub start_ns: u64,
+    pub end_ns: u64,
+}
+
+/// Writes `trials.arrow` into a run directory: the run's trials, in order.
+///
+/// # Errors
+/// If the file can't be written.
+pub fn write_trials(dir: impl AsRef<Path>, trials: &[TrialRow]) -> Result<()> {
+    write_table(
+        dir.as_ref(),
+        "trials",
+        vec![
+            col("trial", DataType::UInt32),
+            col("condition", DataType::Utf8),
+            col("start_ns", DataType::UInt64),
+            col("end_ns", DataType::UInt64),
+        ],
+        vec![
+            Arc::new(UInt32Array::from_iter_values(trials.iter().map(|t| t.trial))),
+            Arc::new(StringArray::from_iter_values(trials.iter().map(|t| t.condition.as_str()))),
+            Arc::new(UInt64Array::from_iter_values(trials.iter().map(|t| t.start_ns))),
+            Arc::new(UInt64Array::from_iter_values(trials.iter().map(|t| t.end_ns))),
+        ],
+    )
+}
+
 /// One synapse as it is now (a row of the `synapses` table).
 #[derive(Copy, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SynapseRow {

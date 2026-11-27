@@ -3,6 +3,7 @@ import type { BuildSettings } from "./BuildSettings";
 import type { Input } from "./Input";
 import type { InputSource } from "./InputSource";
 import type { SensorSpec } from "./SensorSpec";
+import type { Trial } from "./Trial";
 import type { View } from "./View";
 
 /**
@@ -149,7 +150,15 @@ session: number,
 /**
  * The sources (unique names).
  */
-sources: Array<InputSource>, } | { "type": "fire", 
+sources: Array<InputSource>, 
+/**
+ * The run's trials, in order (none without a trial schedule).
+ */
+trials: Array<Trial>, } | { "type": "getTrials", 
+/**
+ * The session.
+ */
+session: number, } | { "type": "fire", 
 /**
  * The session.
  */

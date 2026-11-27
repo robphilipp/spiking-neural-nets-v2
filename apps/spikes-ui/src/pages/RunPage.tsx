@@ -1,4 +1,4 @@
-import { Lod, type Neuron, type SensorInfo } from "@spikes/client";
+import { Lod, type Neuron, type SensorInfo, type Trial } from "@spikes/client";
 import { Hammer, Pause, Play, RotateCcw, Save, SkipForward, Square, X, Zap } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -41,6 +41,15 @@ const speedLabel = (v: number) => (v >= 0 ? `×${speedOf(v)}` : `×1/${2 ** -v}`
 
 /** How many raster rows at most. */
 const MAX_ROWS = 300;
+
+/** Where `ms` falls among the run's trials: "3 of 40 · tail", "gap · next 4", "done". */
+function trialAt(trials: Trial[], ms: number): string {
+  const i = trials.findIndex((t) => ms < t.endMs);
+  if (i < 0) return "done";
+  const t = trials[i]!;
+  if (ms < t.startMs) return i === 0 ? `starts at ${(t.startMs / 1000).toFixed(1)} s` : `gap · next ${t.number}`;
+  return `${t.number} of ${trials.length}${t.condition ? ` · ${t.condition}` : ""}`;
+}
 
 /** The input file selector's "none". */
 const NO_INPUTS = "\u0000none";
@@ -156,6 +165,19 @@ export function RunPage() {
 
   // The session's live view (it lives in a store, so its data outlives this page): one per session and build.
   const build = useSession((s) => s.build);
+  // The run's trials (from its input file's [trials]; as recorded, for a replay).
+  const [trials, setTrials] = useState<Trial[]>([]);
+  useEffect(() => {
+    if (!client || id === null || !network) return setTrials([]);
+    let live = true;
+    client
+      .getTrials(id)
+      .then((t) => live && setTrials(t))
+      .catch(() => live && setTrials([]));
+    return () => {
+      live = false;
+    };
+  }, [client, id, build, network === null]); // eslint-disable-line react-hooks/exhaustive-deps
   const built_ = network !== null;
   useEffect(() => {
     if (client && id !== null && built_) connectLive(client, id, build, useSession.getState().network!.neurons.length);
@@ -517,6 +539,7 @@ export function RunPage() {
       <Panel>
         <div className="flex flex-wrap gap-x-8 gap-y-2" data-testid="timing">
           <Stat label="Simulated time" value={`${((stats?.simMs ?? session.simMs) / 1000).toFixed(3)} s`} />
+          {trials.length > 0 && <Stat label="Trial" value={trialAt(trials, stats?.simMs ?? session.simMs)} testId="trial" />}
           <Stat label="Speed" value={!stats || stats.speed === 0 ? "—" : Number.isFinite(stats.speed) ? `×${stats.speed.toPrecision(3)}` : "max"} />
           <Stat label="Behind the clock" value={`${(stats?.lagMs ?? 0).toFixed(1)} ms`} warn={(stats?.lagMs ?? 0) > 20} />
           <Stat label="Frames" value={`${stats?.framesPerS ?? 0}/s`} />

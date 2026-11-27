@@ -236,13 +236,21 @@ pub enum Request {
         /// The input.
         input: Input,
     },
-    /// Gives the run its inputs (an input file's sources): once per build, before it runs; a reset applies them
-    /// again. Replies `done`.
+    /// Gives the run its inputs (an input file's sources, with trials expanded into them) and its trials: once per
+    /// build, before it runs; a reset applies them again. Trials are recorded with recorded runs. Replies `done`.
     SetInputs {
         /// The session.
         session: u32,
         /// The sources (unique names).
         sources: Vec<InputSource>,
+        /// The run's trials, in order (none without a trial schedule).
+        #[serde(default)]
+        trials: Vec<Trial>,
+    },
+    /// The run's trials: as given with its inputs, or as recorded for a replay. Replies `trials`.
+    GetTrials {
+        /// The session.
+        session: u32,
     },
     /// Fires a pulse source of the run's inputs now (a manual trigger). Replies `done`.
     Fire {
@@ -453,6 +461,21 @@ pub enum Input {
     },
 }
 
+/// A trial of a run's input protocol.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Trial {
+    /// Its number, from 1.
+    pub number: u32,
+    /// Its condition (empty without conditions).
+    pub condition: String,
+    /// When it starts, ms from the run's start.
+    pub start_ms: f64,
+    /// When it ends, ms from the run's start.
+    pub end_ms: f64,
+}
+
 /// A named source of a run's inputs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -603,6 +626,11 @@ pub enum Response {
     Deployment {
         /// The deployment.
         deployment: Deployment,
+    },
+    /// A run's trials.
+    Trials {
+        /// In order.
+        trials: Vec<Trial>,
     },
     /// A neuron's state.
     Neuron {

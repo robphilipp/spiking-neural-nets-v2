@@ -4,9 +4,21 @@ import { Field, Heading, Notice, Panel } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { pickFolder, readProject, writeProject } from "../files";
-import { emptyInputFile, serializeInputFile } from "../inputFile";
+import { emptyInputFile, parseInputFile, serializeInputFile } from "../inputFile";
 import { serializeProject } from "../project";
-import { forget, forgetRecent, newProjectStarted, projectOpened, projectRenamed, projectSaved, setDescription, useProject, useSession } from "../store";
+import {
+  forget,
+  forgetRecent,
+  inputFileChanged,
+  inputsSelected,
+  newProjectStarted,
+  projectOpened,
+  projectRenamed,
+  projectSaved,
+  setDescription,
+  useProject,
+  useSession,
+} from "../store";
 import { inTauri } from "../tauriClient";
 
 function download(name: string, text: string) {
@@ -22,6 +34,7 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
   const description = useSession((s) => s.description);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const inputUpload = useRef<HTMLInputElement>(null);
   const desktop = inTauri();
   const unsaved =
     description !== (savedDescription ?? "") || JSON.stringify(project) !== savedProject || JSON.stringify(inputFiles) !== savedInputs;
@@ -147,6 +160,31 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
                   projectRenamed(name);
                   setDescription({ name, description: text });
                   onOpened();
+                });
+                e.target.value = "";
+              }}
+            />
+            <Button variant="outline" onClick={() => inputUpload.current?.click()} data-testid="open-inputs">
+              <Upload data-icon="inline-start" />
+              Open an input file…
+            </Button>
+            <input
+              ref={inputUpload}
+              type="file"
+              accept=".toml,text/plain"
+              hidden
+              data-testid="inputs-file-input"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                void file.text().then((text) => {
+                  try {
+                    inputFileChanged(file.name, parseInputFile(text, file.name));
+                    inputsSelected(file.name);
+                    setMessage({ ok: true, text: `Opened ${file.name}: runs use it (Run page › Input file).` });
+                  } catch (err) {
+                    setMessage({ ok: false, text: err instanceof Error ? err.message : String(err) });
+                  }
                 });
                 e.target.value = "";
               }}

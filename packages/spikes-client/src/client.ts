@@ -10,6 +10,7 @@ import type { Cluster } from "./generated/Cluster";
 import type { Deployment } from "./generated/Deployment";
 import type { Input } from "./generated/Input";
 import type { InputSource } from "./generated/InputSource";
+import type { Trial } from "./generated/Trial";
 import type { Network } from "./generated/Network";
 import type { NetworkPreview } from "./generated/NetworkPreview";
 import type { NeuronState } from "./generated/NeuronState";
@@ -282,9 +283,15 @@ export abstract class ProtocolClient {
     await this.request({ type: "addInput", session, input });
   }
 
-  /** Gives the run its inputs (an input file's sources): once per build, before it runs; a reset applies them again. */
-  async setInputs(session: number, sources: InputSource[]): Promise<void> {
-    await this.request({ type: "setInputs", session, sources });
+  /** Gives the run its inputs (an input file's sources, trials expanded into them) and its trials: once per build,
+   *  before it runs; a reset applies them again. */
+  async setInputs(session: number, sources: InputSource[], trials: Trial[] = []): Promise<void> {
+    await this.request({ type: "setInputs", session, sources, trials });
+  }
+
+  /** The run's trials: as given with its inputs, or as recorded for a replay. */
+  async getTrials(session: number): Promise<Trial[]> {
+    return (await this.expect({ type: "getTrials", session }, "trials")).trials;
   }
 
   /** Fires a pulse source of the run's inputs now. */

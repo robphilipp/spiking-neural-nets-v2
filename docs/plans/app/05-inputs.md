@@ -1,6 +1,6 @@
 # 05 Inputs: input files, simulated and realtime sources, the Inputs view
 
-Status: **reviewed**, 2026-11-27 (decisions below; the open questions answered). **I1 done** (2026-11-27). Replaces today's three ways of giving a network input (the Run page's
+Status: **reviewed**, 2026-11-27 (decisions below; the open questions answered). **I1 and I2 done** (2026-11-27). Replaces today's three ways of giving a network input (the Run page's
 **Stimulate** and **Background input**, and the Inputs page's designed signal and microphone) with one model and
 one view.
 
@@ -265,6 +265,32 @@ Each phase: unit tests (engine and TS), e2e tests through the view, docs.
   and taps).
 - **Not yet**: trials (I2), the Inputs view (I3), realtime sources (I4), `data(…)` and file sources (I5). Fire has
   no button until the Inputs view; Stimulate stays on the Run page until then.
+
+### I2 status: done (2026-11-27)
+
+- **Where trials are expanded** (a change from §3): in the UI (`expandTrials` in `inputFile.ts`), not the engine.
+  The draws use the engine's counter-based randoms (bit for bit the same in both), keyed by the run's seed, so the
+  same file and seed always give the same trials; the engine needs no new input kinds, and gets the expansion as
+  plain sources (`<name> #<trial>`) plus the list of trials (`setInputs`' `trials`). An API client can expand the
+  same way, or send its own trials.
+- **The file**: `[trials]` (`count` per condition, `length`, `gap` fixed or random, `start`, `order`: shuffled from
+  the seed, blocked or alternating) and `[[trials.condition]]` (a name, and the trial sources on in it); sources
+  get `scope = "trial"` (start and duration from the trial's start; cut at its end); a source's `start`,
+  `duration`, `mv`, `hz` and `period`, and the trials' `gap`, can be `uniform(a, b)` or `normal(mean, sd)`, drawn
+  per trial (run sources: once).
+- **Engine**: `Session::set_inputs` takes the trials with the sources (checked in order; kept by a reset);
+  `Session::trials` (as given, or as recorded for a replay); recorded runs get `trials.arrow` (trial, condition,
+  start and end, ns), also in the Parquet export. Protocol: `setInputs`' `trials`, `getTrials`, `Trial`.
+- **UI**: Build expands the selected file with the run's seed; the Run page shows the current trial ("3 of 8 ·
+  column 1", "gap · next 4", "done") from `getTrials` (so also for replays and sessions opened from the picker).
+  The browser can open an input file (Projects page), as it could download one.
+- **Tests**: Rust: trials kept, checked, kept by a reset, recorded and read back by a replay. TS: reading and
+  writing trials and random settings, the checks, the expansion (counts per condition, each order, the timeline
+  and gaps, instances within their trials with drawn settings, the same for a seed and not for another). e2e:
+  `trials.spec.ts` (the ring project's `trials.inputs.toml` opened, built, run: the Run page's trial, the engine's
+  trials, done at the end).
+- **Not done**: trial starts aren't marked on the charts (the charts have no markers yet; the Run page shows the
+  current trial instead).
 
 ## 6. Questions answered (2026-11-27)
 

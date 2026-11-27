@@ -8,6 +8,7 @@ import type { Recording } from "./Recording";
 import type { SavedRun } from "./SavedRun";
 import type { SensorInfo } from "./SensorInfo";
 import type { SessionSummary } from "./SessionSummary";
+import type { Trial } from "./Trial";
 
 /**
  * Successful results.
@@ -40,7 +41,11 @@ preview: NetworkPreview, } | { "type": "deployment",
 /**
  * The deployment.
  */
-deployment: Deployment, } | { "type": "neuron", 
+deployment: Deployment, } | { "type": "trials", 
+/**
+ * In order.
+ */
+trials: Array<Trial>, } | { "type": "neuron", 
 /**
  * The state.
  */

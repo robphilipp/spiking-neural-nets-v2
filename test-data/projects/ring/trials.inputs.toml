@@ -1,0 +1,41 @@
+description = "Trials: taps on column 1 or column 3 of the ring, in shuffled order, over weak background input"
+
+[trials]
+count = 4                        # per condition: 8 trials
+length = "1 s"
+gap = "uniform(300 ms, 600 ms)"
+start = "200 ms"
+order = "shuffled"
+
+[[trials.condition]]
+name = "column 1"
+sources = ["tap 1"]
+
+[[trials.condition]]
+name = "column 3"
+sources = ["tap 3"]
+
+[[source]]
+name = "background"
+kind = "poisson"
+neurons = { prefix = "hidden-" }
+hz = 2
+mv = 4
+
+[[source]]
+name = "tap 1"
+kind = "pulse"
+scope = "trial"
+neurons = { prefix = "hidden-1" }
+at = ["0 ms", "50 ms", "100 ms"]
+start = "uniform(100 ms, 300 ms)"
+mv = "uniform(8, 12)"
+
+[[source]]
+name = "tap 3"
+kind = "pulse"
+scope = "trial"
+neurons = { prefix = "hidden-3" }
+at = ["0 ms", "50 ms", "100 ms"]
+start = "uniform(100 ms, 300 ms)"
+mv = "uniform(8, 12)"

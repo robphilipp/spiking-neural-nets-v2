@@ -1,9 +1,10 @@
 import type { Network, ProtocolClient } from "@spikes/client";
-import { engineSources, type InputFile } from "./inputFile";
+import { engineSources, expandTrials, type InputFile } from "./inputFile";
 import { built } from "./store";
 
 /** Builds the session's network (on `nodes`, or the engine alone when empty), gives the run the input file's
- *  sources (resolved in the built network; nothing for none), and makes it the session's network. */
+ *  sources (trials expanded with the seed, targets resolved in the built network; nothing for none) and trials,
+ *  and makes it the session's network. */
 export async function buildNetwork(
   client: ProtocolClient,
   id: number,
@@ -12,8 +13,10 @@ export async function buildNetwork(
   await client.build(id, { shards, seed, nodes });
   const net = await client.getNetwork(id);
   if (inputs) {
-    const sources = engineSources(inputs, net);
-    if (sources.length) await client.setInputs(id, sources);
+    // Trials are expanded here, with the run's seed (the same file and seed give the same trials).
+    const { file, trials } = expandTrials(inputs, seed);
+    const sources = engineSources(file, net);
+    if (sources.length || trials.length) await client.setInputs(id, sources, trials);
   }
   built(net);
   return net;

@@ -211,6 +211,19 @@ impl InputSpec {
     }
 }
 
+/// A trial of a run's input protocol (app plan 05 §2.1): the UI expands an input file's trials into its sources'
+/// on-periods, and gives the engine the trials too, to record them and show them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Trial {
+    /// Its number, from 1.
+    pub number: u32,
+    /// Its condition (empty without conditions).
+    pub condition: String,
+    /// When it starts and ends, from the run's start.
+    pub start: SimDuration,
+    pub end: SimDuration,
+}
+
 /// A named input of an input file, as the engine runs it (app plan 05): [`Session::set_inputs`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputSource {
@@ -304,8 +317,8 @@ struct Inner {
     lockstep: bool,
     /// Inputs added since the build, and when: a saved run adds them again before restoring.
     inputs: Vec<(InputSpec, SimTime)>,
-    /// The input set given since the build ([`Session::set_inputs`]), which a reset applies again.
-    input_set: Option<Vec<InputSource>>,
+    /// The input set given since the build ([`Session::set_inputs`]), and its trials, which a reset applies again.
+    input_set: Option<(Vec<InputSource>, Vec<Trial>)>,
     /// The node agents the network was last built on, and the synapses each node made (this one first), for
     /// [`Session::deployment`].
     built_on: (Vec<String>, Vec<u64>),
@@ -582,7 +595,7 @@ impl Session {
             }
             let set = inner.input_set.clone();
             // Other inputs added before the run, besides the input set's.
-            let in_set = |input: &InputSpec| set.iter().flatten().any(|s| &s.input == input);
+            let in_set = |input: &InputSpec| set.iter().flat_map(|(s, _)| s).any(|s| &s.input == input);
             let at_start: Vec<InputSpec> = inner
                 .inputs
                 .iter()
@@ -592,8 +605,8 @@ impl Session {
             (inner.settings, set, at_start)
         };
         let network = self.build(settings)?;
-        if let Some(set) = set {
-            self.set_inputs(set)?;
+        if let Some((sources, trials)) = set {
+            self.set_inputs(sources, trials)?;
         }
         for input in inputs {
             self.add_input_at(input, Some(SimTime::ZERO))?;
@@ -601,14 +614,24 @@ impl Session {
         Ok(network)
     }
 
-    /// Gives the run its inputs (an input file's sources, app plan 05): once per build, before it runs (a reset
-    /// applies them again; to change them, build again). Each source starts at its `start`; signals' noise is keyed
-    /// by the build's seed and the source's name, so a run repeats exactly. Everything is checked before anything
-    /// starts.
+    /// Gives the run its inputs (an input file's sources, app plan 05), and its trials (none without a trial
+    /// schedule): once per build, before it runs (a reset applies them again; to change them, build again). Each
+    /// source starts at its `start`; signals' noise is keyed by the build's seed and the source's name, so a run
+    /// repeats exactly. Everything is checked before anything starts. Trials are recorded with each recorded run
+    /// (`trials.arrow`) and listed by [`Self::trials`].
     ///
     /// # Errors
-    /// Unless built and at time 0 without inputs given yet; for a replay; for an invalid source (with its name).
-    pub fn set_inputs(&self, sources: Vec<InputSource>) -> Result<(), SessionError> {
+    /// Unless built and at time 0 without inputs given yet; for a replay; for an invalid source (with its name) or
+    /// trials out of order.
+    pub fn set_inputs(&self, sources: Vec<InputSource>, trials: Vec<Trial>) -> Result<(), SessionError> {
+        for (i, t) in trials.iter().enumerate() {
+            if t.end < t.start {
+                return Err(SessionError::Invalid(format!("trial {} ends before it starts", t.number)));
+            }
+            if i > 0 && t.start < trials[i - 1].start {
+                return Err(SessionError::Invalid("trials must be in order of their start".into()));
+            }
+        }
         self.not_replay("take input")?;
         let (seed, network) = {
             let inner = self.inner();
@@ -643,8 +666,17 @@ impl Session {
         for source in &sources {
             self.add_input_at(source.input.clone(), Some(SimTime::ZERO.saturating_add(source.start)))?;
         }
-        self.inner().input_set = Some(sources);
+        self.inner().input_set = Some((sources, trials));
         Ok(())
+    }
+
+    /// The run's trials: as given with its inputs, or, for a replay, as recorded (none without a trial schedule).
+    pub fn trials(&self) -> Vec<Trial> {
+        let inner = self.inner();
+        if let Some(replay) = &inner.replay {
+            return replay.trials.clone();
+        }
+        inner.input_set.as_ref().map(|(_, t)| t.clone()).unwrap_or_default()
     }
 
     /// Fires a pulse source of the input set now (a manual trigger: what Stimulate did), whatever its times.
@@ -654,7 +686,7 @@ impl Session {
     pub fn fire(&self, source: &str) -> Result<(), SessionError> {
         let (targets, mv) = {
             let inner = self.inner();
-            let found = inner.input_set.iter().flatten().find(|s| s.name == source);
+            let found = inner.input_set.iter().flat_map(|(s, _)| s).find(|s| s.name == source);
             match found.map(|s| &s.input) {
                 Some(InputSpec::Pulses { targets, mv, .. }) => (targets.clone(), *mv),
                 Some(_) => return Err(SessionError::Invalid(format!("input '{source}' isn't a pulse"))),
@@ -905,7 +937,21 @@ impl Session {
                             &synapses,
                         )
                     })
-                    .and_then(|recorder| Ok((recorder, SensorLog::create(dir, RecordOptions::default().batch_rows)?)));
+                    .and_then(|recorder| {
+                        if let Some((_, trials)) = inner.input_set.as_ref().filter(|(_, t)| !t.is_empty()) {
+                            let rows: Vec<spikes_record::TrialRow> = trials
+                                .iter()
+                                .map(|t| spikes_record::TrialRow {
+                                    trial: t.number,
+                                    condition: t.condition.clone(),
+                                    start_ns: t.start.as_nanos(),
+                                    end_ns: t.end.as_nanos(),
+                                })
+                                .collect();
+                            spikes_record::write_trials(dir, &rows)?;
+                        }
+                        Ok((recorder, SensorLog::create(dir, RecordOptions::default().batch_rows)?))
+                    });
                 match started {
                     Ok((recorder, sensor_log)) => {
                         *lock(&self.shared.sensor_log) = Some(sensor_log);

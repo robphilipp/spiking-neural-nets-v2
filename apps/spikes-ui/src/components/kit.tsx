@@ -189,9 +189,9 @@ export function Toggle({
 }
 
 /** A small labelled figure. */
-export function Stat({ label, value, warn }: { label: string; value: ReactNode; warn?: boolean }) {
+export function Stat({ label, value, warn, testId }: { label: string; value: ReactNode; warn?: boolean; testId?: string }) {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0" data-testid={testId}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className={cn("text-sm tabular-nums", warn && "text-warning")}>{value}</div>
     </div>

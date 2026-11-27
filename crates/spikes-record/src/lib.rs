@@ -15,6 +15,7 @@
 //! | `system.arrows` | Arrow IPC stream | runtime notices (can't keep up, actor failed, …) |
 //! | `sensor_samples.arrows` | Arrow IPC stream | every sample from external sensors (with [`SensorLog`]) |
 //! | `sensor_inputs.arrows` | Arrow IPC stream | every neuron input the sensors' samples were encoded into |
+//! | `trials.arrow` | Arrow IPC file | one per trial of the run's input protocol: number, condition, start, end (if it has trials) |
 //!
 //! Streams are written in batches while the run goes on, so a crashed run still leaves everything up to its
 //! last batch. Rows from different shards interleave, so streams are in time order only per shard; [`to_parquet`]
@@ -28,7 +29,7 @@ mod recorder;
 mod tables;
 
 pub use parquet::{PART_ROWS, read_table, to_parquet, to_parquet_in_parts};
-pub use recorder::{RecordOptions, Recorder, RunInfo, Summary, SynapseRow, synapse_rows};
+pub use recorder::{RecordOptions, Recorder, RunInfo, Summary, SynapseRow, TrialRow, synapse_rows, write_trials};
 pub use tables::{Counts, SensorLog};
 
 /// A recording failure.

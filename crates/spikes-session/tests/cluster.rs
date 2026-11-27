@@ -507,7 +507,7 @@ fn nemotode_with_inputs(engine: &Engine, nodes: Vec<String>) -> Vec<String> {
                     mv: 12.0,
                 },
             },
-        ])
+        ], Vec::new())
         .unwrap();
     run(&session, 500, None);
     let states = (0..network.neurons.len() as u32)

@@ -47,6 +47,8 @@ pub(crate) struct ReplayData {
     events: Vec<(SimTime, u32, Recorded)>,
     /// The last event's time.
     pub(crate) end: SimTime,
+    /// The run's trials, if it had a trial schedule (`trials.arrow`).
+    pub(crate) trials: Vec<crate::Trial>,
 }
 
 fn read(dir: &Path, file: &str) -> Result<Option<RecordBatch>, SessionError> {
@@ -196,6 +198,21 @@ impl ReplayData {
             Some((stamp, n)) if stamp.chars().all(|c| c.is_ascii_digit()) && !n.is_empty() => n.to_string(),
             _ => folder.clone(),
         };
+        let mut trials = Vec::new();
+        if let Some(t) = read(dir, "trials.arrow")? {
+            let f = "trials.arrow";
+            let numbers = column(&t, "trial", f)?.as_primitive::<UInt32Type>().values().to_vec();
+            let conditions = column(&t, "condition", f)?.as_string::<i32>().clone();
+            let (starts, ends) = (u64s(&t, "start_ns", f)?, u64s(&t, "end_ns", f)?);
+            trials = (0..numbers.len())
+                .map(|i| crate::Trial {
+                    number: numbers[i],
+                    condition: conditions.value(i).to_string(),
+                    start: SimDuration::from_nanos(starts[i]),
+                    end: SimDuration::from_nanos(ends[i]),
+                })
+                .collect();
+        }
         Ok(Self {
             name,
             description,
@@ -203,6 +220,7 @@ impl ReplayData {
             synapses,
             events,
             end,
+            trials,
         })
     }
 
