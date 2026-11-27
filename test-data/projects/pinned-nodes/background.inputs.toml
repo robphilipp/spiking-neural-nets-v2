@@ -4,5 +4,5 @@ description = "Steady input to the row of sensors (pinned to the 'edge' node on 
 name = "background"
 kind = "poisson"
 neurons = { prefix = "sensors-" }
-hz = 10
-mv = 6
+hz = 5
+mv = 3
