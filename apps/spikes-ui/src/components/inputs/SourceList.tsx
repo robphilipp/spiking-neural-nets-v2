@@ -81,7 +81,7 @@ export function SourceList({
   states: SourceState[] | null;
   /** The realtime sources' live status in the run (by source name). */
   realtime: Record<string, RealtimeStatus>;
-  canFire: boolean;
+  canFire: (source: string) => boolean;
   onError: (message: string) => void;
   /** The input file's data files, read (a file source's channels are the file's). */
   data: LoadedData;
@@ -169,7 +169,7 @@ export function SourceList({
                   </Badge>
                 )
               )}
-              {s.kind === "pulse" && s.enabled && s.scope !== "trial" && <FireButton source={s.name} ready={canFire} onError={onError} compact />}
+              {s.kind === "pulse" && s.enabled && s.scope !== "trial" && <FireButton source={s.name} ready={canFire(s.name)} onError={onError} compact />}
             </div>
           );
         })}
