@@ -1,5 +1,5 @@
 import { Lod, type Neuron, type SensorInfo, type Trial } from "@spikes/client";
-import { Hammer, Pause, Play, RotateCcw, Save, SkipForward, SlidersHorizontal, Square, X, Zap } from "lucide-react";
+import { Hammer, Pause, Play, RotateCcw, Save, SkipForward, SlidersHorizontal, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AxisLocation,
@@ -16,7 +16,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { ClusterPanel } from "../components/ClusterPanel";
-import { NeuronMatchField } from "../components/NeuronMatchField";
 import { FireButton, useCanFire } from "../components/FireButton";
 import { Inspector } from "../components/Inspector";
 import { Modulators } from "../components/Modulators";
@@ -30,12 +29,10 @@ import { liveDetail } from "../components/inputs/SourceList";
 import { ChartControls } from "../components/ChartControls";
 import { useChartSettings, useChartKey, useTimeDomain, ZOOM } from "../chartSettings";
 import { connectLive, useLive } from "../live";
-import { describeMatch, matchNeurons, type NeuronMatch } from "../neuronMatch";
 import { useBehavior } from "../useBehavior";
-import { built, inputFileChanged, inputsSelected, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
-import { DEFAULT_INPUTS } from "../project";
-import { firable, trialAt } from "../inputEdit";
-import { backgroundOf, type BackgroundSource, emptyInputFile, fromMatch, isRealtime, toMatch, withBackground } from "../inputFile";
+import { built, inputsSelected, runSettingsChanged, simTime, updateSettings, useProject, useSession, useSettings } from "../store";
+import { describeInputFile, firable, trialAt } from "../inputEdit";
+import { emptyInputFile, isRealtime } from "../inputFile";
 import { useChartColors } from "../theme";
 
 /** Speed on a log scale: slider value v means 2^v simulated seconds per wall second. */
@@ -60,20 +57,6 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
   const inputNames = useProject((s) => s.project.inputs);
   const inputsName = useProject((s) => s.project.selectedInputs);
   const inputs = useProject((s) => (s.project.selectedInputs === null ? null : (s.inputFiles[s.project.selectedInputs] ?? emptyInputFile())));
-  const background = backgroundOf(inputs);
-  // The stimulus is a manual, one-off pulse: not part of the input file.
-  const [stimulus, setStimulus] = useState<{ neurons: NeuronMatch; mv: number }>({ neurons: { mode: "prefix", pattern: "" }, mv: 10 });
-  /** The background input's settings while the file has none (it joins the file when it's turned on). */
-  const [backgroundDraft, setBackgroundDraft] = useState<BackgroundSource>({
-    name: "background",
-    kind: "poisson",
-    targets: { prefix: "" },
-    hz: 5,
-    mv: 12,
-    start: 0,
-    duration: null,
-    enabled: false,
-  });
   const { shards, seed } = run;
   const asFastAsPossible = run.speed === null;
   const [lastSpeedLog, setLastSpeedLog] = useState(0);
@@ -97,7 +80,7 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
   const [error, setError] = useState<string | null>(null);
   /** The last save (see the Recordings page's saved runs). */
   const [savedNote, setSavedNote] = useState<string | null>(null);
-  /** Building (and applying background input): nothing else may start meanwhile. */
+  /** Building (and giving the run its inputs): nothing else may start meanwhile. */
   const [building, setBuilding] = useState(false);
   const nodesSetting = useSettings((s) => s.nodes);
   /** The node agents the network was last built on (empty: the engine alone). */
@@ -211,18 +194,6 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
     return <Notice>Open or write a network on the Network page and apply it first.</Notice>;
   }
   const running = state === "running" || state === "paused";
-  /** Changes the background input: the file's `background` source (created, in the selected file or a new one, when
-   *  it's turned on). It's given to the run at Build, so it can't change while a run is open. */
-  const setBackground = (change: Partial<BackgroundSource>) => {
-    if (!background && change.enabled === undefined) {
-      setBackgroundDraft({ ...backgroundDraft, ...change });
-      return;
-    }
-    const name = inputsName ?? inputNames[0] ?? DEFAULT_INPUTS;
-    if (inputsName === null) inputsSelected(name);
-    inputFileChanged(name, withBackground(inputs ?? useProject.getState().inputFiles[name] ?? emptyInputFile(), change, backgroundDraft));
-  };
-  const shownBackground = background ?? backgroundDraft;
   // The raster's rows: its data source's series (the selection, once the source follows it).
   const rows = raster?.seriesList().map((s) => s.name) ?? [];
   // Row names are readable up to ~40 rows; beyond that they're hidden (filter the rows, or use the tooltip).
@@ -334,7 +305,7 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
             variant="outline"
             disabled={!network || running || building}
             data-testid="reset"
-            title="Put the network back as it was built: time 0, its initial weights and state, and its background input (connections made since are gone). Start then runs it from the beginning again."
+            title="Put the network back as it was built: time 0, its initial weights and state, and its inputs (connections made since are gone). Start then runs it from the beginning again."
             onClick={act(async () => {
               setBuilding(true);
               try {
@@ -432,36 +403,6 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
           </div>
         )}
         {!replay && (
-          // Stimulate: a one-off pulse to some neurons now, also while a run goes on (the input file's pulse sources
-          // are fired below).
-          <Row>
-            <NeuronMatchField
-              label="Stimulate neurons"
-              width={270}
-              value={stimulus.neurons}
-              onChange={(neurons) => setStimulus({ ...stimulus, neurons })}
-              neurons={network?.neurons}
-              placeholder="all"
-              testId="stimulus-neurons"
-            />
-            <NumberField label="mV" width={80} value={stimulus.mv} onChange={(mv) => setStimulus({ ...stimulus, mv })} />
-            <Button
-              variant="outline"
-              disabled={!network}
-              data-testid="stimulate"
-              title="Send a pulse of this size to the neurons now"
-              onClick={act(async () => {
-                const targets = matchNeurons(network!.neurons, stimulus.neurons).map((n) => n.index);
-                if (!targets.length) throw new Error(`no neurons have ${describeMatch(stimulus.neurons)}`);
-                await client!.stimulate(id, targets, stimulus.mv);
-              })}
-            >
-              <Zap data-icon="inline-start" />
-              Stimulate
-            </Button>
-          </Row>
-        )}
-        {!replay && (
           // The input file: every source a run gets at Build (edited on the Inputs page).
           <Row>
             <Choice
@@ -481,6 +422,14 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
             )}
           </Row>
         )}
+        {!replay && inputs && (
+          // What the selected file does, source by source.
+          <ul className="-mt-1 flex flex-col gap-0.5 text-xs text-muted-foreground" data-testid="input-description">
+            {describeInputFile(inputs).map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        )}
         {!replay && (
           // Pulse sources can be fired by hand (what Stimulate did); everything else is edited on the Inputs page.
           <Row className="min-h-8 items-center">
@@ -492,35 +441,6 @@ export function RunPage({ onInputs }: { onInputs: () => void }) {
               <SlidersHorizontal data-icon="inline-start" />
               Edit inputs
             </Button>
-          </Row>
-        )}
-        {!replay && (
-          // Background input: the selected input file's "background" source, a shortcut to its main settings (all of the
-          // file's sources are on the Inputs page). Its settings show while it's on.
-          <Row className="min-h-[58px] items-end">
-            <Toggle
-              label="Background input"
-              checked={background?.enabled ?? false}
-              onChange={(enabled) => setBackground({ enabled })}
-              disabled={running}
-              testId="background"
-              title={running ? "Stop the run to change it: it's given to the run when the network is built" : "Poisson input: the input file's 'background' source, given to the run when the network is built"}
-            />
-            {background?.enabled && (
-              <fieldset disabled={running} className="contents">
-                <NeuronMatchField
-                  label="Background neurons"
-                  width={270}
-                  value={"set" in shownBackground.targets ? { mode: "prefix", pattern: "" } : toMatch(shownBackground.targets)}
-                  onChange={(neurons) => setBackground({ targets: fromMatch(neurons) })}
-                  neurons={network?.neurons}
-                  placeholder="all"
-                  testId="background-neurons"
-                />
-                <NumberField label="Hz per neuron" width={120} min={0.001} value={shownBackground.hz} onChange={(hz) => setBackground({ hz })} />
-                <NumberField label="mV" width={80} value={shownBackground.mv} onChange={(mv) => setBackground({ mv })} />
-              </fieldset>
-            )}
           </Row>
         )}
         {needsRebuild && !replay && (

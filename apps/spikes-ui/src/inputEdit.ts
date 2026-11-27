@@ -4,6 +4,7 @@
 import {
   DEFAULT_GRID,
   DEFAULT_LEVEL,
+  describeTargets,
   expandTrials,
   formatRandom,
   formatTime,
@@ -16,6 +17,7 @@ import {
   parseTime,
   type Random,
   type RandomField,
+  type SampleEncoding,
   type Source,
   type SourceKind,
   type TrialSchedule,
@@ -365,4 +367,60 @@ export function removeDataRef(file: InputFile, name: string): InputFile {
   const refs = (file.data ?? []).filter((d) => d.name !== name);
   const { data: _, ...rest } = file;
   return refs.length ? { ...rest, data: refs } : rest;
+}
+
+// ----- describing a file in words -----
+
+/** How samples become input, in words: "rate up to 100 Hz, 12 mV per event". */
+export function encodingText(e: SampleEncoding | { type: "spikes"; mv: number }): string {
+  switch (e.type) {
+    case "current":
+      return `current, ${e.gainMv} mV per unit`;
+    case "rate":
+      return `rate up to ${e.maxHz} Hz, ${e.mv} mV per event`;
+    case "threshold":
+      return `a ${e.mv} mV event per ${e.level} of change`;
+    case "spikes":
+      return `${e.mv} mV per spike`;
+  }
+}
+
+/** One source in a few words: what it sends, to whom, and when. Each kind describes itself. */
+export function describeSource(s: Source): string {
+  const to = describeTargets(s.targets);
+  const when = isRealtime(s) ? "" : `, ${scheduleText(s)}`;
+  const trial = s.scope === "trial" ? " in each trial" : "";
+  switch (s.kind) {
+    case "pulse":
+      return `${s.mv} mV pulse${s.at.length > 1 ? "s" : ""} to ${to}${when}${trial}`;
+    case "poisson":
+      return `random pulses, ${s.hz} Hz each, ${s.mv} mV, to ${to}${when}${trial}`;
+    case "periodic":
+      return `a ${s.mv} mV pulse every ${formatTime(s.period)} to ${to}${when}${trial}`;
+    case "signal":
+      return `the signal ${s.formula}, sampled every ${formatTime(s.sample)} (${encodingText(s.encoding)}), to ${to}${when}${trial}`;
+    case "file":
+      return `data file ${s.data || "(none chosen)"}${s.gain === 1 ? "" : ` × ${s.gain}`} (${encodingText(s.encoding)}) to ${to}${when}${trial}`;
+    case "microphone":
+      return `live microphone${s.bands ? `, ${s.bands} bands` : ""} (${encodingText(s.encoding)}) to ${to}`;
+    case "camera":
+      return `live camera, ${s.mode === "changes" ? "changes" : "brightness"} on a ${s.grid.cols}×${s.grid.rows} grid (${encodingText(s.encoding)}) to ${to}`;
+    case "sensor":
+      return `live sensor (${encodingText(s.encoding)}) to ${to}`;
+  }
+}
+
+/** A file in a few lines: its sources (the ones on, each described), the trials, and what is off. */
+export function describeInputFile(file: InputFile): string[] {
+  const on = file.sources.filter((s) => s.enabled);
+  const lines = on.map((s) => `${s.name}: ${describeSource(s)}`);
+  if (file.trials) {
+    const t = trialTotals(file.trials);
+    const conditions = file.trials.conditions.length;
+    lines.push(`${t.trials} trial${t.trials === 1 ? "" : "s"}${conditions > 1 ? ` over ${conditions} conditions` : ""}, ${formatTime(file.trials.length)} each, ${file.trials.order}; ends at ${formatTime(t.endMs)}`);
+  }
+  const off = file.sources.length - on.length;
+  if (off > 0) lines.push(`${off} source${off === 1 ? "" : "s"} off`);
+  if (file.sources.length === 0) lines.push("no sources: runs get no input");
+  return lines;
 }

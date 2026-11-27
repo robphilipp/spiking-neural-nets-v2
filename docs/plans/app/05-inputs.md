@@ -348,13 +348,12 @@ Each phase: unit tests (engine and TS), e2e tests through the view, docs.
   source's `at` times; `file` sources; the rate preview (event rate per channel, §4); realtime sources in the file
   (I4). No marking of trials on the Run page's charts (as in I2).
 
-- **Run page quick controls restored (2026-11-27, after use):** the Run page keeps two controls, as the first version of
-  I3 had removed them and they were missed. **Stimulate**: neurons (prefix, regex or set) and mV, a button that
-  sends a one-off pulse now through `stimulate`, also while a run goes on (a manual trigger, not a source of the input
-  file; it needs a built network). **Background input**: a switch that edits the selected input file's `background`
-  Poisson source (neurons, Hz per neuron, mV; its fields show while it's on); it's given to the run at Build, so it is
-  locked while a run is open and asks for a rebuild when changed. Everything else about the file is still edited on
-  the Inputs page; Fire buttons for its pulse sources stay on the Run page. e2e: `run-controls.spec.ts`.
+- **Run page quick controls: tried and removed (2026-11-27, after use):** the Run page briefly got Stimulate (an
+  ad hoc pulse to neurons now) and a Background input switch (a shortcut to the input file's `background` source)
+  back, and they were removed again: inputs are defined in the input file on the Inputs page, and the Run page
+  keeps the input file selector (with its summary), a **Fire** button per pulse source and **Edit inputs**. A pulse
+  source's Fire stays usable while other parts of the file change (the engine has the pulse as it was built); it
+  waits for a rebuild only when that pulse source itself changed. e2e: `fire-button.spec.ts`.
 
 ### I4 status: done (2026-11-27)
 

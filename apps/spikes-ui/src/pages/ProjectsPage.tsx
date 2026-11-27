@@ -3,7 +3,8 @@ import { useRef, useState } from "react";
 import { Field, Heading, Notice, Panel } from "@/components/kit";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { pickFolder, readProject, writeProject } from "../files";
+import { pickFolder, readProject } from "../files";
+import { saveProjectTo, useUnsaved } from "../saveProject";
 import { emptyInputFile, parseInputFile, serializeInputFile } from "../inputFile";
 import { serializeProject } from "../project";
 import {
@@ -14,7 +15,6 @@ import {
   newProjectStarted,
   projectOpened,
   projectRenamed,
-  projectSaved,
   setDescription,
   useProject,
   useSession,
@@ -30,14 +30,13 @@ function download(name: string, content: string | Uint8Array) {
 
 /** Projects: a folder with project.toml and the network (desktop), or files in and out (browser). */
 export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
-  const { folder, project, inputFiles, dataFiles, savedDescription, savedProject, savedInputs, recent } = useProject();
+  const { folder, project, inputFiles, dataFiles, savedDescription, recent } = useProject();
   const description = useSession((s) => s.description);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const inputUpload = useRef<HTMLInputElement>(null);
   const desktop = inTauri();
-  const unsaved =
-    description !== (savedDescription ?? "") || JSON.stringify(project) !== savedProject || JSON.stringify(inputFiles) !== savedInputs;
+  const unsaved = useUnsaved();
 
   const attempt = (f: () => Promise<void>) => async () => {
     setMessage(null);
@@ -68,8 +67,7 @@ export function ProjectsPage({ onOpened }: { onOpened: () => void }) {
   };
 
   const save = async (dir: string) => {
-    await writeProject(dir, project, description, inputFiles);
-    projectSaved({ folder: dir, description });
+    await saveProjectTo(dir);
     setMessage({ ok: true, text: `Saved to ${dir}` });
   };
 

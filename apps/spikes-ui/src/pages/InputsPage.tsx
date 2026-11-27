@@ -3,7 +3,9 @@
 // open the file is read-only: sources show their status, and pulse sources can be fired.
 
 import { useEffect, useMemo, useState } from "react";
+import { Save } from "lucide-react";
 import { Heading, Notice, Panel, Stat } from "@/components/kit";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChannelPreview } from "../components/inputs/ChannelPreview";
 import { FilesPanel } from "../components/inputs/FilesPanel";
@@ -38,6 +40,8 @@ import {
   useSession,
 } from "../store";
 import { useRealtime } from "../realtime";
+import { saveProject, useUnsaved } from "../saveProject";
+import { inTauri as inDesktop } from "../tauriClient";
 import { useBehavior } from "../useBehavior";
 
 export function InputsPage() {
@@ -53,6 +57,8 @@ export function InputsPage() {
   const [index, setIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const canFire = useCanFire(selected, file);
+  const unsaved = useUnsaved();
+  const [saved, setSaved] = useState<string | null>(null);
   const statuses = useRealtime((s) => s.statuses);
   const realtime = useMemo(() => Object.fromEntries(statuses.map((x) => [x.name, x])), [statuses]);
 
@@ -120,6 +126,36 @@ export function InputsPage() {
 
   return (
     <div className="flex flex-col gap-3" data-testid="inputs-page">
+      <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="inputs-save">
+        {unsaved ? (
+          <Badge className="border-0 bg-warning text-black" data-testid="inputs-unsaved">
+            unsaved changes
+          </Badge>
+        ) : (
+          <span className="text-xs text-muted-foreground" data-testid="inputs-saved">
+            {saved ? `Saved to ${saved}` : "All changes saved"}
+          </span>
+        )}
+        {inDesktop() ? (
+          <Button
+            size="sm"
+            disabled={!unsaved && folder !== null}
+            data-testid="inputs-save-button"
+            title={folder ? `Writes the project's files (network, settings and input files) to ${folder}` : "Choose a folder for the project, and write its files there"}
+            onClick={() => {
+              setError(null);
+              saveProject()
+                .then((dir) => dir && setSaved(dir))
+                .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+            }}
+          >
+            <Save data-icon="inline-start" />
+            Save project
+          </Button>
+        ) : (
+          unsaved && <span className="text-xs text-muted-foreground">This browser can't write to folders: download the files from the Projects page.</span>
+        )}
+      </div>
       <FilesPanel
         names={names}
         selected={selected}
